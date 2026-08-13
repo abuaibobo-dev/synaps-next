@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
-
+import { colors, spacing, radius, fontSize } from '@/utils/theme';
 import { getApiBase } from '@/utils';
+import { getCrashLogs, clearCrashLogs } from '@/utils/crashReporter';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 
@@ -29,7 +30,7 @@ interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  ai_model: '',
+  ai_model: 'deepseek-chat',
   ai_api_key: '',
   ai_base_url: '',
   ai_model_base_url: '',
@@ -134,6 +135,18 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     updateSetting(key, (!currentValue).toString());
   };
 
+  const handleShowCrashLogs = async () => {
+    const logs = await getCrashLogs();
+    if (logs.length === 0) {
+      Alert.alert('崩溃日志', '暂无崩溃日志');
+      return;
+    }
+    Alert.alert('崩溃日志', logs.join('\n\n---\n\n'), [
+      { text: '清空', style: 'destructive', onPress: () => clearCrashLogs() },
+      { text: '关闭', style: 'cancel' },
+    ]);
+  };
+
   const handleClearCache = () => {
     Alert.alert('清除缓存', '确定要清除所有缓存数据吗？', [
       { text: '取消', style: 'cancel' },
@@ -188,7 +201,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               <View style={styles.settingIcon}>
                 <FontAwesome6 name="key" size={14} color={colors.primary} />
               </View>
-              <Text style={styles.settingLabel}>API Key</Text>
+              <Text style={styles.settingLabel}>DeepSeek API Key</Text>
               <Text style={styles.settingValue}>{maskValue(settings.ai_api_key)}</Text>
               <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
             </Pressable>
@@ -197,7 +210,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <FontAwesome6 name="server" size={14} color={colors.primary} />
               </View>
               <Text style={styles.settingLabel}>服务地址</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.ai_base_url || 'Coze 官方'}</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>{settings.ai_base_url || 'DeepSeek 官方'}</Text>
               <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
             </Pressable>
             <Pressable style={styles.settingItem} onPress={() => setEditKey('ai_model_base_url')}>
@@ -205,7 +218,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <FontAwesome6 name="code-branch" size={14} color={colors.primary} />
               </View>
               <Text style={styles.settingLabel}>模型 API 地址</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.ai_model_base_url || 'Coze 官方'}</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>{settings.ai_model_base_url || 'DeepSeek 官方'}</Text>
               <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
             </Pressable>
           </View>
@@ -282,6 +295,19 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               </View>
               <Text style={styles.settingLabel}>构建方式</Text>
               <Text style={styles.settingValue}>{settings.build_method === 'github_actions' ? 'GitHub Actions' : '本地构建'}</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          {/* 诊断 */}
+          <Text style={styles.groupTitle}>诊断</Text>
+          <View style={styles.group}>
+            <Pressable style={styles.settingItem} onPress={handleShowCrashLogs}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="bug" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>崩溃日志</Text>
+              <Text style={styles.settingValue}>查看</Text>
               <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
             </Pressable>
           </View>

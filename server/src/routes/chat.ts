@@ -234,14 +234,14 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       return row?.value ?? null;
     };
 
-    // 优先使用设置页保存的配置，其次回退到环境变量
-    const apiKey = getSetting('ai_api_key') || process.env.COZE_WORKLOAD_IDENTITY_API_KEY;
-    const baseUrl = getSetting('ai_base_url') || process.env.COZE_INTEGRATION_BASE_URL;
-    const modelBaseUrl = getSetting('ai_model_base_url') || process.env.COZE_INTEGRATION_MODEL_BASE_URL;
-    const model = getSetting('ai_model') || undefined;
+    // 默认使用 DeepSeek（OpenAI 兼容），设置页可覆盖地址与模型
+    const apiKey = getSetting('ai_api_key');
+    const baseUrl = getSetting('ai_base_url') || 'https://api.deepseek.com';
+    const modelBaseUrl = getSetting('ai_model_base_url') || 'https://api.deepseek.com';
+    const model = getSetting('ai_model') || 'deepseek-chat';
 
     if (!apiKey) {
-      res.status(400).json({ error: '未配置模型 API Key，请到 设置 → AI 模型 中填写 API Key' });
+      res.status(400).json({ error: '未配置 DeepSeek API Key，请到 设置 → AI 模型 中填写' });
       return;
     }
 

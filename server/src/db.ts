@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.dirname(__filename);
 const DB_PATH = path.join(__dirname, '../../data/synaps.db');
 
 // Ensure data directory exists
@@ -18,7 +18,9 @@ let db: SqlJsDatabase;
 export async function getDb(): Promise<SqlJsDatabase> {
   if (db) return db;
 
-  const SQL = await initSqlJs();
+  const SQL = await initSqlJs({
+    locateFile: (file: string) => path.join(path.dirname(fileURLToPath(import.meta.url)), file),
+  });
 
   // Load existing database or create new one
   if (fs.existsSync(DB_PATH)) {
