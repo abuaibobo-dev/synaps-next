@@ -1,4 +1,4 @@
-package com.anonymous.x7673156971670863906
+package com.aibox.app
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
@@ -21,6 +21,7 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+    com.aibox.app.node.NodeBridge.start(applicationContext)
   }
 
   /**

@@ -87,15 +87,18 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.anonymous.x7673156971670863906'
+    namespace 'com.aibox.app'
     defaultConfig {
-        applicationId 'com.anonymous.x7673156971670863906'
+        applicationId 'com.aibox.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+        ndk {
+            abiFilters.addAll(["arm64-v8a"])
+        }
     }
     signingConfigs {
         debug {
@@ -129,6 +132,19 @@ android {
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs('libnode/bin/')
+        }
     }
 }
 
@@ -179,4 +195,72 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+}
+
+// ---------------------------------------------------------------------------
+// Embedded Node.js (nodejs-mobile) integration
+// ---------------------------------------------------------------------------
+
+// Downloads the nodejs-mobile prebuilt core library on first build (v18.20.4)
+abstract class DownloadNodejsTask extends DefaultTask {
+    @TaskAction
+    void run() {
+        def url = 'https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip'
+        def expectedMD5 = '4fe60de25381937b03642404513ec26b'
+        def zipFile = project.file('./libnode/nodejs-mobile-v18.20.4-android.zip')
+        def extractDir = project.file('./libnode')
+
+        if (zipFile.exists()) {
+            def md5 = zipFile.bytes.md5().encodeHex().toString()
+            if (md5 != expectedMD5) {
+                zipFile.delete()
+                println "MD5 mismatch, re-downloading: $md5"
+            }
+        }
+        if (!zipFile.exists()) {
+            zipFile.parentFile.mkdirs()
+            println "Downloading Node.js core from: $url"
+            zipFile.withOutputStream { os ->
+                new URL(url).openStream().withStream { it.withOutputStream(os) }
+            }
+            def md5 = zipFile.bytes.md5().encodeHex().toString()
+            if (md5 != expectedMD5) {
+                throw new GradleException("MD5 verification failed for $zipFile: $md5")
+            }
+        }
+        extractDir.mkdirs()
+        ant.unzip(src: zipFile, dest: extractDir, overwrite: true)
+        println "Node.js core extracted to: $extractDir"
+    }
+}
+
+tasks.register('downloadNodejs', DownloadNodejsTask)
+
+// Builds the Express server as a self-contained bundle and stages it into assets
+tasks.register('copyNodeProject') {
+    doLast {
+        def serverDir = project.file("${projectRoot}/../server")
+        def assetsDir = project.file('src/main/assets/nodejs-project')
+        assetsDir.mkdirs()
+        exec {
+            workingDir serverDir
+            commandLine 'node', 'build.js'
+        }
+        copy {
+            from(serverDir) {
+                include 'dist/index.cjs'
+                include 'dist/sql-wasm.wasm'
+            }
+            into assetsDir
+        }
+        def dataDir = project.file('src/main/assets/nodejs-project/data')
+        dataDir.mkdirs()
+        new File(dataDir, '.gitkeep').text = ''
+        new File(assetsDir, 'main.cjs').text = "const path = require('path');\nprocess.env.SYNAPS_DATA_DIR = path.join(__dirname, 'data');\nrequire('./index.cjs');\n"
+        println "Node project staged to: $assetsDir"
+    }
+}
+
+tasks.named('preBuild') {
+    dependsOn 'downloadNodejs', 'copyNodeProject'
 }

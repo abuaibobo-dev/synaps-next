@@ -23,7 +23,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": `com.anonymous.x${projectId || '0'}`
+      "package": "com.aibox.app"
     },
     "web": {
       "bundler": "metro",
@@ -31,6 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withNodeBridge",
       process.env.EXPO_PUBLIC_BACKEND_BASE_URL ? [
         "expo-router",
         {

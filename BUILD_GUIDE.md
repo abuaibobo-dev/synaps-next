@@ -1,113 +1,34 @@
-# Synaps - GitHub Actions APK 构建指南
+# Synaps - 构建指南（GitHub Actions）
 
-## 前置条件
+## 架构简述
+- `client/`：Expo / React Native 应用（TypeScript），8 个模块页面（项目/Agent/代码/终端/APK/日志/GitHub/设置）
+- `server/`：Express 后端，esbuild 打包为**自包含单文件** `dist/index.cjs`（含 sql.js，仅 wasm 外置）
+- **嵌入式 Node**：APK 内嵌 nodejs-mobile 运行时（libnode.so），首次启动把 `assets/nodejs-project/`（server bundle + wasm）复制到应用私有目录，在独立线程运行 Express，前端走 `http://127.0.0.1:9091`
 
-1. **Expo 账号**
-   - 注册账号：https://expo.dev/signup
-   - 免费账号即可使用 EAS Build
+## 嵌入式 Node 集成（nodejs-mobile）
+- `client/android/app/build.gradle`
+  - `downloadNodejs`（preBuild）：从 nodejs-mobile v18.20.4 release 下载预编译包（MD5 校验），解压到 `app/libnode/`（.gitignore 忽略）
+  - `copyNodeProject`（preBuild）：`node server/build.js` 重新打包 server → 复制 `dist/index.cjs` + `sql-wasm.wasm` 到 `app/src/main/assets/nodejs-project/`，并生成入口 `main.cjs`（先设 `SYNAPS_DATA_DIR` 再加载 server）
+- `client/android/app/src/main/cpp/`：CMake + native-lib.cpp（JNI 桥，`node::Start`，stdout/stderr 重定向 logcat）
+- `client/android/app/src/main/java/com/aibox/app/node/NodeBridge.kt`：assets 复制 + 单线程启动
+- `MainActivity.onCreate` 调用 `NodeBridge.start(applicationContext)`；该调用由 `client/plugins/withNodeBridge.js` config plugin 在 prebuild 时自动注入
+- 只构建 `arm64-v8a`（APK 增加约 62MB）
 
-2. **获取 Expo Token**
-   - 登录 https://expo.dev/settings/access-tokens
-   - 点击 "Create a token"
-   - 名称填写 "github-actions"
-   - 复制生成的 token
-
-3. **GitHub 仓库**
-   - 将项目推送到 GitHub
-
-## 配置步骤
-
-### 1. 添加 GitHub Secrets
-
-在 GitHub 仓库中：
-- 进入 Settings → Secrets and variables → Actions
-- 点击 "New repository secret"
-- Name: `EXPO_TOKEN`
-- Value: 粘贴你的 Expo Token
-
-### 2. 推送代码到 GitHub
-
+## 本地构建（仅验证用；正式构建走 CI）
 ```bash
-cd /workspace/projects
-git init
-git add .
-git commit -m "Initial commit: Synaps AI Development Agent"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/synaps.git
-git push -u origin main
+pnpm install --frozen-lockfile
+cd client/android
+./gradlew assembleRelease --max-workers=1 -Xmx1024m
 ```
+> ARM 机器上 Android SDK 二进制为 x86_64（qemu 转换），易 OOM，务必限制 worker/内存；正式构建请用 GitHub Actions。
 
-### 3. 触发构建
+## CI 构建（正式路径）
+1. 修改代码 → `git push origin master`
+2. 打 tag（如 `v3.2.0-node-embedded`）→ `git push origin <tag>`
+3. 等待 `Build Android APK` workflow 完成（约 10-15 分钟）
+4. release 自动创建，APK 直链：`https://github.com/abuaibobo-dev/synaps-next/releases/download/<tag>/Synaps-<tag>.apk`
 
-推送代码后，GitHub Actions 会自动开始构建：
-- 进入仓库的 Actions 标签页
-- 查看 "Build Android APK" workflow
-- 等待构建完成（约 10-20 分钟）
-
-### 4. 下载 APK
-
-构建完成后：
-- 点击成功的 workflow run
-- 在 "Artifacts" 部分下载 `synaps-apk.zip`
-- 解压后得到 `synaps.apk`
-- 传输到手机安装
-
-## 手动触发构建
-
-如果需要手动触发构建：
-- 进入 Actions 标签页
-- 选择 "Build Android APK"
-- 点击 "Run workflow"
-- 选择分支，点击 "Run workflow"
-
-## 构建配置说明
-
-### eas.json 配置
-
-- **preview**: 生成 APK 文件，用于内部测试
-- **production**: 生成 AAB 文件，用于 Google Play 发布
-
-### 修改应用名称/图标
-
-编辑 `client/app.json`:
-```json
-{
-  "expo": {
-    "name": "Synaps",
-    "slug": "synaps",
-    "icon": "./assets/icon.png",
-    "android": {
-      "package": "com.yourname.synaps"
-    }
-  }
-}
-```
-
-## 常见问题
-
-### Q: 构建失败怎么办？
-A: 查看 Actions 日志，常见原因：
-- Expo Token 过期或无效
-- 依赖安装失败
-- 配置错误
-
-### Q: 构建需要多长时间？
-A: 首次构建约 15-30 分钟，后续构建约 10-15 分钟
-
-### Q: 可以在本地构建吗？
-A: 可以，需要安装 Android Studio 和 Expo CLI：
-```bash
-cd client
-npx eas build --platform android --profile preview
-```
-
-## 更新应用
-
-修改代码后：
-```bash
-git add .
-git commit -m "Update features"
-git push
-```
-
-GitHub Actions 会自动重新构建 APK。
+## 注意事项
+- `npx expo prebuild` 会重新生成 android 目录：包名来自 `app.config.ts`（`com.aibox.app`），MainActivity 的 Node 启动调用由 `plugins/withNodeBridge.js` 自动注入
+- server 改动后无需手动提交 assets 产物（Gradle 自动重建）
+- sql.js wasm 必须与 `index.cjs` 同目录（`locateFile` 用 `__filename` 定位）

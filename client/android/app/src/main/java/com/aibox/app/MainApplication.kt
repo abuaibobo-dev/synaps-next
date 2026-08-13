@@ -1,4 +1,4 @@
-package com.anonymous.x7673156971670863906
+package com.aibox.app
 
 import android.app.Application
 import android.content.res.Configuration

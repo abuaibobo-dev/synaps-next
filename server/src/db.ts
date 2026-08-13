@@ -4,7 +4,9 @@ import path from 'path';
 import fs from 'fs';
 
 const __dirname = path.dirname(__filename);
-const DB_PATH = path.join(__dirname, '../../data/synaps.db');
+const DB_PATH = process.env.SYNAPS_DATA_DIR
+  ? path.join(process.env.SYNAPS_DATA_DIR, 'synaps.db')
+  : path.join(__dirname, '../../data/synaps.db');
 
 function locateWasm(file: string): string {
   const candidates = [
