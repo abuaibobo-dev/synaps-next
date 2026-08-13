@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
-import { getDb, queryOne } from '../db.js';
+import { getDb, queryAll, queryOne } from '../db.js';
 
 const router = express.Router();
 
@@ -17,6 +17,8 @@ You have access to tools that let you interact with the project files:
 - read_file: Read file contents
 - write_file: Create or modify files
 - search_file: Search for files by name
+- list_skills: List available skills (methodologies/guides)
+- read_skill: Read a skill's full content by name
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -190,6 +192,19 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
 
       walkDir(projectRoot, 0);
       return results.length > 0 ? results.join('\n') : `No files matching "${toolCall.query}"`;
+    }
+
+    case 'list_skills': {
+      const rows = queryAll('SELECT name, description FROM skills WHERE enabled = 1 ORDER BY name') as Record<string, string>[];
+      if (rows.length === 0) return 'No skills available.';
+      return rows.map((r) => `- ${r.name}: ${r.description}`).join('\n');
+    }
+
+    case 'read_skill': {
+      if (!toolCall.query) return 'Error: query (skill name) is required';
+      const skill = queryOne('SELECT name, description, content FROM skills WHERE name = ? AND enabled = 1', [toolCall.query]) as Record<string, string> | null;
+      if (!skill) return `Skill "${toolCall.query}" not found. Use list_skills to see available skills.`;
+      return `## ${skill.name}\n\n${skill.description}\n\n---\n\n${skill.content}`;
     }
 
     default:

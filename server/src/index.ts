@@ -10,6 +10,7 @@ import transcribeRouter from "./routes/transcribe.js";
 import snapshotsRouter from "./routes/snapshots.js";
 import githubRouter from "./routes/github.js";
 import settingsRouter from "./routes/settings.js";
+import skillsRouter from "./routes/skills.js";
 import terminalRouter from "./routes/terminal.js";
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api/v1/transcribe', transcribeRouter);
 app.use('/api/v1/snapshots', snapshotsRouter);
 app.use('/api/v1/github', githubRouter);
 app.use('/api/v1/settings', settingsRouter);
+app.use('/api/v1/skills', skillsRouter);
 app.use('/api/v1/terminal', terminalRouter);
 
 app.listen(port, () => {

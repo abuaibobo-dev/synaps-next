@@ -1,11 +1,19 @@
 import initSqlJs from 'sql.js';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 const __dirname = path.dirname(__filename);
 const DB_PATH = path.join(__dirname, '../../data/synaps.db');
+
+function locateWasm(file: string): string {
+  const candidates = [
+    path.join(path.dirname(__filename), file),
+    path.join(path.dirname(__filename), '..', '..', 'node_modules', 'sql.js', 'dist', file),
+    path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', file),
+  ];
+  return candidates.find((c) => fs.existsSync(c)) ?? candidates[0];
+}
 
 // Ensure data directory exists
 const dataDir = path.dirname(DB_PATH);
@@ -19,7 +27,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
   if (db) return db;
 
   const SQL = await initSqlJs({
-    locateFile: (file: string) => path.join(path.dirname(fileURLToPath(import.meta.url)), file),
+    locateFile: locateWasm,
   });
 
   // Load existing database or create new one
@@ -106,6 +114,20 @@ export async function getDb(): Promise<SqlJsDatabase> {
       exit_code INTEGER DEFAULT 0,
       executed_at INTEGER NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT DEFAULT '',
+      content TEXT NOT NULL,
+      metadata TEXT DEFAULT '{}',
+      source TEXT DEFAULT '',
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
 
