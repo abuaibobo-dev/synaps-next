@@ -1,0 +1,68 @@
+name: Build Embedded Node (nodejs-mobile)
+
+# Recompiles nodejs-mobile v18.20.4 with a modern NDK so libnode.so is ABI
+# compatible with React Native's libc++_shared.so (clang 18).
+on:
+  workflow_dispatch:
+    inputs:
+      ndk:
+        description: 'NDK version (default r27 = clang 18)'
+        required: false
+        default: 'r27'
+
+jobs:
+  build-android-arm64:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      ANDROID_NDK_VERSION: ${{ inputs.ndk }}
+      ANDROID_TARGET_SDK_VERSION: '24'
+      TARGET_ARCH: arm64
+    steps:
+      - name: Checkout nodejs-mobile source
+        uses: actions/checkout@v4
+        with:
+          repository: nodejs-mobile/nodejs-mobile
+          ref: v18.20.4
+          fetch-depth: 1
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          add-to-path: false
+
+      - name: Build libnode.so
+        env:
+          MY_ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          LDFLAGS: '-Wl,-z,max-page-size=16384'
+        run: |
+          ./tools/android_build.sh "$MY_ANDROID_NDK_HOME" "$ANDROID_TARGET_SDK_VERSION" "$TARGET_ARCH"
+          find out_android -name libnode.so -exec ls -la {} \;
+
+      - name: Package release asset
+        run: |
+          mkdir -p pkg/bin/arm64-v8a pkg/include
+          cp out_android/arm64-v8a/libnode.so pkg/bin/arm64-v8a/
+          cp -r out_android/include/node pkg/include/ 2>/dev/null || cp -r out/include/node pkg/include/ 2>/dev/null || true
+          (cd pkg && zip -qr ../nodejs-mobile-v18.20.4-android-r27-arm64.zip .)
+          ls -la nodejs-mobile-v18.20.4-android-r27-arm64.zip
+
+      - name: Upload to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="nodejs-mobile-r27"
+          gh release create "$TAG" "nodejs-mobile-v18.20.4-android-r27-arm64.zip" \
+            --repo "${{ github.repository }}" \
+            --title "nodejs-mobile v18.20.4 (NDK r27 / clang 18, arm64)" \
+            --notes "Recompiled with NDK ${{ env.ANDROID_NDK_VERSION }} for libc++ ABI compatibility with React Native." \
+            || gh release upload "$TAG" "nodejs-mobile-v18.20.4-android-r27-arm64.zip" \
+            --repo "${{ github.repository }}" --clobber
