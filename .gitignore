@@ -51,7 +51,7 @@ ehthumbs.db
 output.log
 *.log
 *.log.*
-logs/
+/logs/
 
 # 视频文件
 *.mp4
