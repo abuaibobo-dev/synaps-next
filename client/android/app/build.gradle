@@ -221,7 +221,9 @@ abstract class DownloadNodejsTask extends DefaultTask {
             zipFile.parentFile.mkdirs()
             println "Downloading Node.js core from: $url"
             zipFile.withOutputStream { os ->
-                new URL(url).openStream().withStream { it.withOutputStream(os) }
+                new URL(url).openStream().withCloseable { input ->
+                    os << input
+                }
             }
             def md5 = zipFile.bytes.md5().encodeHex().toString()
             if (md5 != expectedMD5) {
