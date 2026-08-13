@@ -211,7 +211,7 @@ abstract class DownloadNodejsTask extends DefaultTask {
         def extractDir = project.file('./libnode')
 
         if (zipFile.exists()) {
-            def md5 = zipFile.bytes.md5().encodeHex().toString()
+            def md5 = zipFile.bytes.md5()
             if (md5 != expectedMD5) {
                 zipFile.delete()
                 println "MD5 mismatch, re-downloading: $md5"
@@ -225,7 +225,7 @@ abstract class DownloadNodejsTask extends DefaultTask {
                     os << input
                 }
             }
-            def md5 = zipFile.bytes.md5().encodeHex().toString()
+            def md5 = zipFile.bytes.md5()
             if (md5 != expectedMD5) {
                 throw new GradleException("MD5 verification failed for $zipFile: $md5")
             }
@@ -243,16 +243,15 @@ tasks.register('copyNodeProject') {
     doLast {
         def serverDir = project.file("${projectRoot}/../server")
         def assetsDir = project.file('src/main/assets/nodejs-project')
+        assetsDir.deleteDir()
         assetsDir.mkdirs()
         exec {
             workingDir serverDir
             commandLine 'node', 'build.js'
         }
         copy {
-            from(serverDir) {
-                include 'dist/index.cjs'
-                include 'dist/sql-wasm.wasm'
-            }
+            from(new File(serverDir, 'dist/index.cjs'))
+            from(new File(serverDir, 'dist/sql-wasm.wasm'))
             into assetsDir
         }
         def dataDir = project.file('src/main/assets/nodejs-project/data')
