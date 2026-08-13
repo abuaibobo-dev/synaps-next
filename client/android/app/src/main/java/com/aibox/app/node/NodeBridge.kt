@@ -16,15 +16,28 @@ object NodeBridge {
     private const val PREFS_NAME = "SYNAPS_NODE_PREFS"
     private const val PREFS_LAST_UPDATE = "last_update_time"
 
-    init {
-        System.loadLibrary("native-lib")
-        System.loadLibrary("node")
-    }
-
-    private external fun startNodeWithArguments(arguments: Array<String>): Int
+    @Volatile
+    private var loaded = false
 
     @Volatile
     private var started = false
+
+    @Volatile
+    private var lastError: String? = null
+
+    @Volatile
+    private var appContext: Context? = null
+
+    val error: String? get() = lastError
+
+    private external fun startNodeWithArguments(arguments: Array<String>): Int
+
+    private fun ensureLoaded() {
+        if (loaded) return
+        System.loadLibrary("node")
+        System.loadLibrary("native-lib")
+        loaded = true
+    }
 
     fun start(context: Context) {
         if (started) return
@@ -32,19 +45,42 @@ object NodeBridge {
             if (started) return
             started = true
             val appContext = context.applicationContext
+            this.appContext = appContext
             Executors.newSingleThreadExecutor().submit {
                 try {
+                    log("Starting embedded Node...")
+                    ensureLoaded()
                     val nodeDir = File(appContext.filesDir, NODE_PROJECT_ASSET)
                     copyAssets(appContext, appContext.assets, NODE_PROJECT_ASSET, nodeDir)
                     saveLastUpdateTime(appContext)
                     val dataDir = File(nodeDir, "data")
                     if (!dataDir.exists()) dataDir.mkdirs()
-                    Log.i(TAG, "Starting Node server from $nodeDir")
-                    startNodeWithArguments(arrayOf("node", File(nodeDir, "main.cjs").absolutePath))
+                    val entry = File(nodeDir, "main.cjs")
+                    if (!entry.exists()) {
+                        val msg = "entry missing: ${entry.absolutePath}"
+                        log(msg)
+                        lastError = msg
+                        return@submit
+                    }
+                    log("Launching: node ${entry.absolutePath}")
+                    val code = startNodeWithArguments(arrayOf("node", entry.absolutePath))
+                    log("Node exited with code $code")
                 } catch (t: Throwable) {
-                    Log.e(TAG, "Node startup failed", t)
+                    lastError = t.toString()
+                    log("Node startup failed", t)
                 }
             }
+        }
+    }
+
+    private fun log(msg: String, t: Throwable? = null) {
+        Log.e(TAG, msg, t)
+        try {
+            val dir = appContext?.filesDir ?: return
+            val f = File(dir, "node-bridge.log")
+            val line = "${System.currentTimeMillis()} $msg" + (t?.let { " | ${it.javaClass.simpleName}: ${it.message}" } ?: "") + "\n"
+            f.appendText(line)
+        } catch (_: Throwable) {
         }
     }
 

@@ -21,7 +21,11 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
-    com.aibox.app.node.NodeBridge.start(applicationContext)
+    try {
+      startService(android.content.Intent(this, com.aibox.app.node.NodeService::class.java))
+    } catch (t: Throwable) {
+      android.util.Log.e("SYNAPS_NODE", "failed to start NodeService", t)
+    }
   }
 
   /**
