@@ -35,7 +35,7 @@ object NodeBridge {
             Executors.newSingleThreadExecutor().submit {
                 try {
                     val nodeDir = File(appContext.filesDir, NODE_PROJECT_ASSET)
-                    copyAssets(appContext.assets, NODE_PROJECT_ASSET, nodeDir)
+                    copyAssets(appContext, appContext.assets, NODE_PROJECT_ASSET, nodeDir)
                     saveLastUpdateTime(appContext)
                     val dataDir = File(nodeDir, "data")
                     if (!dataDir.exists()) dataDir.mkdirs()
@@ -69,8 +69,8 @@ object NodeBridge {
             .edit().putLong(PREFS_LAST_UPDATE, lastUpdate).apply()
     }
 
-    private fun copyAssets(assetManager: AssetManager, fromAssetPath: String, toPath: File) {
-        if (toPath.exists() && !wasApkUpdated()) return
+    private fun copyAssets(context: Context, assetManager: AssetManager, fromAssetPath: String, toPath: File) {
+        if (toPath.exists() && !wasApkUpdated(context)) return
         deleteRecursively(toPath)
         copyAssetFolder(assetManager, fromAssetPath, toPath)
     }
