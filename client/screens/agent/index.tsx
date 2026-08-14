@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
+import { getDeviceStatus, startDeviceBridge } from '@/utils/deviceControl';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { spacing, radius, fontSize } from '@/utils/theme';
@@ -82,6 +83,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const [deviceReady, setDeviceReady] = useState<boolean | null>(null);
   const insets = useSafeAreaInsets();
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -198,9 +200,20 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     };
   }, []);
 
-  // Cleanup on unmount
+  // 设备控制桥：启动轮询，把后端队列里的设备动作交给原生无障碍服务执行
   useEffect(() => {
+    const stop = startDeviceBridge();
+    getDeviceStatus()
+      .then((st) => setDeviceReady(st.enabled && st.serviceConnected))
+      .catch(() => setDeviceReady(false));
+    const timer = setInterval(() => {
+      getDeviceStatus()
+        .then((st) => setDeviceReady(st.enabled && st.serviceConnected))
+        .catch(() => setDeviceReady(false));
+    }, 5000);
     return () => {
+      stop();
+      clearInterval(timer);
       if (esRef.current) {
         esRef.current.close();
       }
@@ -621,6 +634,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </View>
           </View>
           <View style={styles.headerRight}>
+            {deviceReady !== null && (
+              <View style={[styles.deviceBadge, deviceReady && styles.deviceBadgeOn]}>
+                <FontAwesome6 name="hand-pointer" size={10} color={deviceReady ? colors.primary : colors.textMuted} />
+                <Text style={[styles.deviceBadgeText, deviceReady && styles.deviceBadgeTextOn]}>
+                  {deviceReady ? '设备控制' : '未开启'}
+                </Text>
+              </View>
+            )}
             {balance !== null && (
               <View style={styles.balanceBadge}>
                 <FontAwesome6 name="coins" size={10} color={colors.primary} />
@@ -1034,6 +1055,29 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     fontSize: fontSize.xs,
     color: colors.textSecondary,
     fontWeight: '600',
+  },
+  deviceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  deviceBadgeOn: {
+    backgroundColor: colors.primaryGlow,
+    borderColor: colors.primaryBorder,
+  },
+  deviceBadgeText: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  deviceBadgeTextOn: {
+    color: colors.primary,
   },
   headerAction: {
     width: 36,

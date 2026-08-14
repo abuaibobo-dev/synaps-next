@@ -10,6 +10,13 @@ import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } fro
 import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
 import { runHarnessTask, harnessStatus } from '../harness.js';
+import {
+  deviceControlEnabled,
+  enqueueDeviceAction,
+  getDeviceAction,
+  deviceStatusSummary,
+  type DeviceActionType,
+} from '../device.js';
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -57,6 +64,8 @@ You have access to tools that let you interact with the project files:
 - project_import: Import an AgentPack JSON to restore/migrate a project config (args: params.config with the JSON string). Medium risk, requires confirmation
 - harness_status: Check whether DeepSeek Harness is available (returns Node version, config status). Read-only.
 - harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
+- device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
+- device_action: Control this phone's screen. Args: type one of "tap" (params x,y), "swipe" (params x1,y1,x2,y2,duration), "screenshot" (no params, returns saved PNG path + size), "ui_dump" (no params, returns the visible UI tree with bounds), "back", "home", "launch_app" (params package). Requires the accessibility service enabled in Settings → 设备控制. Medium risk, requires confirmation.
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -145,6 +154,7 @@ interface ToolCall {
   server?: string;
   method?: string;
   params?: Record<string, unknown>;
+  type?: string;
   task?: string;
 }
 
@@ -1647,6 +1657,34 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
       } catch (err) {
         return `[DeepSeek Harness error]\n${err instanceof Error ? err.message : String(err)}`;
       }
+    }
+
+    case 'device_status': {
+      return deviceStatusSummary();
+    }
+
+    case 'device_action': {
+      const type = toolCall.type as DeviceActionType | undefined;
+      const valid: DeviceActionType[] = ['tap', 'swipe', 'screenshot', 'ui_dump', 'back', 'home', 'launch_app'];
+      if (!type || !valid.includes(type)) {
+        return `Error: device_action type must be one of: ${valid.join(', ')}`;
+      }
+      if (!deviceControlEnabled()) {
+        return '设备控制未启用。请先在 设置 → 设备控制 中启用，并在系统无障碍设置里开启 Synaps 服务（设置 → 设备控制 → 打开无障碍设置）。';
+      }
+      const action = enqueueDeviceAction(type, toolCall.params || {});
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        const done = getDeviceAction(action.id);
+        if (done && done.status !== 'pending') {
+          if (done.status === 'done') {
+            return `[device_action ${type} 完成]\n${done.result || '(无输出)'}`;
+          }
+          return `[device_action ${type} 失败]\n${done.error || '未知错误'}`;
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      return '[device_action 执行超时（20s）] 请确认已在系统设置中开启 Synaps 无障碍服务（设置 → 设备控制 → 打开无障碍设置）。';
     }
 
     default:

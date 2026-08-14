@@ -2,16 +2,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform, useColorScheme } from 'react-native';
 import { Uniwind } from 'uniwind';
-import { darkColors, lightColors } from '@/utils/theme';
-import type { ThemeColors } from '@/utils/theme';
+import { buildThemeColors, ACCENTS } from '@/utils/theme';
+import type { ThemeColors, AccentKey } from '@/utils/theme';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-const STORAGE_KEY = 'synaps.theme.mode';
+const MODE_KEY = 'synaps.theme.mode';
+const ACCENT_KEY = 'synaps.theme.accent';
 
 interface ThemeContextValue {
   mode: ThemeMode;
   setMode: (mode: ThemeMode) => void;
+  accent: AccentKey;
+  setAccent: (accent: AccentKey) => void;
   isDark: boolean;
   colors: ThemeColors;
 }
@@ -19,25 +22,37 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue>({
   mode: 'system',
   setMode: () => {},
+  accent: 'purple',
+  setAccent: () => {},
   isDark: true,
-  colors: darkColors,
+  colors: buildThemeColors('purple', true),
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useColorScheme();
   const [mode, setModeState] = useState<ThemeMode>('system');
+  const [accent, setAccentState] = useState<AccentKey>('purple');
   const [webScheme, setWebScheme] = useState<'light' | 'dark' | null>(null);
 
-  // 读取持久化主题模式
+  // 读取持久化主题模式与皮肤
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((v) => {
-        if (v === 'light' || v === 'dark' || v === 'system') {
-          setModeState(v);
-          Uniwind.setTheme(v);
+    (async () => {
+      try {
+        const [m, a] = await Promise.all([
+          AsyncStorage.getItem(MODE_KEY),
+          AsyncStorage.getItem(ACCENT_KEY),
+        ]);
+        if (m === 'light' || m === 'dark' || m === 'system') {
+          setModeState(m);
+          Uniwind.setTheme(m);
         }
-      })
-      .catch(() => {});
+        if (a && a in ACCENTS) {
+          setAccentState(a as AccentKey);
+        }
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
 
   // web 宿主（coze workbench）下发系统外观
@@ -54,8 +69,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const setMode = useCallback((next: ThemeMode) => {
     setModeState(next);
-    AsyncStorage.setItem(STORAGE_KEY, next).catch(() => {});
+    AsyncStorage.setItem(MODE_KEY, next).catch(() => {});
     Uniwind.setTheme(next);
+  }, []);
+
+  const setAccent = useCallback((next: AccentKey) => {
+    setAccentState(next);
+    AsyncStorage.setItem(ACCENT_KEY, next).catch(() => {});
   }, []);
 
   // 跟随 Uniwind 主题（原生端会同步 Appearance.setColorScheme）
@@ -66,9 +86,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme: 'light' | 'dark' = webScheme ?? systemColorScheme ?? 'dark';
   const resolvedMode: 'light' | 'dark' = mode === 'system' ? systemScheme : mode;
   const isDark = resolvedMode === 'dark';
-  const colors = isDark ? darkColors : lightColors;
+  const colors = useMemo(() => buildThemeColors(accent, isDark), [accent, isDark]);
 
-  const value = useMemo(() => ({ mode, setMode, isDark, colors }), [mode, setMode, isDark, colors]);
+  const value = useMemo(
+    () => ({ mode, setMode, accent, setAccent, isDark, colors }),
+    [mode, setMode, accent, setAccent, isDark, colors]
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

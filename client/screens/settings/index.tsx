@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch, Platform, Linking } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
-import { spacing, radius, fontSize } from '@/utils/theme';
-import type { ThemeColors } from '@/utils/theme';
+import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
+import type { ThemeColors, AccentKey } from '@/utils/theme';
 import { useThemeColors } from '@/components/ThemeProvider';
 import { getApiBase } from '@/utils';
 import { getCrashLogs, clearCrashLogs } from '@/utils/crashReporter';
+import { getDeviceStatus, setDeviceControlEnabled } from '@/utils/deviceControl';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 
@@ -123,7 +124,7 @@ function EditModal({ visible, title, value, placeholder, secure, onClose, onSave
 }
 
 export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
-  const { colors, isDark, mode, setMode } = useThemeColors();
+  const { colors, isDark, mode, setMode, accent, setAccent } = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [editKey, setEditKey] = useState<keyof Settings | null>(null);
@@ -135,6 +136,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [trustModalVisible, setTrustModalVisible] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [deviceEnabled, setDeviceEnabled] = useState(false);
+  const [deviceServiceConnected, setDeviceServiceConnected] = useState(false);
   const [mcpModalVisible, setMcpModalVisible] = useState(false);
   const [mcpFormName, setMcpFormName] = useState('');
   const [mcpFormTransport, setMcpFormTransport] = useState<'stdio' | 'sse'>('stdio');
@@ -398,6 +401,34 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     ]);
   };
 
+  const refreshDeviceStatus = useCallback(async () => {
+    const st = await getDeviceStatus();
+    setDeviceEnabled(st.enabled);
+    setDeviceServiceConnected(st.serviceConnected);
+  }, []);
+
+  useEffect(() => {
+    refreshDeviceStatus();
+    const timer = setInterval(refreshDeviceStatus, 4000);
+    return () => clearInterval(timer);
+  }, [refreshDeviceStatus]);
+
+  const toggleDeviceControl = async (value: boolean) => {
+    const ok = await setDeviceControlEnabled(value);
+    setDeviceEnabled(ok ? value : !value);
+    refreshDeviceStatus();
+  };
+
+  const openAccessibilitySettings = () => {
+    if (Platform.OS === 'android') {
+      Linking.openURL('intent:#Intent;action=android.settings.ACCESSIBILITY_SETTINGS;end').catch(() => {
+        Alert.alert('提示', '请在系统设置 → 无障碍 中开启 Synaps 设备控制');
+      });
+    } else {
+      Alert.alert('提示', '设备控制仅支持 Android');
+    }
+  };
+
   const maskValue = (value: string) => {
     if (!value) return '未配置';
     if (value.length <= 8) return '***';
@@ -451,6 +482,71 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                   </Pressable>
                 ))}
               </View>
+            </View>
+            <View style={styles.settingItem}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="brush" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>皮肤</Text>
+              <View style={styles.accentRow}>
+                {(Object.keys(ACCENTS) as AccentKey[]).map((key) => (
+                  <Pressable
+                    key={key}
+                    style={styles.accentItem}
+                    onPress={() => setAccent(key)}
+                    accessibilityLabel={`皮肤 ${ACCENTS[key].label}`}
+                  >
+                    <View
+                      style={[
+                        styles.accentSwatch,
+                        { backgroundColor: ACCENTS[key].swatch },
+                        accent === key && styles.accentSwatchActive,
+                      ]}
+                    >
+                      {accent === key && <FontAwesome6 name="check" size={12} color="#FFFFFF" />}
+                    </View>
+                    <Text style={[styles.accentLabel, accent === key && styles.accentLabelActive]}>
+                      {ACCENTS[key].label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          </View>
+
+          {/* 设备控制 */}
+          <Text style={styles.groupTitle}>设备控制</Text>
+          <View style={styles.group}>
+            <View style={styles.settingItem}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="hand-pointer" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>启用设备控制</Text>
+              <View style={styles.settingState}>
+                <View style={[styles.settingStateDot, deviceServiceConnected ? styles.settingStateDotOn : styles.settingStateDotOff]} />
+                <Text style={styles.settingStateText}>
+                  {deviceServiceConnected ? '服务已连接' : '服务未连接'}
+                </Text>
+              </View>
+              <Switch
+                value={deviceEnabled}
+                onValueChange={toggleDeviceControl}
+                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
+                thumbColor={deviceEnabled ? colors.primary : colors.textMuted}
+              />
+            </View>
+            <Pressable style={styles.settingItem} onPress={openAccessibilitySettings}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="universal-access" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>打开无障碍设置</Text>
+              <Text style={styles.settingValue}>{deviceServiceConnected ? '已开启' : '去开启'}</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <View style={styles.settingHint}>
+              <Text style={styles.settingHintText}>
+                开启后 Agent 获得 device_action 工具：点击、滑动、截图、读取界面、返回/主页/打开应用。请在系统无障碍列表中找到“Synaps 设备控制”并打开开关。
+              </Text>
             </View>
           </View>
 
@@ -1000,6 +1096,27 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     borderColor: colors.border,
     overflow: 'hidden',
   },
+  settingState: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginRight: spacing.xs,
+  },
+  settingStateDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  settingStateDotOn: {
+    backgroundColor: '#22C55E',
+  },
+  settingStateDotOff: {
+    backgroundColor: colors.textMuted,
+  },
+  settingStateText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+  },
   settingHint: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
@@ -1067,6 +1184,34 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   themeSegTextActive: {
     color: '#FFFFFF',
+  },
+  accentRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  accentItem: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  accentSwatch: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  accentSwatchActive: {
+    borderColor: colors.textPrimary,
+  },
+  accentLabel: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+  },
+  accentLabelActive: {
+    color: colors.primary,
+    fontWeight: '700',
   },
   modalOverlay: {
     flex: 1,

@@ -13,6 +13,7 @@ import settingsRouter from "./routes/settings.js";
 import skillsRouter from "./routes/skills.js";
 import terminalRouter from "./routes/terminal.js";
 import auditRouter from "./routes/audit.js";
+import deviceRouter from "./routes/device.js";
 
 const app = express();
 const port = process.env.PORT || 19091;
@@ -40,6 +41,7 @@ app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/skills', skillsRouter);
 app.use('/api/v1/terminal', terminalRouter);
 app.use('/api/v1/audit', auditRouter);
+app.use('/api/v1/device', deviceRouter);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);

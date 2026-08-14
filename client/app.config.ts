@@ -32,6 +32,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     "plugins": [
       "./plugins/withNodeBridge",
+      "./plugins/withDeviceControl",
       process.env.EXPO_PUBLIC_BACKEND_BASE_URL ? [
         "expo-router",
         {
