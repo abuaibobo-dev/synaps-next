@@ -3,7 +3,7 @@
 ## 架构简述
 - `client/`：Expo / React Native 应用（TypeScript），8 个模块页面（项目/Agent/代码/终端/APK/日志/GitHub/设置）
 - `server/`：Express 后端，esbuild 打包为**自包含单文件** `dist/index.cjs`（含 sql.js，仅 wasm 外置）
-- **嵌入式 Node**：APK 内嵌 nodejs-mobile 运行时（libnode.so），首次启动把 `assets/nodejs-project/`（server bundle + wasm）复制到应用私有目录，在独立线程运行 Express，前端走 `http://127.0.0.1:9091`
+- **嵌入式 Node**：APK 内嵌 nodejs-mobile 运行时（libnode.so），首次启动把 `assets/nodejs-project/`（server bundle + wasm）复制到应用私有目录，在独立线程运行 Express，前端走 `http://127.0.0.1:19091`
 
 ## 嵌入式 Node 集成（nodejs-mobile）
 - `client/android/app/build.gradle`

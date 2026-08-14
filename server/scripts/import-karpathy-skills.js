@@ -6,13 +6,13 @@
  *
  * 用法：
  *   node scripts/import-karpathy-skills.js <skills-dir> [base-url]
- *   例： node scripts/import-karpathy-skills.js /tmp/ks1 http://127.0.0.1:9091
+ *   例： node scripts/import-karpathy-skills.js /tmp/ks1 http://127.0.0.1:19091
  */
 import fs from 'fs';
 import path from 'path';
 
 const dir = process.argv[2];
-const baseUrl = (process.argv[3] || 'http://127.0.0.1:9091').replace(/\/+$/, '');
+const baseUrl = (process.argv[3] || 'http://127.0.0.1:19091').replace(/\/+$/, '');
 
 if (!dir || !fs.existsSync(dir)) {
   console.error('用法: node scripts/import-karpathy-skills.js <skills-dir> [base-url]');

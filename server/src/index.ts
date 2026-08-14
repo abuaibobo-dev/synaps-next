@@ -14,7 +14,7 @@ import skillsRouter from "./routes/skills.js";
 import terminalRouter from "./routes/terminal.js";
 
 const app = express();
-const port = process.env.PORT || 9091;
+const port = process.env.PORT || 19091;
 
 // Middleware
 app.use(cors());
