@@ -43,6 +43,9 @@ You have access to tools that let you interact with the project files:
 - mcp_call: Call a tool on an MCP server (args: server "name", method "tool name", params object with the tool arguments). Medium risk, requires confirmation. Use after mcp_list_tools to see available tools.
 - security_scan: Scan the project (or a specific path) for security vulnerabilities; returns issues with severity, rule and line numbers
 - security_fix: Use AI to generate and apply fixes for security issues (creates a snapshot before changing files)
+- generate_tests: Generate unit tests for a file (args: path). Detects jest/vitest/pytest and writes a test file (creates a snapshot first)
+- run_tests: Run the project test suite (auto-detects npm test / jest / vitest / pytest); returns output and exit code
+- auto_test_fix: Run tests, analyze failures, and fix the code automatically (args: path optional; uses the current working-tree changes if path omitted). Creates a snapshot before changing files
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -67,11 +70,21 @@ When the user asks you to "fix" or "repair" the project (e.g. "修复我", "检�
 2. Run analyze_code to surface quality issues
 3. Run auto_fix for fixable issues, then re-run run_lint/run_typecheck to verify
 3.5. Run security_scan, then security_fix for any issues, then re-scan to verify
-4. Run git_commit_push with a clear commit message
-5. Run trigger_build (repo is inferred from git remote; ref is usually "main")
-6. Poll check_build_status until the run completes
-7. When the APK artifact is ready, run download_and_install with the artifact download URL
+4. Run generate_tests (if the project has no tests) then run_tests
+5. If tests fail, run auto_test_fix and re-run run_tests until green
+6. Run git_commit_push with a clear commit message
+7. Run trigger_build (repo is inferred from git remote; ref is usually "main")
+8. Poll check_build_status until the run completes
+9. When the APK artifact is ready, run download_and_install with the artifact download URL
+
 Explain each step before calling a tool. If a tool is blocked or denied by the permission system, stop and tell the user.
+
+## Quality Gate
+Before calling git_commit_push, ensure all of the following pass:
+1. run_lint and run_typecheck report no errors
+2. security_scan reports no issues (use security_fix if it does)
+3. run_tests passes (use generate_tests first if the project has no tests, and auto_test_fix if tests fail)
+Only push when the full gate is green.
 
 ## Security Workflow
 After modifying code, always run security_scan. If issues are found, run security_fix, then run security_scan again to verify. Only push when the scan is clean.
@@ -254,6 +267,71 @@ function requestApproval(
       },
     })}\n\n`);
   });
+}
+
+function getAiConfig(): { apiKey: string; baseUrl: string; model: string } {
+  const apiKeyRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_api_key']);
+  const baseUrlRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_base_url']);
+  const modelRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_model']);
+  return {
+    apiKey: apiKeyRow && typeof apiKeyRow.value === 'string' ? apiKeyRow.value : '',
+    baseUrl:
+      baseUrlRow && typeof baseUrlRow.value === 'string' && baseUrlRow.value
+        ? baseUrlRow.value
+        : 'https://api.deepseek.com',
+    model:
+      modelRow && typeof modelRow.value === 'string' && modelRow.value
+        ? modelRow.value
+        : 'deepseek-chat',
+  };
+}
+
+async function aiComplete(
+  apiKey: string,
+  baseUrl: string,
+  model: string,
+  system: string,
+  user: string
+): Promise<string> {
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.1,
+      max_tokens: 8000,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const raw = data.choices?.[0]?.message?.content || '';
+  const m = raw.match(/```(?:\w+)?\n([\s\S]*?)```/);
+  return m ? m[1] : raw;
+}
+
+function detectTestCommand(cwd: string): string | null {
+  const pkgPath = path.join(cwd, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg.scripts?.test) return 'npm test';
+      return 'npx jest --passWithNoTests 2>/dev/null || npx vitest run 2>/dev/null || echo NO_TEST_RUNNER';
+    } catch {
+      return 'npx jest --passWithNoTests 2>/dev/null || npx vitest run 2>/dev/null || echo NO_TEST_RUNNER';
+    }
+  }
+  if (
+    fs.existsSync(path.join(cwd, 'pytest.ini')) ||
+    fs.existsSync(path.join(cwd, 'pyproject.toml')) ||
+    fs.existsSync(path.join(cwd, 'requirements.txt'))
+  ) {
+    return 'python3 -m pytest -q 2>/dev/null || echo NO_TEST_RUNNER';
+  }
+  return null;
 }
 
 async function executeTool(projectId: string, toolCall: ToolCall): Promise<string> {
@@ -919,6 +997,148 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
 
       const remaining = fs.statSync(target).isDirectory() ? scanProject(target) : scanFile(target);
       return `Applied fixes:\n${fixes.join('\n') || '(none)'}\n\nRe-scan: ${remaining.length} issue(s) remaining.\n\n${formatIssues(remaining.slice(0, 10))}`;
+    }
+
+    case 'generate_tests': {
+      const relPath = toolCall.path;
+      if (!relPath) return 'Error: path is required';
+      if (/\.(test|spec)\./.test(relPath)) return `Error: ${relPath} looks like a test file already`;
+      const cwd = resolveProjectPath(projectId, '');
+      const filePath = resolveProjectPath(projectId, relPath);
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        return `Error: file not found: ${relPath}`;
+      }
+      const stat = fs.statSync(filePath);
+      if (stat.size > 300 * 1024) return `Error: file too large (${Math.round(stat.size / 1024)}KB)`;
+      const content = fs.readFileSync(filePath, 'utf-8');
+
+      let framework = 'jest';
+      let testPath = relPath.replace(/(\.tsx?|\.jsx?|\.mjs)$/, '') + '.test.ts';
+      const pkgPath = path.join(cwd, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+          const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+          if (deps.vitest) framework = 'vitest';
+        } catch {
+          // keep jest default
+        }
+      } else if (/\.py$/.test(relPath)) {
+        framework = 'pytest';
+        testPath = relPath.replace(/(^|\/)([^/]+)\.py$/, '$1test_$2.py');
+      }
+
+      const { apiKey, baseUrl, model } = getAiConfig();
+      if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
+
+      const userPrompt = `Generate unit tests for the file below using ${framework}. Return ONLY the complete test file content in a single code block, no explanations.\n\nFile: ${relPath}\n\n\`\`\`\n${content}\n\`\`\``;
+      let testContent: string;
+      try {
+        testContent = await aiComplete(
+          apiKey,
+          baseUrl,
+          model,
+          `You are a senior test engineer. Only output code, never explanations. Use ${framework}.`,
+          userPrompt
+        );
+      } catch (err: any) {
+        return `Error generating tests: ${err?.message || String(err)}`;
+      }
+      if (!testContent.trim()) return 'Error: model returned empty test content';
+
+      const absTestPath = path.join(cwd, testPath);
+      const testDir = path.dirname(absTestPath);
+      if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
+      try {
+        createSnapshot(projectId, 'generate_tests 前快照', [
+          { path: testPath, content: fs.existsSync(absTestPath) ? fs.readFileSync(absTestPath, 'utf-8') : '' },
+        ]);
+      } catch {
+        // best-effort
+      }
+      fs.writeFileSync(absTestPath, testContent, 'utf-8');
+      return `Generated ${testPath} (${testContent.length} bytes, ${framework}).\n\nRun run_tests to execute the suite.`;
+    }
+
+    case 'run_tests': {
+      const cwd = resolveProjectPath(projectId, '');
+      const cmd = detectTestCommand(cwd);
+      if (!cmd) {
+        return 'No test configuration detected (package.json test script, jest/vitest, or pytest).';
+      }
+      const r = await execInProject(cwd, cmd, 300000);
+      const output = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n');
+      return `Tests ${r.exitCode === 0 ? 'PASSED' : 'FAILED'} (exit ${r.exitCode}, ${r.duration}ms)\n\n${truncateText(output || '(no output)', 6000)}`;
+    }
+
+    case 'auto_test_fix': {
+      const { apiKey, baseUrl, model } = getAiConfig();
+      if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
+      const cwd = resolveProjectPath(projectId, '');
+      const testCmd = detectTestCommand(cwd);
+      if (!testCmd) return 'No test configuration detected.';
+
+      const run = await execInProject(cwd, testCmd, 300000);
+      const testOutput = [run.stdout.trim(), run.stderr.trim()].filter(Boolean).join('\n');
+      if (run.exitCode === 0) return `Tests already pass (exit 0).\n\n${truncateText(testOutput, 3000)}`;
+
+      let files: string[] = [];
+      if (toolCall.path) {
+        files = [toolCall.path];
+      } else {
+        const status = await execInProject(cwd, 'git status --porcelain');
+        files = status.stdout
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => l.slice(3));
+      }
+      if (files.length === 0) {
+        return `Tests failed:\n${truncateText(testOutput, 3000)}\n\nNo changed files to fix and no path given. Pass path to auto_test_fix.`;
+      }
+
+      const failureSnippet = testOutput.slice(-4000);
+      const fixes: string[] = [];
+      for (const rel of files.slice(0, 3)) {
+        const full = path.join(cwd, rel);
+        if (!fs.existsSync(full) || fs.statSync(full).isDirectory()) continue;
+        if (!/\.(ts|tsx|js|jsx|py)$/.test(rel)) continue;
+        const fstat = fs.statSync(full);
+        if (fstat.size > 300 * 1024) {
+          fixes.push(`Skipped ${rel}: too large`);
+          continue;
+        }
+        const content = fs.readFileSync(full, 'utf-8');
+        const userPrompt = `Tests are failing. Fix the code in this file so the tests pass. Return ONLY the complete fixed file content in a single code block, no explanations.\n\nTest output (tail):\n${failureSnippet}\n\nFile: ${rel}\n\n\`\`\`\n${content}\n\`\`\``;
+        let fixed: string;
+        try {
+          fixed = await aiComplete(
+            apiKey,
+            baseUrl,
+            model,
+            'You are a senior software engineer. Only output code, never explanations.',
+            userPrompt
+          );
+        } catch (err: any) {
+          fixes.push(`Fix failed for ${rel}: ${err?.message || String(err)}`);
+          continue;
+        }
+        if (!fixed.trim() || fixed.trim() === content.trim()) {
+          fixes.push(`No change for ${rel}`);
+          continue;
+        }
+        try {
+          createSnapshot(projectId, 'auto_test_fix 前快照', [{ path: rel, content }]);
+        } catch {
+          // best-effort
+        }
+        fs.writeFileSync(full, fixed, 'utf-8');
+        fixes.push(`Fixed ${rel} (${content.length} → ${fixed.length} bytes)`);
+      }
+
+      const rerun = await execInProject(cwd, testCmd, 300000);
+      const rerunOut = [rerun.stdout.trim(), rerun.stderr.trim()].filter(Boolean).join('\n');
+      return `Applied fixes:\n${fixes.join('\n') || '(none)'}\n\nRe-run tests: ${rerun.exitCode === 0 ? 'PASSED' : 'STILL FAILING'} (exit ${rerun.exitCode})\n\n${truncateText(rerunOut.slice(-3000), 3000)}`;
     }
 
     default:

@@ -83,6 +83,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'mcp_list_servers':
     case 'mcp_list_tools':
     case 'security_scan':
+    case 'run_tests':
       return { level: 'none', impact: '只读分析操作，无副作用' };
     case 'write_file':
       return {
@@ -105,6 +106,10 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
       return { level: 'medium', impact: `调用 MCP 工具：${toolCall.server || '?'}.${toolCall.method || '?'}` };
     case 'security_fix':
       return { level: 'medium', impact: `AI 自动修复安全漏洞：${toolCall.path || '整个项目'}（修改前创建快照）` };
+    case 'generate_tests':
+      return { level: 'medium', impact: `为文件生成测试：${toolCall.path || '?'}（写入测试文件）` };
+    case 'auto_test_fix':
+      return { level: 'medium', impact: `根据测试失败自动修复代码：${toolCall.path || '工作区改动文件'}（修改前创建快照）` };
     case 'run_command': {
       const cmd = toolCall.command || '';
       if (CRITICAL_PATTERNS.some((p) => p.test(cmd))) {
