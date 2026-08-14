@@ -163,6 +163,36 @@ export async function getDb(): Promise<SqlJsDatabase> {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS agent_instances (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      agent_type TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'idle',
+      system_prompt TEXT DEFAULT '',
+      tools TEXT DEFAULT '[]',
+      model TEXT DEFAULT 'deepseek-chat',
+      temperature REAL DEFAULT 0.7,
+      current_project TEXT,
+      working_directory TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_contexts (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      tool_calls TEXT DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (agent_id) REFERENCES agent_instances(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY,
       project_id TEXT,
