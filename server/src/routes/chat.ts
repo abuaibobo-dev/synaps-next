@@ -19,6 +19,21 @@ import {
 } from '../device.js';
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
+import {
+  getAgentTemplate,
+  createAgentInstance,
+  getOrCreateInstance,
+  getAgentInstance,
+  listAgentInstances,
+  updateAgentInstance,
+  deleteAgentInstance,
+  getAgentContextSummary,
+  clearAgentContext,
+  appendAgentMessage,
+  listAgentMessages,
+  AGENT_TYPES,
+  type AgentType,
+} from '../agentInstance.js';
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -70,6 +85,13 @@ You have access to tools that let you interact with the project files:
 - harness_status: Check whether DeepSeek Harness is available (returns Node version, config status). Read-only.
 - harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
 - device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
+- agent_list: List agent instances for the current session (id/type/name/status/context length). Read-only.
+- agent_create: Create a new agent instance (args: type one of scheduler/code_engineer/file_manager/search_assistant/general_chat/automator/ui_operator/researcher/translator/memory_admin, name optional). Medium risk, requires confirmation.
+- agent_delegate: Delegate a task to a sub-agent by type (args: type + task). The sub-agent answers with its own role prompt; useful for specialized opinions (review, research, translation). Medium risk.
+- agent_status: Show the status of all agent instances (idle/running/paused/stopped) and their context summaries. Read-only.
+- agent_clear: Clear an agent instance's independent context (args: id). Medium risk.
+- agent_delete: Delete an agent instance and its context (args: id). Medium risk.
+
 - device_action: Control this phone's screen. Args: type one of "tap" (params x,y), "swipe" (params x1,y1,x2,y2,duration), "screenshot" (no params, returns saved PNG path + size), "ui_dump" (no params, returns the visible UI tree with bounds), "back", "home", "launch_app" (params package). Requires the accessibility service enabled in Settings → 设备控制. Medium risk, requires confirmation.
 
 ## Working Style
@@ -518,7 +540,7 @@ function detectTestCommand(cwd: string): string | null {
   return null;
 }
 
-async function executeTool(projectId: string, toolCall: ToolCall): Promise<string> {
+async function executeTool(projectId: string, toolCall: ToolCall, sessionId: string): Promise<string> {
   await getDb();
 
   switch (toolCall.tool) {
@@ -1692,6 +1714,83 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
       return '[device_action 执行超时（20s）] 请确认已在系统设置中开启 Synaps 无障碍服务（设置 → 设备控制 → 打开无障碍设置）。';
     }
 
+    case 'agent_list': {
+      const instances = listAgentInstances();
+      if (instances.length === 0) return '暂无 Agent 实例。使用 agent_create 创建，或在聊天时指定 agentType 自动创建。';
+      return instances.map((inst) => {
+        const msgCount = listAgentMessages(inst.id).length;
+        return `- [${inst.type}] ${inst.name} (id: ${inst.id})\n  状态: ${inst.status} | 上下文: ${msgCount} 条消息 | 模型: ${inst.model}`;
+      }).join('\n');
+    }
+
+    case 'agent_create': {
+      const type = (toolCall.type || toolCall.query) as AgentType | undefined;
+      if (!type || !AGENT_TYPES.includes(type)) {
+        return `Error: agent_create type must be one of: ${AGENT_TYPES.join(', ')}`;
+      }
+      const inst = createAgentInstance(sessionId, type, { name: toolCall.message });
+      return `已创建 ${inst.name} (${inst.type})，id: ${inst.id}\n可用工具: ${inst.tools.join(', ') || '(无，纯对话)'}`;
+    }
+
+    case 'agent_delegate': {
+      const type = (toolCall.type || toolCall.query) as AgentType | undefined;
+      const task = toolCall.task || toolCall.content || toolCall.query;
+      if (!type || !AGENT_TYPES.includes(type)) {
+        return `Error: agent_delegate type must be one of: ${AGENT_TYPES.join(', ')}`;
+      }
+      if (!task) return 'Error: agent_delegate requires a task (use task or content field)';
+      const tpl = getAgentTemplate(type);
+      const apiKeyRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_api_key']);
+      const apiKey = apiKeyRow && typeof apiKeyRow.value === 'string' ? apiKeyRow.value : '';
+      if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
+      const baseUrlRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_base_url']);
+      const modelBaseUrlRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_model_base_url']);
+      const modelRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_model']);
+      const baseUrl = baseUrlRow && typeof baseUrlRow.value === 'string' && baseUrlRow.value ? baseUrlRow.value : 'https://api.deepseek.com';
+      const modelBaseUrl = modelBaseUrlRow && typeof modelBaseUrlRow.value === 'string' && modelBaseUrlRow.value ? modelBaseUrlRow.value : 'https://api.deepseek.com';
+      const model = modelRow && typeof modelRow.value === 'string' && modelRow.value ? modelRow.value : 'deepseek-chat';
+      const client = new LLMClient(new Config({ apiKey, baseUrl, modelBaseUrl }));
+      let out = '';
+      try {
+        const stream = client.stream(
+          [
+            { role: 'system' as const, content: tpl.systemPrompt + `\n\n可执行工具白名单：${tpl.tools.join(', ') || '(无)'}` },
+            { role: 'user' as const, content: `任务：${task}\n\n请以 ${tpl.name} 的角色给出分析/方案/执行意见（纯文本回答，如需要操作请明确说明要用哪个工具）。` },
+          ],
+          { temperature: tpl.temperature, model }
+        );
+        for await (const chunk of stream) {
+          if (chunk.content) out += chunk.content.toString();
+        }
+      } catch (err: any) {
+        return `[agent_delegate ${type} 失败] ${err?.message || String(err)}`;
+      }
+      return `[${tpl.name} 回复]\n${truncateText(out, 3000)}`;
+    }
+
+    case 'agent_status': {
+      const instances = listAgentInstances();
+      if (instances.length === 0) return '暂无 Agent 实例';
+      return instances.map((inst) => {
+        const summary = getAgentContextSummary(inst.id);
+        return `[${inst.name} (${inst.type})] ${inst.status}\n${summary}`;
+      }).join('\n\n');
+    }
+
+    case 'agent_clear': {
+      const id = toolCall.query || (toolCall.params && typeof toolCall.params.id === 'string' ? toolCall.params.id : '');
+      if (!id || !getAgentInstance(id)) return 'Error: agent_clear requires a valid agent id';
+      clearAgentContext(id);
+      return `已清空 Agent ${id} 的独立上下文`;
+    }
+
+    case 'agent_delete': {
+      const id = toolCall.query || (toolCall.params && typeof toolCall.params.id === 'string' ? toolCall.params.id : '');
+      if (!id || !getAgentInstance(id)) return 'Error: agent_delete requires a valid agent id';
+      deleteAgentInstance(id);
+      return `已删除 Agent ${id} 及其上下文`;
+    }
+
     default:
       return `Error: Unknown tool "${toolCall.tool}"`;
   }
@@ -1711,10 +1810,12 @@ router.post('/', async (req: express.Request, res: express.Response) => {
   try {
     await getDb();
     
-    const { messages, projectId, requestId } = req.body as {
+    const { messages, projectId, requestId, agentType, agentInstanceId } = req.body as {
       messages: Array<{ role: string; content: string }>;
       projectId?: string;
       requestId?: string;
+      agentType?: string;
+      agentInstanceId?: string;
     };
     taskId = requestId || `task-${Date.now()}`;
     abortRegistry.set(taskId, false);
@@ -1735,6 +1836,18 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
     if (lastUserMessage) {
       saveChatMessage(sessionId, 'user', lastUserMessage.content);
+    }
+
+    // 独立 Agent：解析实例（模板角色 + 工具白名单 + 温度/模型 + 独立上下文）
+    let agentInstance = null as null | ReturnType<typeof getAgentInstance>;
+    const requestedType = agentType && AGENT_TYPES.includes(agentType as AgentType) ? (agentType as AgentType) : null;
+    if (requestedType) {
+      agentInstance = agentInstanceId
+        ? getAgentInstance(agentInstanceId)
+        : getOrCreateInstance(sessionId, requestedType);
+      if (agentInstance) {
+        updateAgentInstance(agentInstance.id, { status: 'running' });
+      }
     }
 
     // 跨 Agent 共享上下文命令：更新上下文 / 查看上下文
@@ -1798,10 +1911,23 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     // 任务开始事件
     const taskName = (lastUserMessage?.content || '任务').replace(/^>.*\n?/s, '').slice(0, 60);
     taskStartedAt = Date.now();
-    res.write(`data: ${JSON.stringify({ task_start: { id: taskId, name: taskName, startedAt: taskStartedAt } })}\n\n`);
+    res.write(`data: ${JSON.stringify({
+      task_start: {
+        id: taskId,
+        name: taskName,
+        startedAt: taskStartedAt,
+        agent: agentInstance ? { id: agentInstance.id, type: agentInstance.type, name: agentInstance.name } : null,
+      },
+    })}\n\n`);
 
     // Build system message with project context
     let systemPrompt = AGENT_SYSTEM_PROMPT;
+    if (agentInstance) {
+      systemPrompt += `\n\n## Agent 角色\n${agentInstance.systemPrompt}`;
+      if (agentInstance.tools.length > 0) {
+        systemPrompt += `\n本 Agent 仅允许使用以下工具：${agentInstance.tools.join(', ')}（白名单之外的工具会被拒绝）。`;
+      }
+    }
 
     // 注入跨会话共享上下文
     const sharedCtx = getSharedContext();
@@ -1848,6 +1974,7 @@ All file operations should use paths relative to the project root.`;
     // Agent loop: execute tools and continue conversation
     const maxIterations = 10;
     let iteration = 0;
+    let lastFullResponse = '';
 
     while (iteration < maxIterations) {
       iteration++;
@@ -1859,8 +1986,8 @@ All file operations should use paths relative to the project root.`;
       // Collect full response
       let fullResponse = '';
       const stream = client.stream(conversationMessages, {
-        temperature: 0.3,
-        ...(model ? { model } : {}),
+        temperature: agentInstance?.temperature ?? 0.3,
+        ...(model ? { model: agentInstance?.model || model } : {}),
       });
 
       for await (const chunk of stream) {
@@ -1868,6 +1995,8 @@ All file operations should use paths relative to the project root.`;
           fullResponse += chunk.content.toString();
         }
       }
+
+      lastFullResponse = fullResponse;
 
       // Check for tool call
       const toolCall = parseToolCall(fullResponse);
@@ -1888,11 +2017,36 @@ All file operations should use paths relative to the project root.`;
         }
 
         saveChatMessage(sessionId, 'assistant', fullResponse);
+        if (agentInstance) {
+          if (lastUserMessage) appendAgentMessage(agentInstance.id, 'user', lastUserMessage.content);
+          appendAgentMessage(agentInstance.id, 'assistant', fullResponse);
+          updateAgentInstance(agentInstance.id, { status: 'idle' });
+        }
         res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'done', durationMs: Date.now() - taskStartedAt } })}\n\n`);
         res.write('data: [DONE]\n\n');
         abortRegistry.delete(taskId);
         res.end();
         return;
+      }
+
+      // 工具白名单检查（独立 Agent 只允许模板内工具）
+      if (agentInstance && agentInstance.tools.length > 0 && !agentInstance.tools.includes(toolCall.tool)) {
+        const whitelistMsg = `[Permission denied] 当前 Agent（${agentInstance.name}）未授权使用工具 ${toolCall.tool}。可用工具：${agentInstance.tools.join(', ')}`;
+        res.write(`data: ${JSON.stringify({
+          tool_call: {
+            name: toolCall.tool,
+            args: { command: toolCall.command, path: toolCall.path, query: toolCall.query },
+            result: whitelistMsg,
+            ok: false,
+            durationMs: 0,
+          },
+        })}\n\n`);
+        conversationMessages.push({ role: 'assistant', content: fullResponse });
+        conversationMessages.push({
+          role: 'user',
+          content: `[Tool blocked by agent whitelist]: ${whitelistMsg}\n\n向用户说明，或建议切换到合适的 Agent。`,
+        });
+        continue;
       }
 
       // Permission gate
@@ -1969,7 +2123,7 @@ All file operations should use paths relative to the project root.`;
 
       // Execute tool
       const toolStartedAt = Date.now();
-      let toolResult = await executeTool(projectId, toolCall);
+      let toolResult = await executeTool(projectId, toolCall, sessionId);
       const toolDurationMs = Date.now() - toolStartedAt;
 
       // 失败智能分析：工具失败时自动调用 DeepSeek 诊断（未配置 Key 时静默跳过）
@@ -2016,6 +2170,11 @@ All file operations should use paths relative to the project root.`;
 
     // Max iterations reached（或用户取消）
     const cancelled = abortRegistry.get(taskId) === true;
+    if (agentInstance) {
+      if (lastUserMessage) appendAgentMessage(agentInstance.id, 'user', lastUserMessage.content);
+      appendAgentMessage(agentInstance.id, 'assistant', lastFullResponse || '(任务中止)');
+      updateAgentInstance(agentInstance.id, { status: 'idle' });
+    }
     res.write(`data: ${JSON.stringify({
       task_end: { id: taskId, status: cancelled ? 'cancelled' : 'done', durationMs: Date.now() - taskStartedAt },
     })}\n\n`);
@@ -2088,6 +2247,63 @@ router.get('/history', async (req: express.Request, res: express.Response) => {
     res.json({ sessionId: session.id, messages: rows });
   } catch (error) {
     console.error('Chat history API error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/v1/chat/agents
+ * 返回当前项目会话的所有 Agent 实例（客户端用于恢复独立历史）
+ * Query: projectId?: string
+ */
+router.get('/agents', async (req: express.Request, res: express.Response) => {
+  try {
+    await getDb();
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    const sessionId = ensureSession(projectId);
+    const instances = listAgentInstances(sessionId).map((inst) => ({
+      id: inst.id,
+      type: inst.type,
+      name: inst.name,
+      status: inst.status,
+      model: inst.model,
+      createdAt: inst.createdAt,
+      updatedAt: inst.updatedAt,
+    }));
+    res.json({ sessionId, agents: instances });
+  } catch (error) {
+    console.error('Agents list API error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/v1/chat/agent-history
+ * 返回指定 Agent 实例的独立对话历史
+ * Query: agentInstanceId: string
+ */
+router.get('/agent-history', async (req: express.Request, res: express.Response) => {
+  try {
+    await getDb();
+    const id = typeof req.query.agentInstanceId === 'string' ? req.query.agentInstanceId : '';
+    if (!id) {
+      res.status(400).json({ error: 'agentInstanceId is required' });
+      return;
+    }
+    const inst = getAgentInstance(id);
+    if (!inst) {
+      res.status(404).json({ error: 'Agent instance not found' });
+      return;
+    }
+    const messages = listAgentMessages(id, 200).map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      created_at: m.createdAt,
+    }));
+    res.json({ agent: inst, messages });
+  } catch (error) {
+    console.error('Agent history API error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

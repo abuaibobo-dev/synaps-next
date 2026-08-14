@@ -6,6 +6,7 @@ import {
   TextInput,
   Pressable,
   FlatList,
+  ScrollView,
   Platform,
   ActivityIndicator,
   Alert,
@@ -31,6 +32,21 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import { spacing, radius, fontSize } from '@/utils/theme';
 import type { ThemeColors } from '@/utils/theme';
 import { useThemeColors } from '@/components/ThemeProvider';
+
+export const AGENT_OPTIONS = [
+  { key: 'scheduler', label: '调度员', icon: 'sitemap' },
+  { key: 'code_engineer', label: '代码工程师', icon: 'code' },
+  { key: 'file_manager', label: '文件管理', icon: 'folder' },
+  { key: 'search_assistant', label: '搜索', icon: 'magnifying-glass' },
+  { key: 'general_chat', label: '通用对话', icon: 'comments' },
+  { key: 'automator', label: '自动化', icon: 'gear' },
+  { key: 'ui_operator', label: '界面操作', icon: 'hand-pointer' },
+  { key: 'researcher', label: '调研', icon: 'flask' },
+  { key: 'translator', label: '翻译', icon: 'language' },
+  { key: 'memory_admin', label: '记忆管理', icon: 'brain' },
+] as const;
+
+export type AgentOptionKey = (typeof AGENT_OPTIONS)[number]['key'];
 
 const MODEL_OPTIONS = ['deepseek-chat', 'deepseek-reasoner'];
 
@@ -88,6 +104,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [deviceReady, setDeviceReady] = useState<boolean | null>(null);
   const [currentTask, setCurrentTask] = useState<TaskRecord | null>(null);
   const [taskPanelVisible, setTaskPanelVisible] = useState(false);
+  const [agentType, setAgentType] = useState<AgentOptionKey>('scheduler');
+  const [agentInstanceIds, setAgentInstanceIds] = useState<Record<string, string>>({});
   const requestIdRef = useRef<string>('');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isSideBySide = windowWidth >= 600 && windowWidth > windowHeight * 0.8;
@@ -185,9 +203,60 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, []);
 
+  // 加载当前项目的 Agent 实例，并加载当前 Agent 的独立历史
+  const loadAgents = useCallback(async (projectId: string | null) => {
+    try {
+      const url = projectId
+        ? `${API_BASE}/api/v1/chat/agents?projectId=${encodeURIComponent(projectId)}`
+        : `${API_BASE}/api/v1/chat/agents`;
+      const response = await fetch(url);
+      if (!response.ok) return;
+      const data = await response.json();
+      const map: Record<string, string> = {};
+      for (const a of data.agents || []) {
+        if (a && typeof a.type === 'string' && typeof a.id === 'string') map[a.type] = a.id;
+      }
+      setAgentInstanceIds(map);
+    } catch {
+      // 忽略：后端未就绪时静默重试
+    }
+  }, []);
+
+  const loadAgentHistory = useCallback(async (type: string, instanceId?: string) => {
+    if (!instanceId) {
+      setMessages([]);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/chat/agent-history?agentInstanceId=${encodeURIComponent(instanceId)}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      const msgs: Message[] = (data.messages || []).map(
+        (m: { id: string; role: string; content: string; created_at: string }) => ({
+          id: m.id || `${m.created_at}-${m.role}`,
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+          timestamp: new Date(m.created_at + 'Z').getTime(),
+        })
+      );
+      setMessages(msgs);
+    } catch {
+      // 忽略
+    }
+  }, []);
+
   useEffect(() => {
-    loadHistory(currentProjectId);
-  }, [currentProjectId, loadHistory]);
+    (async () => {
+      await loadAgents(currentProjectId);
+      loadAgentHistory(agentType, agentInstanceIds[agentType]);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProjectId, agentType]);
+
+  const switchAgent = useCallback((type: AgentOptionKey) => {
+    setAgentType(type);
+    loadAgentHistory(type, agentInstanceIds[type]);
+  }, [agentInstanceIds, loadAgentHistory]);
 
   // Track keyboard visibility so the input area can extend to the bottom edge
   useEffect(() => {
@@ -315,7 +384,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: conversationHistory, projectId: currentProjectId, requestId }),
+        body: JSON.stringify({
+          messages: conversationHistory,
+          projectId: currentProjectId,
+          requestId,
+          agentType,
+          agentInstanceId: agentInstanceIds[agentType] || undefined,
+        }),
         pollingInterval: 0,
       }
     );
@@ -353,6 +428,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         const parsed = JSON.parse(event.data);
 
         if (parsed.task_start) {
+          if (parsed.task_start.agent && parsed.task_start.agent.id && parsed.task_start.agent.type) {
+            setAgentInstanceIds((prev) => ({ ...prev, [parsed.task_start.agent.type]: parsed.task_start.agent.id }));
+          }
           setCurrentTask((prev) =>
             prev && prev.id === parsed.task_start.id
               ? prev
@@ -431,7 +509,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       es.close();
       esRef.current = null;
     });
-  }, [inputText, isStreaming, messages, replyingTo, currentProjectId]);
+  }, [inputText, isStreaming, messages, replyingTo, currentProjectId, agentType, agentInstanceIds]);
 
   const handleSend = useCallback(() => {
     if (!inputText.trim() || isStreaming) return;
@@ -808,6 +886,29 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Text>
           <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
         </Pressable>
+
+        {/* Agent 类型选择器（独立上下文/角色） */}
+        <View style={styles.agentSelector}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.agentSelectorContent}
+          >
+            {AGENT_OPTIONS.map((opt) => {
+              const active = agentType === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  style={[styles.agentChip, active && styles.agentChipActive]}
+                  onPress={() => switchAgent(opt.key)}
+                >
+                  <FontAwesome6 name={opt.icon} size={11} color={active ? '#FFFFFF' : colors.textSecondary} />
+                  <Text style={[styles.agentChipText, active && styles.agentChipTextActive]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
 
         {/* 精简任务卡片 */}
         {currentTask && (
@@ -1232,6 +1333,38 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderRadius: 2,
     backgroundColor: colors.border,
     marginTop: spacing.sm,
+  },
+  agentSelector: {
+    flexGrow: 0,
+    marginTop: spacing.sm,
+    overflow: 'hidden',
+  },
+  agentSelectorContent: {
+    paddingHorizontal: spacing.md,
+    gap: spacing.xs,
+  },
+  agentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.md,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  agentChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  agentChipText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  agentChipTextActive: {
+    color: '#FFFFFF',
   },
   taskCard: {
     marginHorizontal: spacing.md,
