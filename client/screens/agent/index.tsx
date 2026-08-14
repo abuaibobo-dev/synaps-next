@@ -11,8 +11,12 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
+  Modal,
+  Share,
 } from 'react-native';
 import EventSource from 'react-native-sse';
+import * as Clipboard from 'expo-clipboard';
+import Toast from 'react-native-toast-message';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import { Screen } from '@/components/Screen';
@@ -24,6 +28,7 @@ const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { colors, spacing, radius, fontSize } from '@/utils/theme';
 
+const MODEL_OPTIONS = ['deepseek-chat', 'deepseek-reasoner'];
 
 interface Message {
   id: string;
@@ -31,12 +36,27 @@ interface Message {
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
+  replyingTo?: { content: string; role: string };
 }
 
 interface ToolCall {
   name: string;
   args: Record<string, unknown>;
   result?: string;
+}
+
+interface ProjectOption {
+  id: string;
+  name: string;
+  path: string;
+}
+
+interface PermissionRequest {
+  id: string;
+  level: 'medium' | 'high' | 'critical';
+  tool: string;
+  args: { command?: string; path?: string; query?: string; message?: string; repo?: string; url?: string; server?: string; method?: string };
+  impact: string;
 }
 
 interface AgentScreenProps {
@@ -52,6 +72,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [balance, setBalance] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [menuMessage, setMenuMessage] = useState<Message | null>(null);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [projectPickerVisible, setProjectPickerVisible] = useState(false);
+  const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const insets = useSafeAreaInsets();
   const [keyboardShown, setKeyboardShown] = useState(false);
   const flatListRef = useRef<FlatList>(null);
@@ -92,6 +119,35 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     loadBalance();
   }, []);
 
+  const fetchProjectOptions = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/projects`);
+      const data = await response.json();
+      setProjectOptions(data.projects || []);
+    } catch {
+      // Keep existing list
+    }
+  }, []);
+
+  // Load current model from server settings so the switch reflects the real value
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/settings`);
+        const data = await response.json();
+        if (data && typeof data.ai_model === 'string' && data.ai_model) {
+          setCurrentModel(data.ai_model);
+        }
+        if (data && typeof data.current_project_id === 'string' && data.current_project_id) {
+          setCurrentProjectId(data.current_project_id);
+        }
+      } catch {
+        // Settings unavailable, keep default model
+      }
+      fetchProjectOptions();
+    })();
+  }, [fetchProjectOptions]);
+
   // Track keyboard visibility so the input area can extend to the bottom edge
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -113,14 +169,55 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     };
   }, []);
 
+  const switchModel = useCallback(async () => {
+    const idx = MODEL_OPTIONS.indexOf(currentModel);
+    const next = MODEL_OPTIONS[(idx + 1) % MODEL_OPTIONS.length];
+    setCurrentModel(next);
+    try {
+      await fetch(`${API_BASE}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ai_model: next }),
+      });
+    } catch {
+      // Persistence failed; this session still uses the new model
+    }
+  }, [currentModel]);
+
+  const openProjectPicker = useCallback(async () => {
+    await fetchProjectOptions();
+    setProjectPickerVisible(true);
+  }, [fetchProjectOptions]);
+
+  const selectProject = useCallback(async (project: ProjectOption) => {
+    setCurrentProjectId(project.id);
+    setProjectPickerVisible(false);
+    try {
+      await fetch(`${API_BASE}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_project_id: project.id }),
+      });
+    } catch {
+      // Persistence failed; this session still uses the project
+    }
+  }, []);
+
   const handleSend = useCallback(() => {
     if (!inputText.trim() || isStreaming) return;
+
+    const quotedText = replyingTo
+      ? `> ${replyingTo.content.replace(/\n/g, '\n> ')}\n\n`
+      : '';
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: inputText.trim(),
+      content: `${quotedText}${inputText.trim()}`,
       timestamp: Date.now(),
+      replyingTo: replyingTo
+        ? { content: replyingTo.content, role: replyingTo.role }
+        : undefined,
     };
 
     // Build conversation history for the API
@@ -132,6 +229,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
     setMessages((prev) => [...prev, userMessage]);
     setInputText('');
+    setReplyingTo(null);
     setIsStreaming(true);
     setStreamingContent('');
     setCurrentToolCalls([]);
@@ -139,7 +237,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     /**
      * Server file: server/src/routes/chat.ts
      * API: POST /api/v1/chat
-     * Body: { messages: Array<{ role: string, content: string }> }
+     * Body: { messages: Array<{ role: string, content: string }>, projectId?: string }
      * Response: SSE stream with data: {"content": "..."} chunks, ending with data: [DONE]
      */
     const es = new EventSource(
@@ -149,13 +247,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ messages: conversationHistory }),
+        body: JSON.stringify({ messages: conversationHistory, projectId: currentProjectId }),
         pollingInterval: 0,
       }
     );
     esRef.current = es;
 
     let accumulated = '';
+    const executedToolCalls: ToolCall[] = [];
 
     es.addEventListener('message', (event) => {
       if (event.data === '[DONE]') {
@@ -165,7 +264,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           role: 'assistant',
           content: accumulated,
           timestamp: Date.now(),
-          toolCalls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
+          toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
         setStreamingContent('');
@@ -186,7 +285,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           setStreamingContent(accumulated);
         }
         if (parsed.tool_call) {
-          setCurrentToolCalls((prev) => [...prev, parsed.tool_call]);
+          executedToolCalls.push(parsed.tool_call as ToolCall);
+          setCurrentToolCalls((prev) => [...prev, parsed.tool_call as ToolCall]);
+        }
+        if (parsed.permission_request) {
+          setPermissionRequest(parsed.permission_request as PermissionRequest);
         }
         if (parsed.error) {
           accumulated += `\n\nError: ${parsed.error}`;
@@ -221,7 +324,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       es.close();
       esRef.current = null;
     });
-  }, [inputText, isStreaming, messages, currentToolCalls]);
+  }, [inputText, isStreaming, messages, currentToolCalls, replyingTo, currentProjectId]);
 
   // Voice recording functions
   const startRecording = async () => {
@@ -301,10 +404,82 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     });
   }, []);
 
+  const closeMessageMenu = useCallback(() => {
+    setMenuMessage(null);
+  }, []);
+
+  const openMessageMenu = useCallback((message: Message) => {
+    setMenuMessage(message);
+  }, []);
+
+  const copyMessage = useCallback(
+    async (message: Message) => {
+      await Clipboard.setStringAsync(message.content);
+      closeMessageMenu();
+      Toast.show({ type: 'success', text1: '已复制到剪贴板' });
+    },
+    [closeMessageMenu]
+  );
+
+  const quoteMessage = useCallback(
+    (message: Message) => {
+      setReplyingTo(message);
+      closeMessageMenu();
+    },
+    [closeMessageMenu]
+  );
+
+  const shareMessage = useCallback(
+    async (message: Message) => {
+      try {
+        await Share.share({ message: message.content });
+      } catch {
+        // User dismissed the share sheet
+      }
+      closeMessageMenu();
+    },
+    [closeMessageMenu]
+  );
+
+  const respondPermission = useCallback(
+    async (approved: boolean) => {
+      if (!permissionRequest) return;
+      const request = permissionRequest;
+      setPermissionRequest(null);
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/chat/approval`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId: request.id, approved }),
+        });
+        if (!res.ok) {
+          Toast.show({ type: 'error', text1: '审批已过期，请重试' });
+        }
+      } catch {
+        Toast.show({ type: 'error', text1: '审批提交失败' });
+      }
+    },
+    [permissionRequest]
+  );
+
   const renderMessage = useCallback(({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
     return (
-      <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+      <Pressable
+        style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}
+        onLongPress={() => openMessageMenu(item)}
+        delayLongPress={350}
+      >
+        {item.replyingTo && (
+          <View style={styles.replyPreview}>
+            <Text style={styles.replyPreviewLabel}>
+              {item.replyingTo.role === 'user' ? 'YOU' : 'SYNAPS'}
+            </Text>
+            <Text style={styles.replyPreviewText} numberOfLines={2}>
+              {item.replyingTo.content}
+            </Text>
+          </View>
+        )}
         <View style={styles.messageHeader}>
           <View style={[styles.avatarIcon, isUser ? styles.userAvatar : styles.botAvatar]}>
             <FontAwesome6
@@ -319,33 +494,76 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         {item.toolCalls && item.toolCalls.length > 0 && (
           <View style={styles.toolCallsContainer}>
             <Text style={styles.toolCallsLabel}>Tools executed:</Text>
-            {item.toolCalls.map((tc, idx) => (
-              <View key={idx} style={styles.toolCallItem}>
-                <View style={styles.toolCallHeader}>
-                  <FontAwesome6 name="terminal" size={10} color={colors.primary} />
-                  <Text style={styles.toolCallName}>{tc.name}</Text>
-                  {tc.result && (
-                    <FontAwesome6 name="circle-check" size={10} color="#4ade80" />
-                  )}
+            {item.toolCalls.map((tc, idx) => {
+              const command =
+                typeof tc.args?.command === 'string' ? tc.args.command : '';
+              const exitMatch = tc.result?.match(/exit (\d+)/);
+              const exitCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
+              const failed = exitCode !== null && exitCode !== 0;
+              const resultText =
+                tc.result && tc.result.length > 300
+                  ? `${tc.result.slice(0, 300)}…`
+                  : tc.result;
+              return (
+                <View key={idx} style={styles.toolCallItem}>
+                  <View style={styles.toolCallHeader}>
+                    <FontAwesome6 name="terminal" size={10} color={colors.primary} />
+                    <Text style={styles.toolCallName}>{tc.name}</Text>
+                    {exitCode !== null && (
+                      <Text
+                        style={[
+                          styles.toolCallExit,
+                          failed && styles.toolCallExitError,
+                        ]}
+                      >
+                        {failed ? `exit ${exitCode}` : 'ok'}
+                      </Text>
+                    )}
+                  </View>
+                  {command ? (
+                    <Text style={styles.toolCallCommand} numberOfLines={2}>
+                      $ {command}
+                    </Text>
+                  ) : tc.args && Object.keys(tc.args).length > 0 ? (
+                    <Text style={styles.toolCallArgs} numberOfLines={2}>
+                      {JSON.stringify(tc.args).slice(0, 100)}
+                    </Text>
+                  ) : null}
+                  {resultText ? (
+                    <Text
+                      style={[
+                        styles.toolCallResult,
+                        failed && styles.toolCallResultError,
+                      ]}
+                      numberOfLines={4}
+                    >
+                      {resultText}
+                    </Text>
+                  ) : null}
                 </View>
-                {tc.args && Object.keys(tc.args).length > 0 && (
-                  <Text style={styles.toolCallArgs} numberOfLines={2}>
-                    {JSON.stringify(tc.args).slice(0, 100)}
-                  </Text>
-                )}
-              </View>
-            ))}
+              );
+            })}
           </View>
         )}
-      </View>
+      </Pressable>
     );
-  }, []);
+  }, [openMessageMenu]);
+
+  const modelLabel = currentModel.startsWith('deepseek-')
+    ? currentModel.slice('deepseek-'.length)
+    : currentModel.length > 8
+      ? `${currentModel.slice(0, 8)}…`
+      : currentModel;
+
+  const currentProjectName = currentProjectId
+    ? projectOptions.find((p) => p.id === currentProjectId)?.name
+    : null;
 
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle="light" safeAreaEdges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
       >
         {/* Header */}
         <View style={styles.header}>
@@ -371,6 +589,21 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </Pressable>
           </View>
         </View>
+
+        {/* Project bar */}
+        <Pressable style={styles.projectBar} onPress={openProjectPicker}>
+          <FontAwesome6
+            name="folder-open"
+            size={12}
+            color={currentProjectId ? colors.primary : colors.warning}
+          />
+          <Text style={styles.projectBarText} numberOfLines={1}>
+            {currentProjectId
+              ? currentProjectName || '项目已绑定'
+              : '未绑定项目 — 点击选择，Agent 才能执行命令/工具'}
+          </Text>
+          <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
+        </Pressable>
 
         {/* Messages */}
         <FlatList
@@ -406,12 +639,19 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <Text style={styles.messageContent}>{streamingContent}</Text>
                 {currentToolCalls.length > 0 && (
                   <View style={styles.toolCallsContainer}>
-                    {currentToolCalls.map((tc, idx) => (
-                      <View key={idx} style={styles.toolCallBadge}>
-                        <ActivityIndicator size="small" color={colors.primary} />
-                        <Text style={styles.toolCallText}>{tc.name}</Text>
-                      </View>
-                    ))}
+                    {currentToolCalls.map((tc, idx) => {
+                      const command =
+                        typeof tc.args?.command === 'string' ? tc.args.command : '';
+                      return (
+                        <View key={idx} style={styles.toolCallBadge}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <Text style={styles.toolCallText} numberOfLines={1}>
+                            {tc.name}
+                            {command ? `: ${command}` : ''}
+                          </Text>
+                        </View>
+                      );
+                    })}
                   </View>
                 )}
               </View>
@@ -421,6 +661,26 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
         {/* Input */}
         <View style={[styles.inputContainer, { paddingBottom: keyboardShown ? spacing.lg : spacing.lg + insets.bottom }]}>
+          {replyingTo && (
+            <View style={styles.replyBar}>
+              <View style={styles.replyBarLine} />
+              <View style={styles.replyBarContent}>
+                <Text style={styles.replyBarLabel}>
+                  {replyingTo.role === 'user' ? 'YOU' : 'SYNAPS'}
+                </Text>
+                <Text style={styles.replyBarText} numberOfLines={1}>
+                  {replyingTo.content}
+                </Text>
+              </View>
+              <Pressable
+                style={styles.replyBarClose}
+                onPress={() => setReplyingTo(null)}
+                hitSlop={8}
+              >
+                <FontAwesome6 name="xmark" size={12} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+          )}
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
@@ -434,6 +694,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               returnKeyType="default"
               blurOnSubmit={false}
             />
+            <Pressable
+              style={styles.modelButton}
+              onPress={switchModel}
+              disabled={isStreaming || isRecording}
+            >
+              <FontAwesome6 name="microchip" size={11} color={colors.textSecondary} />
+              <Text style={styles.modelButtonText} numberOfLines={1}>
+                {modelLabel}
+              </Text>
+            </Pressable>
             <Pressable
               style={[styles.voiceButton, isRecording && styles.voiceButtonActive]}
               onPress={isRecording ? stopRecording : startRecording}
@@ -477,6 +747,176 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             )}
           </View>
         </View>
+
+        {/* Message action menu */}
+        <Modal
+          visible={!!menuMessage}
+          transparent
+          animationType="fade"
+          onRequestClose={closeMessageMenu}
+        >
+          <Pressable style={styles.modalOverlay} onPress={closeMessageMenu}>
+            <Pressable
+              style={[styles.modalContainer, { paddingBottom: spacing.xl + insets.bottom }]}
+              onPress={() => {}}
+            >
+              <Text style={styles.modalTitle}>Message actions</Text>
+              <Pressable
+                style={styles.modalItem}
+                onPress={() => menuMessage && copyMessage(menuMessage)}
+              >
+                <FontAwesome6 name="copy" size={14} color={colors.primary} />
+                <Text style={styles.modalItemText}>复制</Text>
+              </Pressable>
+              <Pressable
+                style={styles.modalItem}
+                onPress={() => menuMessage && quoteMessage(menuMessage)}
+              >
+                <FontAwesome6 name="quote-left" size={14} color={colors.primary} />
+                <Text style={styles.modalItemText}>引用回复</Text>
+              </Pressable>
+              <Pressable
+                style={styles.modalItem}
+                onPress={() => menuMessage && shareMessage(menuMessage)}
+              >
+                <FontAwesome6 name="share-nodes" size={14} color={colors.primary} />
+                <Text style={styles.modalItemText}>分享</Text>
+              </Pressable>
+              <Pressable style={[styles.modalItem, styles.modalItemCancel]} onPress={closeMessageMenu}>
+                <Text style={styles.modalItemCancelText}>取消</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Project picker */}
+        <Modal
+          visible={projectPickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setProjectPickerVisible(false)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setProjectPickerVisible(false)}>
+            <Pressable
+              style={[styles.modalContainer, { paddingBottom: spacing.xl + insets.bottom }]}
+              onPress={() => {}}
+            >
+              <Text style={styles.modalTitle}>选择项目</Text>
+              {projectOptions.length === 0 && (
+                <Text style={styles.modalEmpty}>暂无项目，请先到「项目」模块创建</Text>
+              )}
+              {projectOptions.map((project) => (
+                <Pressable
+                  key={project.id}
+                  style={styles.projectOption}
+                  onPress={() => selectProject(project)}
+                >
+                  <FontAwesome6 name="folder" size={13} color={colors.primary} />
+                  <View style={styles.projectOptionInfo}>
+                    <Text style={styles.projectOptionName} numberOfLines={1}>
+                      {project.name}
+                    </Text>
+                    <Text style={styles.projectOptionPath} numberOfLines={1}>
+                      {project.path}
+                    </Text>
+                  </View>
+                  {project.id === currentProjectId && (
+                    <FontAwesome6 name="check" size={12} color={colors.success} />
+                  )}
+                </Pressable>
+              ))}
+              <Pressable
+                style={[styles.modalItem, styles.modalItemCancel]}
+                onPress={() => setProjectPickerVisible(false)}
+              >
+                <Text style={styles.modalItemCancelText}>取消</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Permission request */}
+        <Modal
+          visible={!!permissionRequest}
+          transparent
+          animationType="fade"
+          onRequestClose={() => respondPermission(false)}
+        >
+          <View style={styles.permissionOverlay}>
+            <View style={styles.permissionCard}>
+              <View style={styles.permissionHeader}>
+                <FontAwesome6
+                  name={
+                    permissionRequest?.level === 'high'
+                      ? 'triangle-exclamation'
+                      : 'shield-halved'
+                  }
+                  size={16}
+                  color={
+                    permissionRequest?.level === 'high'
+                      ? colors.warning
+                      : colors.primary
+                  }
+                />
+                <Text style={styles.permissionTitle}>
+                  {permissionRequest?.level === 'high'
+                    ? '高风险操作确认'
+                    : '操作确认'}
+                </Text>
+              </View>
+              {permissionRequest?.args.command ? (
+                <Text style={styles.permissionCommand}>
+                  $ {permissionRequest.args.command}
+                </Text>
+              ) : permissionRequest?.args.path ? (
+                <Text style={styles.permissionCommand}>
+                  {permissionRequest.args.path}
+                </Text>
+              ) : permissionRequest?.args.query ? (
+                <Text style={styles.permissionCommand}>
+                  {permissionRequest.args.query}
+                </Text>
+              ) : permissionRequest?.args.repo ? (
+                <Text style={styles.permissionCommand}>
+                  repo: {permissionRequest.args.repo}
+                </Text>
+              ) : permissionRequest?.args.url ? (
+                <Text style={styles.permissionCommand}>
+                  {permissionRequest.args.url}
+                </Text>
+              ) : permissionRequest?.args.server && permissionRequest?.args.method ? (
+                <Text style={styles.permissionCommand}>
+                  {permissionRequest.args.server}.{permissionRequest.args.method}
+                </Text>
+              ) : permissionRequest?.args.server ? (
+                <Text style={styles.permissionCommand}>
+                  server: {permissionRequest.args.server}
+                </Text>
+              ) : permissionRequest?.args.message ? (
+                <Text style={styles.permissionCommand}>
+                  {permissionRequest.args.message}
+                </Text>
+              ) : null}
+              <Text style={styles.permissionImpact}>
+                {permissionRequest?.impact}
+              </Text>
+              <View style={styles.permissionActions}>
+                <Pressable
+                  style={[styles.permissionBtn, styles.permissionBtnDeny]}
+                  onPress={() => respondPermission(false)}
+                >
+                  <Text style={styles.permissionBtnDenyText}>拒绝</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.permissionBtn, styles.permissionBtnAllow]}
+                  onPress={() => respondPermission(true)}
+                >
+                  <Text style={styles.permissionBtnAllowText}>允许</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </Screen>
   );
@@ -554,6 +994,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  projectBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: 'rgba(167,139,250,0.06)',
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    borderRadius: radius.md,
+  },
+  projectBarText: {
+    flex: 1,
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
   messageList: {
     flex: 1,
   },
@@ -609,6 +1068,29 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     lineHeight: 22,
   },
+  replyPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  replyPreviewLabel: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: 1,
+  },
+  replyPreviewText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+  },
   toolCallsContainer: {
     marginTop: spacing.md,
     paddingTop: spacing.md,
@@ -639,11 +1121,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
+  toolCallExit: {
+    fontSize: fontSize.xs,
+    color: colors.success,
+    fontWeight: '700',
+  },
+  toolCallExitError: {
+    color: colors.error,
+  },
   toolCallArgs: {
     fontSize: 10,
     color: colors.textMuted,
     marginTop: 4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  toolCallCommand: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginTop: 4,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  toolCallResult: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginTop: 6,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  toolCallResultError: {
+    color: '#fca5a5',
   },
   toolCallBadge: {
     flexDirection: 'row',
@@ -698,6 +1207,45 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.bgRoot,
+  },
+  replyBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: 'rgba(167,139,250,0.08)',
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  replyBarLine: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 2,
+    backgroundColor: colors.primary,
+  },
+  replyBarContent: {
+    flex: 1,
+  },
+  replyBarLabel: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: 1,
+  },
+  replyBarText: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  replyBarClose: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -757,6 +1305,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.error,
   },
+  modelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    paddingHorizontal: spacing.sm,
+    marginBottom: 4,
+    marginLeft: spacing.sm,
+    maxWidth: 110,
+  },
+  modelButtonText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
   inputFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -791,5 +1356,149 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     color: colors.error,
     fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: colors.bgElevated,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    gap: spacing.xs,
+  },
+  modalTitle: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  modalEmpty: {
+    fontSize: fontSize.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingVertical: spacing.md,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  modalItemText: {
+    fontSize: fontSize.md,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  modalItemCancel: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginTop: spacing.sm,
+    justifyContent: 'center',
+  },
+  modalItemCancelText: {
+    fontSize: fontSize.md,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  projectOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  projectOptionInfo: {
+    flex: 1,
+  },
+  projectOptionName: {
+    fontSize: fontSize.md,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  projectOptionPath: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+
+  permissionOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xxl,
+  },
+  permissionCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.xl,
+  },
+  permissionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  permissionTitle: {
+    fontSize: fontSize.md,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  permissionCommand: {
+    fontSize: fontSize.sm,
+    color: colors.primary,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  permissionImpact: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: spacing.lg,
+  },
+  permissionActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  permissionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  permissionBtnDeny: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: colors.border,
+  },
+  permissionBtnDenyText: {
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  permissionBtnAllow: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  permissionBtnAllowText: {
+    color: '#0A0A0F',
+    fontWeight: '700',
   },
 });

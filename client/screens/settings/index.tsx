@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch, Platform } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 import { colors, spacing, radius, fontSize } from '@/utils/theme';
@@ -95,6 +95,11 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [editKey, setEditKey] = useState<keyof Settings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
+  const [trustedProjects, setTrustedProjects] = useState<string[]>([]);
+  const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; detail: string; risk_level: string; decision: string; created_at: string }>>([]);
+  const [auditModalVisible, setAuditModalVisible] = useState(false);
+  const [trustModalVisible, setTrustModalVisible] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -113,6 +118,31 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+  const fetchPermissionData = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/projects`);
+      const data = await res.json();
+      setProjects(data.projects || []);
+    } catch {
+      // Ignore
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/settings`);
+      const data = await res.json();
+      try {
+        const parsed = JSON.parse(data.trusted_projects || '[]');
+        setTrustedProjects(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        setTrustedProjects([]);
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPermissionData();
+  }, [fetchPermissionData]);
 
   const updateSetting = async (key: keyof Settings, value: string) => {
     try {
@@ -146,6 +176,61 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       { text: '关闭', style: 'cancel' },
     ]);
   };
+
+  const toggleTrust = async (projectId: string) => {
+    const next = trustedProjects.includes(projectId)
+      ? trustedProjects.filter((id) => id !== projectId)
+      : [...trustedProjects, projectId];
+    setTrustedProjects(next);
+    try {
+      await fetch(`${API_BASE}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trusted_projects: JSON.stringify(next) }),
+      });
+    } catch {
+      Alert.alert('错误', '保存失败');
+    }
+  };
+
+  const fetchAuditLogs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/audit?limit=50`);
+      const data = await res.json();
+      setAuditLogs(data.logs || []);
+      setAuditModalVisible(true);
+    } catch {
+      Alert.alert('错误', '加载审计日志失败');
+    }
+  };
+
+  const resetPermissions = () => {
+    Alert.alert('重置授权', '将清除所有项目的可信标记。确定继续？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '重置',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await fetch(`${API_BASE}/api/v1/settings`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ trusted_projects: '[]' }),
+            });
+            setTrustedProjects([]);
+            Alert.alert('完成', '已重置所有授权');
+          } catch {
+            Alert.alert('错误', '重置失败');
+          }
+        },
+      },
+    ]);
+  };
+
+  const riskLabel = (level: string) =>
+    ({ none: '无风险', medium: '中风险', high: '高风险', critical: '极高风险' }[level] || level);
+  const decisionLabel = (decision: string) =>
+    ({ auto: '自动放行', trusted: '可信项目', approved: '用户允许', denied: '用户拒绝', blocked: '策略拦截' }[decision] || decision);
 
   const handleClearCache = () => {
     Alert.alert('清除缓存', '确定要清除所有缓存数据吗？', [
@@ -343,6 +428,34 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </View>
           </View>
 
+          {/* Agent 权限 */}
+          <Text style={styles.groupTitle}>Agent 权限</Text>
+          <View style={styles.group}>
+            <Pressable style={styles.settingItem} onPress={() => setTrustModalVisible(true)}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="shield" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>可信项目</Text>
+              <Text style={styles.settingValue}>{trustedProjects.length} 个</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={fetchAuditLogs}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="scroll" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>操作审计日志</Text>
+              <Text style={styles.settingValue}>查看</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={resetPermissions}>
+              <View style={[styles.settingIcon, styles.settingIconDanger]}>
+                <FontAwesome6 name="rotate-left" size={14} color={colors.error} />
+              </View>
+              <Text style={[styles.settingLabel, styles.settingLabelDanger]}>重置所有授权</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
           {/* About */}
           <Text style={styles.groupTitle}>关于</Text>
           <View style={styles.group}>
@@ -390,6 +503,72 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             setEditKey(null);
           }}
         />
+
+        {/* 可信项目 Modal */}
+        <Modal visible={trustModalVisible} transparent animationType="fade" onRequestClose={() => setTrustModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>可信项目</Text>
+              <Text style={styles.modalHint}>标记为可信后，中/高风险操作将自动批准，不再弹窗确认</Text>
+              <ScrollView style={{ maxHeight: 320 }}>
+                {projects.length === 0 && <Text style={styles.modalEmptyText}>暂无项目，请先创建</Text>}
+                {projects.map((project) => (
+                  <View key={project.id} style={styles.trustItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.trustItemName} numberOfLines={1}>{project.name}</Text>
+                      <Text style={styles.trustItemPath} numberOfLines={1}>{project.path}</Text>
+                    </View>
+                    <Switch
+                      value={trustedProjects.includes(project.id)}
+                      onValueChange={() => toggleTrust(project.id)}
+                      trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
+                      thumbColor={trustedProjects.includes(project.id) ? colors.primary : colors.textMuted}
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+              <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setTrustModalVisible(false)}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>完成</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 审计日志 Modal */}
+        <Modal visible={auditModalVisible} transparent animationType="fade" onRequestClose={() => setAuditModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>操作审计日志</Text>
+              <ScrollView style={{ maxHeight: 400 }}>
+                {auditLogs.length === 0 && <Text style={styles.modalEmptyText}>暂无记录</Text>}
+                {auditLogs.map((log) => (
+                  <View key={log.id} style={styles.auditItem}>
+                    <View style={styles.auditHeader}>
+                      <Text style={styles.auditAction}>{log.action}</Text>
+                      <Text
+                        style={[
+                          styles.auditBadge,
+                          log.risk_level === 'high'
+                            ? styles.auditBadgeHigh
+                            : log.risk_level === 'critical'
+                              ? styles.auditBadgeCritical
+                              : styles.auditBadgeMedium,
+                        ]}
+                      >
+                        {riskLabel(log.risk_level)}
+                      </Text>
+                    </View>
+                    <Text style={styles.auditDetail} numberOfLines={2}>{log.detail}</Text>
+                    <Text style={styles.auditMeta}>{decisionLabel(log.decision)} · {log.created_at}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+              <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setAuditModalVisible(false)}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>关闭</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </View>
     </Screen>
   );
@@ -530,5 +709,89 @@ const styles = StyleSheet.create({
   },
   modalBtnTextSave: {
     color: '#FFFFFF',
+  },
+
+  modalHint: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    marginBottom: spacing.lg,
+    lineHeight: 18,
+  },
+  modalEmptyText: {
+    fontSize: fontSize.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingVertical: spacing.xl,
+  },
+  modalBtnFull: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  trustItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.separator,
+    gap: spacing.md,
+  },
+  trustItemName: {
+    fontSize: fontSize.md,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  trustItemPath: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  auditItem: {
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.separator,
+  },
+  auditHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  auditAction: {
+    fontSize: fontSize.sm,
+    color: colors.textPrimary,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  auditBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+  },
+  auditBadgeMedium: {
+    color: colors.warning,
+    backgroundColor: 'rgba(251,191,36,0.12)',
+  },
+  auditBadgeHigh: {
+    color: colors.error,
+    backgroundColor: 'rgba(239,68,68,0.12)',
+  },
+  auditBadgeCritical: {
+    color: '#FFFFFF',
+    backgroundColor: colors.error,
+  },
+  auditDetail: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+  },
+  auditMeta: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 4,
   },
 });
