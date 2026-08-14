@@ -12,6 +12,7 @@ import {
   Keyboard,
   Modal,
   Share,
+  useWindowDimensions,
 } from 'react-native';
 import EventSource from 'react-native-sse';
 import * as Clipboard from 'expo-clipboard';
@@ -24,6 +25,7 @@ import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
 import { getDeviceStatus, startDeviceBridge } from '@/utils/deviceControl';
+import TaskPanel, { isFileModifyingTool, type TaskRecord, type TaskToolRecord, type TaskStep } from '@/components/TaskPanel';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { spacing, radius, fontSize } from '@/utils/theme';
@@ -84,6 +86,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [deviceReady, setDeviceReady] = useState<boolean | null>(null);
+  const [currentTask, setCurrentTask] = useState<TaskRecord | null>(null);
+  const [taskPanelVisible, setTaskPanelVisible] = useState(false);
+  const requestIdRef = useRef<string>('');
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isSideBySide = windowWidth >= 600 && windowWidth > windowHeight * 0.8;
   const insets = useSafeAreaInsets();
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -254,17 +261,29 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, []);
 
-  const handleSend = useCallback(() => {
-    if (!inputText.trim() || isStreaming) return;
+  const startTask = useCallback((prompt: string) => {
+    if (!prompt.trim() || isStreaming) return;
 
-    const quotedText = replyingTo
-      ? `> ${replyingTo.content.replace(/\n/g, '\n> ')}\n\n`
-      : '';
+    const requestId = `task-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    requestIdRef.current = requestId;
+
+    // 创建任务记录
+    const task: TaskRecord = {
+      id: requestId,
+      name: prompt.replace(/\n/g, ' ').slice(0, 60),
+      prompt,
+      startedAt: Date.now(),
+      status: 'running',
+      steps: [],
+      tools: [],
+      files: [],
+    };
+    setCurrentTask(task);
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: `${quotedText}${inputText.trim()}`,
+      content: prompt,
       timestamp: Date.now(),
       replyingTo: replyingTo
         ? { content: replyingTo.content, role: replyingTo.role }
@@ -275,7 +294,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     const conversationHistory = [
       { role: 'system' as const, content: 'You are Synaps, an AI software development agent running on a mobile phone. You help users develop, debug, build and release software through natural language. Be concise, technical, and action-oriented. When the user describes a task, break it down into steps and execute them. Respond in the same language the user uses.' },
       ...messages.map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user' as const, content: inputText.trim() },
+      { role: 'user' as const, content: prompt },
     ];
 
     setMessages((prev) => [...prev, userMessage]);
@@ -288,17 +307,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     /**
      * Server file: server/src/routes/chat.ts
      * API: POST /api/v1/chat
-     * Body: { messages: Array<{ role: string, content: string }>, projectId?: string }
-     * Response: SSE stream with data: {"content": "..."} chunks, ending with data: [DONE]
+     * Body: { messages, projectId, requestId }
+     * Response: SSE stream: {content}, {tool_call}, {task_start}, {task_step}, {task_end}, [DONE]
      */
     const es = new EventSource(
       `${API_BASE}/api/v1/chat`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ messages: conversationHistory, projectId: currentProjectId }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: conversationHistory, projectId: currentProjectId, requestId }),
         pollingInterval: 0,
       }
     );
@@ -307,9 +324,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     let accumulated = '';
     const executedToolCalls: ToolCall[] = [];
 
+    const patchTask = (fn: (t: TaskRecord) => TaskRecord) => {
+      setCurrentTask((prev) => (prev && prev.id === requestId ? fn(prev) : prev));
+    };
+
     es.addEventListener('message', (event) => {
       if (event.data === '[DONE]') {
-        // Finalize the assistant message
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
@@ -321,9 +341,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         setStreamingContent('');
         setIsStreaming(false);
         setCurrentToolCalls([]);
+        patchTask((t) => ({ ...t, status: t.status === 'running' ? 'done' : t.status, endedAt: Date.now() }));
         es.close();
         esRef.current = null;
-        // Refresh balance after conversation
         fetchBalance();
         return;
       }
@@ -331,13 +351,48 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       try {
         if (!event.data) return;
         const parsed = JSON.parse(event.data);
+
+        if (parsed.task_start) {
+          setCurrentTask((prev) =>
+            prev && prev.id === parsed.task_start.id
+              ? prev
+              : { id: parsed.task_start.id, name: parsed.task_start.name, prompt, startedAt: parsed.task_start.startedAt, status: 'running', steps: [], tools: [], files: [] }
+          );
+        }
+        if (parsed.task_step) {
+          const step: TaskStep = { name: parsed.task_step.step, status: parsed.task_step.status };
+          patchTask((t) => {
+            const steps = [...t.steps];
+            if (parsed.task_step.status === 'running') {
+              steps.push(step);
+            } else {
+              const lastIdx = [...steps].reverse().findIndex((s) => s.name === step.name && s.status === 'running');
+              if (lastIdx !== -1) steps[steps.length - 1 - lastIdx] = step;
+              else steps.push(step);
+            }
+            return { ...t, steps };
+          });
+        }
+        if (parsed.tool_call) {
+          const rec = parsed.tool_call as TaskToolRecord;
+          executedToolCalls.push(rec as unknown as ToolCall);
+          setCurrentToolCalls((prev) => [...prev, rec as unknown as ToolCall]);
+          patchTask((t) => {
+            const tools = [...t.tools, { ...rec, ts: Date.now() }];
+            const files = new Set(t.files);
+            if (isFileModifyingTool(rec.name, (rec.args || {}) as Record<string, unknown>)) {
+              const argPath = (rec.args as Record<string, unknown>)?.path;
+              if (typeof argPath === 'string' && argPath) files.add(argPath);
+            }
+            return { ...t, tools, files: [...files] };
+          });
+        }
+        if (parsed.task_end) {
+          patchTask((t) => ({ ...t, status: parsed.task_end.status || 'done', endedAt: Date.now() }));
+        }
         if (parsed.content) {
           accumulated += parsed.content;
           setStreamingContent(accumulated);
-        }
-        if (parsed.tool_call) {
-          executedToolCalls.push(parsed.tool_call as ToolCall);
-          setCurrentToolCalls((prev) => [...prev, parsed.tool_call as ToolCall]);
         }
         if (parsed.permission_request) {
           setPermissionRequest(parsed.permission_request as PermissionRequest);
@@ -372,10 +427,74 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       setStreamingContent('');
       setIsStreaming(false);
       setCurrentToolCalls([]);
+      patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
       es.close();
       esRef.current = null;
     });
-  }, [inputText, isStreaming, messages, currentToolCalls, replyingTo, currentProjectId]);
+  }, [inputText, isStreaming, messages, replyingTo, currentProjectId]);
+
+  const handleSend = useCallback(() => {
+    if (!inputText.trim() || isStreaming) return;
+    const quotedText = replyingTo
+      ? `> ${replyingTo.content.replace(/\n/g, '\n> ')}\n\n`
+      : '';
+    startTask(`${quotedText}${inputText.trim()}`);
+  }, [inputText, isStreaming, replyingTo, startTask]);
+
+  // 取消当前任务
+  const cancelTask = useCallback(() => {
+    const requestId = requestIdRef.current;
+    if (!requestId) return;
+    fetch(`${API_BASE}/api/v1/chat/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId }),
+    }).catch(() => undefined);
+    if (esRef.current) esRef.current.close();
+    setCurrentTask((t) => (t ? { ...t, status: 'cancelled', endedAt: Date.now() } : t));
+    setIsStreaming(false);
+    setStreamingContent('');
+    esRef.current = null;
+  }, []);
+
+  // 重跑：以相同指令重新发起任务
+  const rerunTask = useCallback(() => {
+    const task = currentTask;
+    if (!task) return;
+    startTask(task.prompt);
+  }, [currentTask, startTask]);
+
+  // 回滚：恢复任务开始前的最新快照，并向对话流插入回滚记录
+  const rollbackTask = useCallback(async () => {
+    const task = currentTask;
+    if (!task || !currentProjectId) return;
+    try {
+      const listRes = await fetch(`${API_BASE}/api/v1/snapshots/list?projectId=${currentProjectId}`);
+      const listData = await listRes.json();
+      const snaps = Array.isArray(listData.snapshots) ? listData.snapshots : [];
+      if (snaps.length === 0) {
+        alert('没有可用快照');
+        return;
+      }
+      const latest = snaps[snaps.length - 1] || snaps[0];
+      const res = await fetch(`${API_BASE}/api/v1/snapshots/${latest.id}/restore`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        const rollbackMsg: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `[已回滚] 已恢复到快照「${latest.label || latest.id}」（${new Date(latest.created_at).toLocaleString()}）`,
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, rollbackMsg]);
+        alert('已恢复到任务前快照');
+      } else {
+        alert(data.error || '回滚失败');
+      }
+    } catch {
+      alert('回滚失败');
+    }
+  }, [currentTask, currentProjectId]);
 
   // Voice recording functions
   const startRecording = async () => {
@@ -634,8 +753,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     : insets.bottom;
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable={false}>
       <View style={styles.container}>
+        <View style={styles.panes}>
+        <View style={[styles.leftPane, isSideBySide && styles.leftPaneWide]}>
         {/* Header */}
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
@@ -663,8 +784,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <Text style={styles.balanceText}>${balance.toFixed(2)}</Text>
               </View>
             )}
-            <Pressable style={styles.headerAction}>
-              <FontAwesome6 name="ellipsis" size={16} color={colors.textSecondary} />
+            <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
+              <FontAwesome6
+                name={isSideBySide ? 'table-columns' : taskPanelVisible ? 'xmark' : 'list-check'}
+                size={15}
+                color={taskPanelVisible ? colors.primary : colors.textSecondary}
+              />
             </Pressable>
           </View>
         </View>
@@ -683,6 +808,27 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Text>
           <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
         </Pressable>
+
+        {/* 精简任务卡片 */}
+        {currentTask && (
+          <Pressable style={styles.taskCard} onPress={() => setTaskPanelVisible(true)}>
+            <View style={styles.taskCardHeader}>
+              <FontAwesome6 name="list-check" size={12} color={colors.primary} />
+              <Text style={styles.taskCardName} numberOfLines={1}>{currentTask.name}</Text>
+              <Text style={[styles.taskCardStatus, currentTask.status === 'running' && styles.taskCardStatusRunning]}>
+                {currentTask.status === 'running' ? '执行中' : currentTask.status === 'done' ? '已完成' : currentTask.status === 'cancelled' ? '已取消' : '出错'}
+              </Text>
+            </View>
+            <View style={styles.taskCardTrack}>
+              <View style={[styles.taskCardFill, {
+                width: `${currentTask.steps.length > 0
+                  ? Math.max(4, Math.round((currentTask.steps.filter((st) => st.status === 'done' || st.status === 'error').length / currentTask.steps.length) * 100))
+                  : currentTask.status === 'running' ? 8 : 100}%`,
+              }]} />
+            </View>
+            <Text style={styles.taskCardHint}>点击查看任务详情</Text>
+          </Pressable>
+        )}
 
         {/* Messages */}
         <FlatList
@@ -832,6 +978,43 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             )}
           </View>
         </View>
+
+        </View>
+
+        {/* 右栏（横屏/平板并排显示） */}
+        {isSideBySide && (
+          <View style={styles.rightPane}>
+            <TaskPanel
+              task={currentTask}
+              colors={colors}
+              isDark={isDark}
+              onCancel={cancelTask}
+              onRerun={rerunTask}
+              onRollback={rollbackTask}
+            />
+          </View>
+        )}
+        </View>
+
+        {/* 任务面板抽屉（竖屏） */}
+        {!isSideBySide && (
+          <Modal visible={taskPanelVisible} transparent animationType="slide" onRequestClose={() => setTaskPanelVisible(false)}>
+            <View style={styles.drawerContainer}>
+              <Pressable style={styles.drawerBackdrop} onPress={() => setTaskPanelVisible(false)} />
+              <View style={styles.drawerPanel}>
+                <View style={styles.drawerHandle} />
+                <TaskPanel
+                  task={currentTask}
+                  colors={colors}
+                  isDark={isDark}
+                  onCancel={cancelTask}
+                  onRerun={rerunTask}
+                  onRollback={rollbackTask}
+                />
+              </View>
+            </View>
+          </Modal>
+        )}
 
         {/* Message action menu */}
         <Modal
@@ -1008,6 +1191,92 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 }
 
 const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
+  panes: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  leftPane: {
+    flex: 1,
+  },
+  leftPaneWide: {
+    width: '60%',
+    maxWidth: 720,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  rightPane: {
+    width: '40%',
+    minWidth: 300,
+    backgroundColor: colors.bgRoot,
+  },
+  drawerContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  drawerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  drawerPanel: {
+    width: '82%',
+    maxWidth: 460,
+    backgroundColor: colors.bgRoot,
+    borderTopLeftRadius: radius.lg,
+    borderBottomLeftRadius: radius.lg,
+    overflow: 'hidden',
+  },
+  drawerHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    marginTop: spacing.sm,
+  },
+  taskCard: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    gap: 6,
+  },
+  taskCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  taskCardName: {
+    flex: 1,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  taskCardStatus: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  taskCardStatusRunning: {
+    color: '#F59E0B',
+  },
+  taskCardTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.bgInput,
+    overflow: 'hidden',
+  },
+  taskCardFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: colors.primary,
+  },
+  taskCardHint: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
   container: {
     flex: 1,
   },

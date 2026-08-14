@@ -23,6 +23,9 @@ import { getSharedContext, mergeSharedContext, sharedContextToText } from '../co
 const router = express.Router();
 const execAsync = promisify(exec);
 
+// 任务取消注册表：requestId -> 是否请求取消（agent 循环在步骤间检查）
+const abortRegistry = new Map<string, boolean>();
+
 // Enhanced Agent system prompt with better intelligence
 const AGENT_SYSTEM_PROMPT = `You are Synaps, an AI software development agent running on a mobile phone.
 You help users develop, debug, build, and publish software through natural language.
@@ -1703,13 +1706,18 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
  * }
  */
 router.post('/', async (req: express.Request, res: express.Response) => {
+  let taskId = '';
+  let taskStartedAt = 0;
   try {
     await getDb();
     
-    const { messages, projectId } = req.body as {
+    const { messages, projectId, requestId } = req.body as {
       messages: Array<{ role: string; content: string }>;
       projectId?: string;
+      requestId?: string;
     };
+    taskId = requestId || `task-${Date.now()}`;
+    abortRegistry.set(taskId, false);
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       res.status(400).json({ error: 'messages array is required' });
@@ -1787,6 +1795,11 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       return;
     }
 
+    // 任务开始事件
+    const taskName = (lastUserMessage?.content || '任务').replace(/^>.*\n?/s, '').slice(0, 60);
+    taskStartedAt = Date.now();
+    res.write(`data: ${JSON.stringify({ task_start: { id: taskId, name: taskName, startedAt: taskStartedAt } })}\n\n`);
+
     // Build system message with project context
     let systemPrompt = AGENT_SYSTEM_PROMPT;
 
@@ -1839,6 +1852,10 @@ All file operations should use paths relative to the project root.`;
     while (iteration < maxIterations) {
       iteration++;
 
+      if (abortRegistry.get(taskId)) {
+        break;
+      }
+
       // Collect full response
       let fullResponse = '';
       const stream = client.stream(conversationMessages, {
@@ -1871,7 +1888,9 @@ All file operations should use paths relative to the project root.`;
         }
 
         saveChatMessage(sessionId, 'assistant', fullResponse);
+        res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'done', durationMs: Date.now() - taskStartedAt } })}\n\n`);
         res.write('data: [DONE]\n\n');
+        abortRegistry.delete(taskId);
         res.end();
         return;
       }
@@ -1897,8 +1916,11 @@ All file operations should use paths relative to the project root.`;
               method: toolCall.method,
             },
             result: blockedResult,
+            ok: false,
+            durationMs: 0,
           },
         })}\n\n`);
+        res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: 'error' } })}\n\n`);
         conversationMessages.push({ role: 'assistant', content: fullResponse });
         conversationMessages.push({
           role: 'user',
@@ -1926,8 +1948,11 @@ All file operations should use paths relative to the project root.`;
                 method: toolCall.method,
               },
               result: deniedResult,
+              ok: false,
+              durationMs: 0,
             },
           })}\n\n`);
+          res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: 'error' } })}\n\n`);
           conversationMessages.push({ role: 'assistant', content: fullResponse });
           conversationMessages.push({
             role: 'user',
@@ -1939,8 +1964,13 @@ All file operations should use paths relative to the project root.`;
         logAudit(projectId, toolCall.tool, describeDetail(toolCall), assessment.level, trusted ? 'trusted' : 'auto');
       }
 
+      // 任务步骤开始
+      res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: 'running' } })}\n\n`);
+
       // Execute tool
+      const toolStartedAt = Date.now();
       let toolResult = await executeTool(projectId, toolCall);
+      const toolDurationMs = Date.now() - toolStartedAt;
 
       // 失败智能分析：工具失败时自动调用 DeepSeek 诊断（未配置 Key 时静默跳过）
       if (isFailureResult(toolCall.tool, toolResult)) {
@@ -1949,6 +1979,7 @@ All file operations should use paths relative to the project root.`;
           toolResult += `\n\n${analysis}`;
         }
       }
+      const toolOk = !isFailureResult(toolCall.tool, toolResult);
 
       // Send tool execution info to client
       res.write(`data: ${JSON.stringify({
@@ -1966,8 +1997,11 @@ All file operations should use paths relative to the project root.`;
             method: toolCall.method,
           },
           result: toolResult,
+          ok: toolOk,
+          durationMs: toolDurationMs,
         },
       })}\n\n`);
+      res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: toolOk ? 'done' : 'error' } })}\n\n`);
 
       // Add assistant response and tool result to conversation
       conversationMessages.push({
@@ -1980,22 +2014,50 @@ All file operations should use paths relative to the project root.`;
       });
     }
 
-    // Max iterations reached
+    // Max iterations reached（或用户取消）
+    const cancelled = abortRegistry.get(taskId) === true;
     res.write(`data: ${JSON.stringify({
-      content: '\n\n[Agent reached maximum iterations. Please continue the conversation if more work is needed.]',
+      task_end: { id: taskId, status: cancelled ? 'cancelled' : 'done', durationMs: Date.now() - taskStartedAt },
+    })}\n\n`);
+    res.write(`data: ${JSON.stringify({
+      content: cancelled
+        ? '\n\n[任务已取消]'
+        : '\n\n[Agent reached maximum iterations. Please continue the conversation if more work is needed.]',
     })}\n\n`);
     res.write('data: [DONE]\n\n');
+    abortRegistry.delete(taskId);
     res.end();
   } catch (error) {
     console.error('Chat API error:', error);
+    abortRegistry.delete(taskId);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });
     } else {
+      res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'error', durationMs: Date.now() - taskStartedAt } })}\n\n`);
       res.write(`data: ${JSON.stringify({ error: 'Stream error' })}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();
     }
   }
+});
+
+/**
+ * POST /api/v1/chat/cancel
+ * Body: { requestId: string }
+ * 请求取消正在运行的任务（agent 循环在步骤间检查并停止）。
+ */
+router.post('/cancel', (req: express.Request, res: express.Response) => {
+  const { requestId } = req.body as { requestId?: string };
+  if (!requestId) {
+    res.status(400).json({ error: 'requestId is required' });
+    return;
+  }
+  if (!abortRegistry.has(requestId)) {
+    res.status(404).json({ error: 'Task not found or already finished' });
+    return;
+  }
+  abortRegistry.set(requestId, true);
+  res.json({ ok: true });
 });
 
 /**
