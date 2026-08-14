@@ -6,7 +6,6 @@ import {
   TextInput,
   Pressable,
   FlatList,
-  KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
   Alert,
@@ -151,6 +150,33 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       fetchProjectOptions();
     })();
   }, [fetchProjectOptions]);
+
+  // Load conversation history from backend
+  const loadHistory = useCallback(async (projectId: string | null) => {
+    try {
+      const url = projectId
+        ? `${API_BASE}/api/v1/chat/history?project_id=${encodeURIComponent(projectId)}`
+        : `${API_BASE}/api/v1/chat/history`;
+      const response = await fetch(url);
+      if (!response.ok) return;
+      const data = await response.json();
+      const msgs: Message[] = (data.messages || []).map(
+        (m: { id: string; role: string; content: string; created_at: string }) => ({
+          id: m.id || `${m.created_at}-${m.role}`,
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+          timestamp: new Date(m.created_at + 'Z').getTime(),
+        })
+      );
+      setMessages(msgs);
+    } catch {
+      // History unavailable, start fresh
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory(currentProjectId);
+  }, [currentProjectId, loadHistory]);
 
   // Track keyboard visibility so the input area can extend to the bottom edge
   useEffect(() => {
@@ -470,88 +496,92 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     const isUser = item.role === 'user';
     return (
       <Pressable
-        style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}
         onLongPress={() => openMessageMenu(item)}
         delayLongPress={350}
+        style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}
       >
-        {item.replyingTo && (
-          <View style={styles.replyPreview}>
-            <Text style={styles.replyPreviewLabel}>
-              {item.replyingTo.role === 'user' ? 'YOU' : 'SYNAPS'}
-            </Text>
-            <Text style={styles.replyPreviewText} numberOfLines={2}>
-              {item.replyingTo.content}
-            </Text>
-          </View>
-        )}
-        <View style={styles.messageHeader}>
-          <View style={[styles.avatarIcon, isUser ? styles.userAvatar : styles.botAvatar]}>
-            <FontAwesome6
-              name={isUser ? 'user' : 'robot'}
-              size={12}
-              color={isUser ? colors.textPrimary : colors.primary}
-            />
-          </View>
-          <Text style={styles.messageRole}>{isUser ? 'YOU' : 'SYNAPS'}</Text>
+        <View style={[styles.avatarCircle, isUser ? styles.avatarUser : styles.avatarBot]}>
+          <FontAwesome6
+            name={isUser ? 'user' : 'robot'}
+            size={14}
+            color={isUser ? '#FFFFFF' : colors.primary}
+          />
         </View>
-        <Text style={styles.messageContent}>{item.content}</Text>
-        {item.toolCalls && item.toolCalls.length > 0 && (
-          <View style={styles.toolCallsContainer}>
-            <Text style={styles.toolCallsLabel}>Tools executed:</Text>
-            {item.toolCalls.map((tc, idx) => {
-              const command =
-                typeof tc.args?.command === 'string' ? tc.args.command : '';
-              const exitMatch = tc.result?.match(/exit (\d+)/);
-              const exitCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
-              const failed = exitCode !== null && exitCode !== 0;
-              const resultText =
-                tc.result && tc.result.length > 300
-                  ? `${tc.result.slice(0, 300)}…`
-                  : tc.result;
-              return (
-                <View key={idx} style={styles.toolCallItem}>
-                  <View style={styles.toolCallHeader}>
-                    <FontAwesome6 name="terminal" size={10} color={colors.primary} />
-                    <Text style={styles.toolCallName}>{tc.name}</Text>
-                    {exitCode !== null && (
+        <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+          {item.replyingTo && (
+            <View style={[styles.replyPreview, isUser && styles.replyPreviewUser]}>
+              <Text style={[styles.replyPreviewLabel, isUser && styles.replyPreviewLabelUser]}>
+                {item.replyingTo.role === 'user' ? 'YOU' : 'SYNAPS'}
+              </Text>
+              <Text
+                style={[styles.replyPreviewText, isUser && styles.replyPreviewTextUser]}
+                numberOfLines={2}
+              >
+                {item.replyingTo.content}
+              </Text>
+            </View>
+          )}
+          <Text style={[styles.messageContent, isUser && styles.messageContentUser]}>
+            {item.content}
+          </Text>
+          {item.toolCalls && item.toolCalls.length > 0 && (
+            <View style={styles.toolCallsContainer}>
+              <Text style={styles.toolCallsLabel}>Tools executed:</Text>
+              {item.toolCalls.map((tc, idx) => {
+                const command =
+                  typeof tc.args?.command === 'string' ? tc.args.command : '';
+                const exitMatch = tc.result?.match(/exit (\d+)/);
+                const exitCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
+                const failed = exitCode !== null && exitCode !== 0;
+                const resultText =
+                  tc.result && tc.result.length > 300
+                    ? `${tc.result.slice(0, 300)}…`
+                    : tc.result;
+                return (
+                  <View key={idx} style={styles.toolCallItem}>
+                    <View style={styles.toolCallHeader}>
+                      <FontAwesome6 name="terminal" size={10} color={colors.primary} />
+                      <Text style={styles.toolCallName}>{tc.name}</Text>
+                      {exitCode !== null && (
+                        <Text
+                          style={[
+                            styles.toolCallExit,
+                            failed && styles.toolCallExitError,
+                          ]}
+                        >
+                          {failed ? `exit ${exitCode}` : 'ok'}
+                        </Text>
+                      )}
+                    </View>
+                    {command ? (
+                      <Text style={styles.toolCallCommand} numberOfLines={2}>
+                        $ {command}
+                      </Text>
+                    ) : tc.args && Object.keys(tc.args).length > 0 ? (
+                      <Text style={styles.toolCallArgs} numberOfLines={2}>
+                        {JSON.stringify(tc.args).slice(0, 100)}
+                      </Text>
+                    ) : null}
+                    {resultText ? (
                       <Text
                         style={[
-                          styles.toolCallExit,
-                          failed && styles.toolCallExitError,
+                          styles.toolCallResult,
+                          failed && styles.toolCallResultError,
                         ]}
+                        numberOfLines={4}
                       >
-                        {failed ? `exit ${exitCode}` : 'ok'}
+                        {resultText}
                       </Text>
-                    )}
+                    ) : null}
                   </View>
-                  {command ? (
-                    <Text style={styles.toolCallCommand} numberOfLines={2}>
-                      $ {command}
-                    </Text>
-                  ) : tc.args && Object.keys(tc.args).length > 0 ? (
-                    <Text style={styles.toolCallArgs} numberOfLines={2}>
-                      {JSON.stringify(tc.args).slice(0, 100)}
-                    </Text>
-                  ) : null}
-                  {resultText ? (
-                    <Text
-                      style={[
-                        styles.toolCallResult,
-                        failed && styles.toolCallResultError,
-                      ]}
-                      numberOfLines={4}
-                    >
-                      {resultText}
-                    </Text>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-        )}
+                );
+              })}
+            </View>
+          )}
+        </View>
       </Pressable>
     );
-  }, [openMessageMenu]);
+  }, [openMessageMenu, styles]);
 
   const modelLabel = currentModel.startsWith('deepseek-')
     ? currentModel.slice('deepseek-'.length)
@@ -563,12 +593,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     ? projectOptions.find((p) => p.id === currentProjectId)?.name
     : null;
 
+  const bottomOffset = keyboardShown
+    ? (Platform.OS === 'ios' ? keyboardHeight : 0)
+    : insets.bottom;
+
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior="padding"
-      >
+      <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
@@ -616,7 +647,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           style={styles.messageList}
-          contentContainerStyle={styles.messageContentArea}
+          contentContainerStyle={[
+            styles.messageContentArea,
+            { paddingBottom: inputAreaHeight + bottomOffset + spacing.md },
+          ]}
           onContentSizeChange={() => {
             flatListRef.current?.scrollToEnd({ animated: true });
           }}
@@ -633,38 +667,40 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           }
           ListFooterComponent={
             isStreaming && streamingContent ? (
-              <View style={[styles.messageBubble, styles.assistantBubble]}>
-                <View style={styles.messageHeader}>
-                  <View style={[styles.avatarIcon, styles.botAvatar]}>
-                    <FontAwesome6 name="robot" size={12} color={colors.primary} />
-                  </View>
-                  <Text style={styles.messageRole}>SYNAPS</Text>
+              <View style={[styles.messageRow, styles.messageRowAssistant]}>
+                <View style={[styles.avatarCircle, styles.avatarBot]}>
+                  <FontAwesome6 name="robot" size={14} color={colors.primary} />
                 </View>
-                <Text style={styles.messageContent}>{streamingContent}</Text>
-                {currentToolCalls.length > 0 && (
-                  <View style={styles.toolCallsContainer}>
-                    {currentToolCalls.map((tc, idx) => {
-                      const command =
-                        typeof tc.args?.command === 'string' ? tc.args.command : '';
-                      return (
-                        <View key={idx} style={styles.toolCallBadge}>
-                          <ActivityIndicator size="small" color={colors.primary} />
-                          <Text style={styles.toolCallText} numberOfLines={1}>
-                            {tc.name}
-                            {command ? `: ${command}` : ''}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
+                <View style={[styles.messageBubble, styles.assistantBubble]}>
+                  <Text style={styles.messageContent}>{streamingContent}</Text>
+                  {currentToolCalls.length > 0 && (
+                    <View style={styles.toolCallsContainer}>
+                      {currentToolCalls.map((tc, idx) => {
+                        const command =
+                          typeof tc.args?.command === 'string' ? tc.args.command : '';
+                        return (
+                          <View key={idx} style={styles.toolCallBadge}>
+                            <ActivityIndicator size="small" color={colors.primary} />
+                            <Text style={styles.toolCallText} numberOfLines={1}>
+                              {tc.name}
+                              {command ? `: ${command}` : ''}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
               </View>
             ) : null
           }
         />
 
         {/* Input */}
-        <View style={[styles.inputContainer, { paddingBottom: keyboardShown ? spacing.lg : spacing.lg + insets.bottom }]}>
+        <View
+          style={[styles.inputContainer, { bottom: bottomOffset }]}
+          onLayout={(e) => setInputAreaHeight(e.nativeEvent.layout.height)}
+        >
           {replyingTo && (
             <View style={styles.replyBar}>
               <View style={styles.replyBarLine} />
@@ -921,7 +957,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </View>
           </View>
         </Modal>
-      </KeyboardAvoidingView>
+      </View>
     </Screen>
   );
 }
@@ -1024,53 +1060,56 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.lg,
   },
-  messageBubble: {
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
-  },
-  userBubble: {
-    backgroundColor: colors.bgCard,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginLeft: 40,
-  },
-  assistantBubble: {
-    backgroundColor: 'rgba(167,139,250,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(167,139,250,0.15)',
-    marginRight: 40,
-  },
-  messageHeader: {
+  messageRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: spacing.sm,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
   },
-  avatarIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+  messageRowUser: {
+    justifyContent: 'flex-end',
+  },
+  messageRowAssistant: {
+    justifyContent: 'flex-start',
+  },
+  avatarCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  userAvatar: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+  avatarUser: {
+    backgroundColor: colors.primaryDark,
   },
-  botAvatar: {
-    backgroundColor: 'rgba(167,139,250,0.15)',
+  avatarBot: {
+    backgroundColor: colors.primaryGlow,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
   },
-  messageRole: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.textMuted,
-    letterSpacing: 1.5,
+  messageBubble: {
+    maxWidth: '78%',
+    borderRadius: 18,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  userBubble: {
+    backgroundColor: colors.primaryDark,
+    borderBottomRightRadius: 4,
+  },
+  assistantBubble: {
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderBottomLeftRadius: 4,
   },
   messageContent: {
     fontSize: fontSize.md,
     color: colors.textPrimary,
     lineHeight: 22,
+  },
+  messageContentUser: {
+    color: '#FFFFFF',
   },
   replyPreview: {
     flexDirection: 'row',
@@ -1090,10 +1129,21 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.primary,
     letterSpacing: 1,
   },
+  replyPreviewLabelUser: {
+    color: '#FFFFFF',
+  },
   replyPreviewText: {
     flex: 1,
     fontSize: fontSize.sm,
     color: colors.textSecondary,
+    marginTop: 2,
+  },
+  replyPreviewTextUser: {
+    color: 'rgba(255,255,255,0.85)',
+  },
+  replyPreviewUser: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderLeftColor: 'rgba(255,255,255,0.6)',
   },
   toolCallsContainer: {
     marginTop: spacing.md,
@@ -1205,6 +1255,9 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     lineHeight: 20,
   },
   inputContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.lg,
     paddingTop: spacing.sm,

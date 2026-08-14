@@ -1,5 +1,5 @@
-import React, { useState, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, ActivityIndicator, Keyboard, Platform } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 
@@ -34,6 +34,26 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const scrollViewRef = useRef<ScrollView>(null);
+  const [keyboardShown, setKeyboardShown] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [bottomBarHeight, setBottomBarHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s1 = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardShown(true);
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const s2 = Keyboard.addListener(hideEvent, () => {
+      setKeyboardShown(false);
+      setKeyboardHeight(0);
+    });
+    return () => {
+      s1.remove();
+      s2.remove();
+    };
+  }, []);
 
   const executeCommand = async () => {
     if (!command.trim() || isExecuting) return;
@@ -112,12 +132,13 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
     setHistory([]);
   };
 
+  const bottomOffset = keyboardShown
+    ? (Platform.OS === 'ios' ? keyboardHeight : 0)
+    : 0;
+
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
@@ -145,7 +166,10 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
           <ScrollView
             ref={scrollViewRef}
             style={styles.terminalBody}
-            contentContainerStyle={styles.terminalContent}
+            contentContainerStyle={[
+              styles.terminalContent,
+              { paddingBottom: bottomBarHeight + bottomOffset + spacing.md },
+            ]}
             showsVerticalScrollIndicator={false}
           >
             {history.length === 0 && (
@@ -192,42 +216,47 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
           </ScrollView>
         </View>
 
-        {/* Input Area */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.inputPrompt}>$</Text>
-          <TextInput
-            style={styles.input}
-            value={command}
-            onChangeText={setCommand}
-            placeholder="输入命令..."
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!isExecuting}
-            onSubmitEditing={executeCommand}
-          />
-          <TouchableOpacity
-            style={[styles.executeButton, isExecuting && styles.executeButtonDisabled]}
-            onPress={executeCommand}
-            disabled={isExecuting || !command.trim()}
-          >
-            {isExecuting ? (
-              <ActivityIndicator size="small" color={colors.textPrimary} />
-            ) : (
-              <FontAwesome6 name="play" size={14} color={colors.textPrimary} />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Status Bar */}
-        <View style={styles.statusBar}>
-          <View style={styles.statusItem}>
-            <View style={[styles.statusIndicator, { backgroundColor: colors.success }]} />
-            <Text style={styles.statusLabel}>READY</Text>
+        {/* Bottom Bar (fixed) */}
+        <View
+          style={[styles.bottomBar, { bottom: bottomOffset }]}
+          onLayout={(e) => setBottomBarHeight(e.nativeEvent.layout.height)}
+        >
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputPrompt}>$</Text>
+            <TextInput
+              style={styles.input}
+              value={command}
+              onChangeText={setCommand}
+              placeholder="输入命令..."
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!isExecuting}
+              onSubmitEditing={executeCommand}
+            />
+            <TouchableOpacity
+              style={[styles.executeButton, isExecuting && styles.executeButtonDisabled]}
+              onPress={executeCommand}
+              disabled={isExecuting || !command.trim()}
+            >
+              {isExecuting ? (
+                <ActivityIndicator size="small" color={colors.textPrimary} />
+              ) : (
+                <FontAwesome6 name="play" size={14} color={colors.textPrimary} />
+              )}
+            </TouchableOpacity>
           </View>
-          <Text style={styles.statusInfo}>{history.length} commands executed</Text>
+
+          {/* Status Bar */}
+          <View style={styles.statusBar}>
+            <View style={styles.statusItem}>
+              <View style={[styles.statusIndicator, { backgroundColor: colors.success }]} />
+              <Text style={styles.statusLabel}>READY</Text>
+            </View>
+            <Text style={styles.statusInfo}>{history.length} commands executed</Text>
+          </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Screen>
   );
 }
@@ -400,10 +429,20 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     fontSize: fontSize.sm,
     fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
+  bottomBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    backgroundColor: colors.bgRoot,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.md,
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: radius.md,
     borderWidth: 1,

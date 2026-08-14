@@ -184,6 +184,33 @@ function resolveProjectPath(projectId: string, relativePath: string): string {
   return resolved;
 }
 
+function ensureSession(projectId?: string): string {
+  let existing: Record<string, unknown> | null = null;
+  if (projectId) {
+    existing = queryOne(
+      `SELECT id FROM chat_sessions WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1`,
+      [projectId]
+    );
+  } else {
+    existing = queryOne(
+      `SELECT id FROM chat_sessions WHERE project_id IS NULL ORDER BY updated_at DESC LIMIT 1`
+    );
+  }
+  if (existing) {
+    runSql(`UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?`, [existing.id as string]);
+    return existing.id as string;
+  }
+  const id = crypto.randomUUID();
+  runSql(`INSERT INTO chat_sessions (id, project_id, title) VALUES (?, ?, ?)`, [id, projectId ?? null, 'New Chat']);
+  return id;
+}
+
+function saveChatMessage(sessionId: string, role: 'user' | 'assistant', content: string): void {
+  if (!content.trim()) return;
+  const id = crypto.randomUUID();
+  runSql(`INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)`, [id, sessionId, role, content]);
+}
+
 interface PendingApproval {
   resolve: (approved: boolean) => void;
   timer: NodeJS.Timeout;
@@ -1630,6 +1657,13 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       return;
     }
 
+    // 持久化会话与用户消息（历史对话）
+    const sessionId = ensureSession(projectId);
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+    if (lastUserMessage) {
+      saveChatMessage(sessionId, 'user', lastUserMessage.content);
+    }
+
     const customHeaders = HeaderUtils.extractForwardHeaders(
       req.headers as unknown as Record<string, string>
     );
@@ -1735,6 +1769,7 @@ All file operations should use paths relative to the project root.`;
           }
         }
 
+        saveChatMessage(sessionId, 'assistant', fullResponse);
         res.write('data: [DONE]\n\n');
         res.end();
         return;
@@ -1851,6 +1886,38 @@ All file operations should use paths relative to the project root.`;
       res.write('data: [DONE]\n\n');
       res.end();
     }
+  }
+});
+
+/**
+ * GET /api/v1/chat/history
+ * 返回最近会话的历史消息
+ */
+router.get('/history', async (req: express.Request, res: express.Response) => {
+  try {
+    await getDb();
+    const projectId =
+      typeof req.query.project_id === 'string' && req.query.project_id
+        ? req.query.project_id
+        : undefined;
+
+    const session = projectId
+      ? queryOne(`SELECT id FROM chat_sessions WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1`, [projectId])
+      : queryOne(`SELECT id FROM chat_sessions WHERE project_id IS NULL ORDER BY updated_at DESC LIMIT 1`);
+
+    if (!session) {
+      res.json({ sessionId: null, messages: [] });
+      return;
+    }
+
+    const rows = queryAll(
+      `SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`,
+      [session.id as string]
+    );
+    res.json({ sessionId: session.id, messages: rows });
+  } catch (error) {
+    console.error('Chat history API error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
