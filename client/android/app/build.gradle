@@ -206,7 +206,7 @@ abstract class DownloadNodejsTask extends DefaultTask {
     @TaskAction
     void run() {
         def url = 'https://github.com/abuaibobo-dev/synaps-next/releases/download/nodejs-mobile-r27/nodejs-mobile-v18.20.4-android-r27-arm64.zip'
-        def expectedMD5 = '633312259365ea6d834af8bd89b48537'
+        def expectedMD5 = '845ed02dec2dda68ad9f879aacb595ff'
         def zipFile = project.file('./libnode/nodejs-mobile-v18.20.4-android-r27-arm64.zip')
         def extractDir = project.file('./libnode')
 
