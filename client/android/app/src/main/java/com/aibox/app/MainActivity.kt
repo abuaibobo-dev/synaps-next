@@ -25,15 +25,20 @@ class MainActivity : ReactActivity() {
     super.onCreate(null)
   }
 
-  // Start the embedded Node server once the activity is actually resumed
-  // (foreground). Starting in onCreate is racy on Android 16: the system can
-  // reject it with "Background start not allowed".
+  // Start the embedded Node server as a foreground service. Plain
+  // startService() is blocked by Android 16 ("Background start not allowed")
+  // even from onCreate/onResume, so use the FGS path which is always allowed.
   override fun onResume() {
     super.onResume()
     if (!nodeServiceStarted) {
       nodeServiceStarted = true
       try {
-        startService(android.content.Intent(this, com.aibox.app.node.NodeService::class.java))
+        val intent = android.content.Intent(this, com.aibox.app.node.NodeService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+          startForegroundService(intent)
+        } else {
+          startService(intent)
+        }
       } catch (t: Throwable) {
         android.util.Log.e("SYNAPS_NODE", "failed to start NodeService", t)
       }
