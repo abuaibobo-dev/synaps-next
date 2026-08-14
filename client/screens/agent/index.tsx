@@ -10,11 +10,13 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Keyboard,
 } from 'react-native';
 import EventSource from 'react-native-sse';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import { Screen } from '@/components/Screen';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
@@ -50,6 +52,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [balance, setBalance] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const insets = useSafeAreaInsets();
+  const [keyboardShown, setKeyboardShown] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const esRef = useRef<EventSource | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -86,6 +90,18 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       }
     };
     loadBalance();
+  }, []);
+
+  // Track keyboard visibility so the input area can extend to the bottom edge
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s1 = Keyboard.addListener(showEvent, () => setKeyboardShown(true));
+    const s2 = Keyboard.addListener(hideEvent, () => setKeyboardShown(false));
+    return () => {
+      s1.remove();
+      s2.remove();
+    };
   }, []);
 
   // Cleanup on unmount
@@ -326,7 +342,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   }, []);
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light" safeAreaEdges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -404,7 +420,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         />
 
         {/* Input */}
-        <View style={styles.inputContainer}>
+        <View style={[styles.inputContainer, { paddingBottom: keyboardShown ? spacing.lg : spacing.lg + insets.bottom }]}>
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
