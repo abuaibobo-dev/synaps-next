@@ -45,6 +45,21 @@ const DEFAULT_SETTINGS: Settings = {
   diff_review_enabled: 'true',
 };
 
+interface McpServer {
+  name: string;
+  transport: 'stdio' | 'sse';
+  command?: string;
+  args?: string[];
+  url?: string;
+}
+
+interface SkillItem {
+  name: string;
+  description: string;
+  source: string;
+  enabled: number;
+}
+
 interface EditModalProps {
   visible: boolean;
   title: string;
@@ -100,6 +115,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; detail: string; risk_level: string; decision: string; created_at: string }>>([]);
   const [auditModalVisible, setAuditModalVisible] = useState(false);
   const [trustModalVisible, setTrustModalVisible] = useState(false);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [mcpModalVisible, setMcpModalVisible] = useState(false);
+  const [mcpFormName, setMcpFormName] = useState('');
+  const [mcpFormTransport, setMcpFormTransport] = useState<'stdio' | 'sse'>('stdio');
+  const [mcpFormCommand, setMcpFormCommand] = useState('');
+  const [mcpFormArgs, setMcpFormArgs] = useState('');
+  const [mcpFormUrl, setMcpFormUrl] = useState('');
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -143,6 +166,31 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchPermissionData();
   }, [fetchPermissionData]);
+  const fetchMcpAndSkills = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/settings`);
+      const data = await res.json();
+      try {
+        const parsed = JSON.parse(data.mcp_servers || '[]');
+        setMcpServers(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        setMcpServers([]);
+      }
+    } catch {
+      // Ignore
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/skills`);
+      const data = await res.json();
+      setSkills(data.skills || []);
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMcpAndSkills();
+  }, [fetchMcpAndSkills]);
 
   const updateSetting = async (key: keyof Settings, value: string) => {
     try {
@@ -231,6 +279,99 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     ({ none: '无风险', medium: '中风险', high: '高风险', critical: '极高风险' }[level] || level);
   const decisionLabel = (decision: string) =>
     ({ auto: '自动放行', trusted: '可信项目', approved: '用户允许', denied: '用户拒绝', blocked: '策略拦截' }[decision] || decision);
+
+  const openMcpModal = () => {
+    setMcpFormName('');
+    setMcpFormTransport('stdio');
+    setMcpFormCommand('');
+    setMcpFormArgs('');
+    setMcpFormUrl('');
+    setMcpModalVisible(true);
+  };
+
+  const saveMcpServer = async () => {
+    if (!mcpFormName.trim()) {
+      Alert.alert('提示', '请输入服务器名称');
+      return;
+    }
+    const server: McpServer = { name: mcpFormName.trim(), transport: mcpFormTransport };
+    if (server.transport === 'stdio') {
+      if (!mcpFormCommand.trim()) {
+        Alert.alert('提示', 'stdio 需要填写启动命令');
+        return;
+      }
+      server.command = mcpFormCommand.trim();
+      server.args = mcpFormArgs.split(',').map((x) => x.trim()).filter(Boolean);
+    } else {
+      if (!mcpFormUrl.trim()) {
+        Alert.alert('提示', 'sse 需要填写 URL');
+        return;
+      }
+      server.url = mcpFormUrl.trim();
+    }
+    const next = [...mcpServers.filter((x) => x.name !== server.name), server];
+    setMcpServers(next);
+    setMcpModalVisible(false);
+    try {
+      await fetch(`${API_BASE}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mcp_servers: JSON.stringify(next) }),
+      });
+    } catch {
+      Alert.alert('错误', '保存失败');
+    }
+  };
+
+  const removeMcpServer = (name: string) => {
+    Alert.alert('删除 MCP 服务器', `确定删除 "${name}"？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: async () => {
+          const next = mcpServers.filter((x) => x.name !== name);
+          setMcpServers(next);
+          try {
+            await fetch(`${API_BASE}/api/v1/settings`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mcp_servers: JSON.stringify(next) }),
+            });
+          } catch {
+            Alert.alert('错误', '保存失败');
+          }
+        },
+      },
+    ]);
+  };
+
+  const toggleSkill = async (name: string, enabled: boolean) => {
+    setSkills((prev) => prev.map((x) => (x.name === name ? { ...x, enabled: enabled ? 1 : 0 } : x)));
+    try {
+      await fetch(`${API_BASE}/api/v1/skills/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    } catch {
+      Alert.alert('错误', '保存失败');
+    }
+  };
+
+  const showSkillDetail = async (name: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/skills/${encodeURIComponent(name)}`);
+      const data = await res.json();
+      Alert.alert(
+        data.name,
+        `${data.description || '无描述'}\n\n${(data.content || '').slice(0, 2000)}`,
+        [{ text: '关闭', style: 'cancel' }]
+      );
+    } catch {
+      Alert.alert('错误', '加载技能失败');
+    }
+  };
 
   const handleClearCache = () => {
     Alert.alert('清除缓存', '确定要清除所有缓存数据吗？', [
@@ -456,6 +597,65 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Pressable>
           </View>
 
+          {/* MCP 服务器 */}
+          <Text style={styles.groupTitle}>MCP 服务器</Text>
+          <View style={styles.group}>
+            {mcpServers.length === 0 && (
+              <View style={styles.settingItem}>
+                <Text style={[styles.settingLabel, { color: colors.textMuted }]}>未配置 MCP 服务器</Text>
+              </View>
+            )}
+            {mcpServers.map((server) => (
+              <View key={server.name} style={styles.settingItem}>
+                <View style={styles.settingIcon}>
+                  <FontAwesome6 name="plug" size={14} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.settingLabel} numberOfLines={1}>{server.name}</Text>
+                  <Text style={styles.mcpPath} numberOfLines={1}>
+                    {server.transport === 'stdio'
+                      ? `${server.command || ''} ${(server.args || []).join(' ')}`
+                      : server.url || ''}
+                  </Text>
+                </View>
+                <Pressable style={styles.mcpDelete} onPress={() => removeMcpServer(server.name)} hitSlop={8}>
+                  <FontAwesome6 name="trash-can" size={12} color={colors.danger} />
+                </Pressable>
+              </View>
+            ))}
+            <Pressable style={styles.settingItem} onPress={openMcpModal}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="plus" size={14} color={colors.success} />
+              </View>
+              <Text style={styles.settingLabel}>添加 MCP 服务器</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          {/* 技能 */}
+          <Text style={styles.groupTitle}>技能</Text>
+          <View style={styles.group}>
+            {skills.length === 0 && (
+              <View style={styles.settingItem}>
+                <Text style={[styles.settingLabel, { color: colors.textMuted }]}>暂无技能</Text>
+              </View>
+            )}
+            {skills.map((skill) => (
+              <View key={skill.name} style={styles.settingItem}>
+                <Pressable style={{ flex: 1 }} onPress={() => showSkillDetail(skill.name)}>
+                  <Text style={styles.settingLabel} numberOfLines={1}>{skill.name}</Text>
+                  <Text style={styles.mcpPath} numberOfLines={1}>{skill.description || '无描述'}</Text>
+                </Pressable>
+                <Switch
+                  value={skill.enabled === 1}
+                  onValueChange={(v) => toggleSkill(skill.name, v)}
+                  trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
+                  thumbColor={skill.enabled === 1 ? colors.primary : colors.textMuted}
+                />
+              </View>
+            ))}
+          </View>
+
           {/* About */}
           <Text style={styles.groupTitle}>关于</Text>
           <View style={styles.group}>
@@ -566,6 +766,75 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setAuditModalVisible(false)}>
                 <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>关闭</Text>
               </Pressable>
+            </View>
+          </View>
+        </Modal>
+
+        {/* MCP 添加 Modal */}
+        <Modal visible={mcpModalVisible} transparent animationType="fade" onRequestClose={() => setMcpModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>添加 MCP 服务器</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="服务器名称（如 github）"
+                placeholderTextColor={colors.textMuted}
+                value={mcpFormName}
+                onChangeText={setMcpFormName}
+                autoCapitalize="none"
+              />
+              <View style={styles.transportRow}>
+                <Pressable
+                  style={[styles.transportBtn, mcpFormTransport === 'stdio' && styles.transportBtnActive]}
+                  onPress={() => setMcpFormTransport('stdio')}
+                >
+                  <Text style={[styles.transportBtnText, mcpFormTransport === 'stdio' && styles.transportBtnTextActive]}>stdio</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.transportBtn, mcpFormTransport === 'sse' && styles.transportBtnActive]}
+                  onPress={() => setMcpFormTransport('sse')}
+                >
+                  <Text style={[styles.transportBtnText, mcpFormTransport === 'sse' && styles.transportBtnTextActive]}>sse</Text>
+                </Pressable>
+              </View>
+              {mcpFormTransport === 'stdio' ? (
+                <>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="启动命令（如 npx）"
+                    placeholderTextColor={colors.textMuted}
+                    value={mcpFormCommand}
+                    onChangeText={setMcpFormCommand}
+                    autoCapitalize="none"
+                  />
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="参数（逗号分隔，如 -y @modelcontextprotocol/server-github）"
+                    placeholderTextColor={colors.textMuted}
+                    value={mcpFormArgs}
+                    onChangeText={setMcpFormArgs}
+                    autoCapitalize="none"
+                  />
+                </>
+              ) : (
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="SSE URL（如 https://example.com/sse）"
+                  placeholderTextColor={colors.textMuted}
+                  value={mcpFormUrl}
+                  onChangeText={setMcpFormUrl}
+                  autoCapitalize="none"
+                  keyboardType="url"
+                />
+              )}
+              <View style={styles.modalButtons}>
+                <Pressable style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setMcpModalVisible(false)}>
+                  <Text style={styles.modalBtnText}>取消</Text>
+                </Pressable>
+                <Pressable style={[styles.modalBtn, styles.modalBtnSave]} onPress={saveMcpServer}>
+                  <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>保存</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </Modal>
@@ -793,5 +1062,45 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textMuted,
     marginTop: 4,
+  },
+
+  mcpPath: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  mcpDelete: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  transportRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  transportBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.bgElevated,
+  },
+  transportBtnActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryGlow,
+  },
+  transportBtnText: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  transportBtnTextActive: {
+    color: colors.primary,
   },
 });
