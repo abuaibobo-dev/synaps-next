@@ -9,7 +9,8 @@
 - `client/android/app/build.gradle`
   - `downloadNodejs`（preBuild）：从本仓库 `nodejs-mobile-r27` release 下载 NDK r27（clang 18）重编译的 libnode（与 RN libc++ ABI 兼容，MD5 校验），解压到 `app/libnode/`（.gitignore 忽略）
   - `copyNodeProject`（preBuild）：`node server/build.js` 重新打包 server → 复制 `dist/index.cjs` + `sql-wasm.wasm` 到 `app/src/main/assets/nodejs-project/`，并生成入口 `main.cjs`（先设 `SYNAPS_DATA_DIR` 再加载 server）
-- `client/android/app/src/main/cpp/`：CMake + native-lib.cpp（JNI 桥，`node::Start`，stdout/stderr 重定向 logcat）
+- `client/android/app/src/main/cpp/CMakeLists.txt`：顶层 `project("appmodules")` + RN 官方 `ReactNative-application.cmake`，构建新架构所需的 `libappmodules.so`（TurboModules/Fabric/codegen）
+- `client/android/app/src/main/cpp/native/native-lib.cpp`：独立 `libnative-lib.so`（JNI 桥，`node::Start`，stdout/stderr 重定向 logcat）
 - `client/android/app/src/main/java/com/aibox/app/node/NodeBridge.kt`：assets 复制 + 单线程启动
 - `MainActivity.onCreate` 调用 `NodeBridge.start(applicationContext)`；该调用由 `client/plugins/withNodeBridge.js` config plugin 在 prebuild 时自动注入
 - 只构建 `arm64-v8a`（APK 增加约 62MB）
@@ -31,4 +32,5 @@ cd client/android
 ## 注意事项
 - `npx expo prebuild` 会重新生成 android 目录：包名来自 `app.config.ts`（`com.aibox.app`），MainActivity 的 Node 启动调用由 `plugins/withNodeBridge.js` 自动注入
 - server 改动后无需手动提交 assets 产物（Gradle 自动重建）
+- nodejs-mobile 的 V8 无 ICU：server 依赖链**不得使用 `\p{...}` Unicode 属性正则**；camelcase 已通过 `patches/camelcase@6.3.0.patch`（pnpm patchedDependencies）替换为 ASCII 等价实现
 - sql.js wasm 必须与 `index.cjs` 同目录（`locateFile` 用 `__filename` 定位）
