@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 import { FontAwesome6 } from '@expo/vector-icons';
 
 interface LogsScreenProps {
@@ -17,8 +19,10 @@ const LOG_CATEGORIES = [
 ];
 
 export default function LogsScreen({ onOpenSidebar }: LogsScreenProps) {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -59,7 +63,7 @@ export default function LogsScreen({ onOpenSidebar }: LogsScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: spacing.lg,

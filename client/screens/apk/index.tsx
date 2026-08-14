@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
@@ -7,7 +7,9 @@ import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 
 
 interface WorkflowRun {
@@ -27,6 +29,8 @@ interface ApksScreenProps {
 }
 
 export default function ApksScreen({ onOpenSidebar }: ApksScreenProps) {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [loading, setLoading] = useState(false);
   const [owner, setOwner] = useState('');
@@ -117,7 +121,7 @@ export default function ApksScreen({ onOpenSidebar }: ApksScreenProps) {
   );
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -177,7 +181,7 @@ export default function ApksScreen({ onOpenSidebar }: ApksScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row',

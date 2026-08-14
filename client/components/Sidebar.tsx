@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FontAwesome6 } from '@expo/vector-icons';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from './ThemeProvider';
 
 const SIDEBAR_WIDTH = 280;
 
@@ -48,6 +50,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ visible, activeModule, onModuleChange, onClose }: SidebarProps) {
+  const { colors } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [animValues] = useState(() => ({
     translateX: new Animated.Value(-SIDEBAR_WIDTH),
     opacity: new Animated.Value(visible ? 1 : 0),
@@ -175,6 +179,8 @@ interface MenuButtonProps {
 }
 
 export function MenuButton({ onPress }: MenuButtonProps) {
+  const { colors } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <Pressable onPress={onPress} style={styles.menuButton}>
       <FontAwesome6 name="bars" size={18} color={colors.textPrimary} />
@@ -182,7 +188,7 @@ export function MenuButton({ onPress }: MenuButtonProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   sidebar: {
     position: 'absolute',
     left: 0,
@@ -258,9 +264,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconContainerActive: {
-    backgroundColor: 'rgba(167,139,250,0.15)',
+    backgroundColor: colors.primaryGlow,
     borderWidth: 1,
-    borderColor: 'rgba(167,139,250,0.2)',
+    borderColor: colors.primaryBorder,
   },
   moduleLabel: {
     fontSize: fontSize.md,

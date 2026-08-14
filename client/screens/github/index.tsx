@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, TextInput, ActivityIndicator } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
@@ -7,7 +7,9 @@ import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 
 
 interface Repository {
@@ -31,6 +33,8 @@ interface GithubScreenProps {
 }
 
 export default function GithubScreen({ onOpenSidebar }: GithubScreenProps) {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [repos, setRepos] = useState<Repository[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -120,7 +124,7 @@ export default function GithubScreen({ onOpenSidebar }: GithubScreenProps) {
   );
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -210,7 +214,7 @@ export default function GithubScreen({ onOpenSidebar }: GithubScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row',

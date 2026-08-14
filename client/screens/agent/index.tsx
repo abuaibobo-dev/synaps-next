@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -26,7 +26,9 @@ import { MenuButton } from '@/components/Sidebar';
 import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 
 const MODEL_OPTIONS = ['deepseek-chat', 'deepseek-reasoner'];
 
@@ -64,6 +66,8 @@ interface AgentScreenProps {
 }
 
 export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -560,7 +564,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     : null;
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light" safeAreaEdges={['top', 'left', 'right']}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior="padding"
@@ -922,7 +926,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
   },

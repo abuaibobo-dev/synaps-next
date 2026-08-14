@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
@@ -6,7 +6,9 @@ import { MenuButton } from '@/components/Sidebar';
 import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 
 interface TerminalScreenProps {
   onOpenSidebar: () => void;
@@ -24,6 +26,8 @@ interface CommandResult {
 
 
 export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [command, setCommand] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [history, setHistory] = useState<CommandResult[]>([]);
@@ -109,7 +113,7 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
   };
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -228,7 +232,7 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: spacing.lg,

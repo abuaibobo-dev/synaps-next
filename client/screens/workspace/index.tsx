@@ -1,8 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { Sidebar, type ModuleKey } from '@/components/Sidebar';
-import { colors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
+import type { ThemeColors } from '@/utils/theme';
 
 import ProjectsScreen from '@/screens/projects';
 import AgentScreen from '@/screens/agent';
@@ -14,6 +15,8 @@ import GithubScreen from '@/screens/github';
 import SettingsScreen from '@/screens/settings';
 
 export default function WorkspaceScreen() {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [sidebarVisible, setSidebarVisible] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>('projects');
 
@@ -53,7 +56,7 @@ export default function WorkspaceScreen() {
   };
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light" safeAreaEdges={['left', 'right']}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['left', 'right']}>
       <View style={styles.container}>
         {renderModule()}
         <Sidebar
@@ -67,7 +70,7 @@ export default function WorkspaceScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bgRoot,

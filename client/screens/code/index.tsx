@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,9 @@ import { MenuButton } from '@/components/Sidebar';
 import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 
 
 interface FileEntry {
@@ -45,6 +47,8 @@ interface CodeScreenProps {
 type ViewMode = 'files' | 'snapshots' | 'diff';
 
 export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
+  const { colors, isDark } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -240,7 +244,7 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
   const demoProjectId = 'demo-project';
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -618,7 +622,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
   },

@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch, Platform } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
-import { colors, spacing, radius, fontSize } from '@/utils/theme';
+import { spacing, radius, fontSize } from '@/utils/theme';
+import type { ThemeColors } from '@/utils/theme';
+import { useThemeColors } from '@/components/ThemeProvider';
 import { getApiBase } from '@/utils';
 import { getCrashLogs, clearCrashLogs } from '@/utils/crashReporter';
 const API_BASE = getApiBase();
@@ -71,6 +73,8 @@ interface EditModalProps {
 }
 
 function EditModal({ visible, title, value, placeholder, secure, onClose, onSave }: EditModalProps) {
+  const { colors } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [inputValue, setInputValue] = useState(value);
 
   useEffect(() => {
@@ -107,6 +111,8 @@ function EditModal({ visible, title, value, placeholder, secure, onClose, onSave
 }
 
 export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
+  const { colors, isDark, mode, setMode } = useThemeColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [editKey, setEditKey] = useState<keyof Settings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -388,7 +394,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   if (loading) {
     return (
-      <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+      <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
         <View style={styles.container}>
           <View style={styles.header}>
             <MenuButton onPress={onOpenSidebar} />
@@ -403,7 +409,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle="light">
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
@@ -412,6 +418,30 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* 外观 */}
+          <Text style={styles.groupTitle}>外观</Text>
+          <View style={styles.group}>
+            <View style={styles.settingItem}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="palette" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>主题模式</Text>
+              <View style={styles.themeSeg}>
+                {(['system', 'light', 'dark'] as const).map((m) => (
+                  <Pressable
+                    key={m}
+                    style={[styles.themeSegItem, mode === m && styles.themeSegItemActive]}
+                    onPress={() => setMode(m)}
+                  >
+                    <Text style={[styles.themeSegText, mode === m && styles.themeSegTextActive]}>
+                      {m === 'system' ? '跟随系统' : m === 'light' ? '浅色' : '深色'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          </View>
+
           {/* AI Model */}
           <Text style={styles.groupTitle}>AI 模型</Text>
           <View style={styles.group}>
@@ -843,7 +873,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: spacing.lg,
@@ -921,6 +951,30 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginRight: spacing.sm,
     maxWidth: 120,
+  },
+  themeSeg: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  themeSegItem: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    backgroundColor: colors.bgInput,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  themeSegItemActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  themeSegText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  themeSegTextActive: {
+    color: '#FFFFFF',
   },
   modalOverlay: {
     flex: 1,
