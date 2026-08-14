@@ -218,7 +218,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
   };
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>

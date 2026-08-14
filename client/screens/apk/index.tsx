@@ -121,7 +121,7 @@ export default function ApksScreen({ onOpenSidebar }: ApksScreenProps) {
   );
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>

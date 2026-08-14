@@ -56,7 +56,7 @@ export default function WorkspaceScreen() {
   };
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['left', 'right']}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['left', 'right']} scrollable>
       <View style={styles.container}>
         {renderModule()}
         <Sidebar

@@ -394,7 +394,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   if (loading) {
     return (
-      <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+      <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
         <View style={styles.container}>
           <View style={styles.header}>
             <MenuButton onPress={onOpenSidebar} />
@@ -409,7 +409,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>

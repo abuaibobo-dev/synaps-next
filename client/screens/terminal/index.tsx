@@ -141,7 +141,7 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
     : 0;
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>

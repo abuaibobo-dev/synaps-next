@@ -76,6 +76,13 @@ interface ScreenProps {
    * - 自定义底部: 去掉 'bottom'
    */
   safeAreaEdges?: Edge[];
+  /**
+   * 页面自身是否已处理滚动（如直接使用 FlatList/ScrollView 且带固定底部栏）
+   * - true: 禁用外层滚动容器，页面完全自管理滚动
+   * - false: 强制使用外层滚动容器
+   * - 不传: 自动检测子元素（默认行为）
+   */
+  scrollable?: boolean;
   /** 自定义容器样式 */
   style?: ViewStyle;
 }
@@ -147,6 +154,7 @@ const RawScreen = ({
   statusBarStyle = 'dark',
   statusBarColor = 'transparent',
   safeAreaEdges = ['top', 'left', 'right', 'bottom'],
+  scrollable,
   style,
 }: ScreenProps) => {
   const insets = useSafeAreaInsets();
@@ -183,7 +191,7 @@ const RawScreen = ({
     return isScrollableElement(node);
   };
 
-  const childIsNativeScrollable = isNodeScrollable(children);
+  const childIsNativeScrollable = scrollable ?? isNodeScrollable(children);
 
   // 说明：避免双重补白
   // KeyboardAwareScrollView 内部会自动处理键盘高度。

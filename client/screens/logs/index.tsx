@@ -22,7 +22,7 @@ export default function LogsScreen({ onOpenSidebar }: LogsScreenProps) {
   const { colors, isDark } = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>

@@ -84,6 +84,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const insets = useSafeAreaInsets();
   const [keyboardShown, setKeyboardShown] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [inputAreaHeight, setInputAreaHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const esRef = useRef<EventSource | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -182,8 +184,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const s1 = Keyboard.addListener(showEvent, () => setKeyboardShown(true));
-    const s2 = Keyboard.addListener(hideEvent, () => setKeyboardShown(false));
+    const s1 = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardShown(true);
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const s2 = Keyboard.addListener(hideEvent, () => {
+      setKeyboardShown(false);
+      setKeyboardHeight(0);
+    });
     return () => {
       s1.remove();
       s2.remove();
@@ -598,7 +606,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     : insets.bottom;
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>

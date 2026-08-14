@@ -244,7 +244,7 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
   const demoProjectId = 'demo-project';
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
