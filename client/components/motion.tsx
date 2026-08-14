@@ -103,10 +103,10 @@ export function PressableScale({
 }
 
 const STATUS_COLORS: Record<StepStatus, string> = {
-  done: '#4ADE80',
-  running: '#FCD34D',
-  pending: '#6A6A6E',
-  error: '#F87171',
+  done: '#4CAF50',
+  running: '#555555',
+  pending: '#6A6A6A',
+  error: '#F44336',
 };
 
 /**
@@ -287,8 +287,8 @@ export function ThinkingDots({ color, size = 5, gap = 5 }: { color: string; size
   );
 }
 
-/** 工具执行中：紫色旋转加载圈（线性风格） */
-export function ToolSpinner({ size = 14, color = '#8B5CF6' }: { size?: number; color?: string }) {
+/** 工具执行中：灰色旋转加载圈（线性风格） */
+export function ToolSpinner({ size = 14, color = '#555555' }: { size?: number; color?: string }) {
   const { loops } = useMotion();
   const rotate = useSharedValue(0);
 

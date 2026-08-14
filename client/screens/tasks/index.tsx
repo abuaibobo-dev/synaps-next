@@ -39,10 +39,10 @@ interface TaskItem {
 }
 
 const STATUS_META: Record<TaskItem['status'], { text: string; color: string }> = {
-  running: { text: '执行中', color: '#FCD34D' },
-  done: { text: '已完成', color: '#4ADE80' },
+  running: { text: '执行中', color: '#555555' },
+  done: { text: '已完成', color: '#4CAF50' },
   cancelled: { text: '已取消', color: '#9CA3AF' },
-  error: { text: '出错', color: '#F87171' },
+  error: { text: '出错', color: '#F44336' },
 };
 
 function formatTime(ts: number): string {
@@ -152,7 +152,7 @@ export default function TasksScreen({ onOpenSidebar }: TasksScreenProps) {
                 <Text style={styles.detailTitle}>工具调用（{tools.length}）</Text>
                 {tools.map((t, i) => (
                   <View key={i} style={styles.toolRow}>
-                    <AppIcon name={t.ok === false ? 'x-circle' : toolIcon(t.name)} size={11} color={t.ok === false ? '#F87171' : colors.primary} />
+                    <AppIcon name={t.ok === false ? 'x-circle' : toolIcon(t.name)} size={11} color={t.ok === false ? '#F44336' : colors.primary} />
                     <Text style={styles.toolName} numberOfLines={1}>{t.name}</Text>
                     <Text style={styles.toolDuration}>{formatDuration(t.durationMs)}</Text>
                   </View>

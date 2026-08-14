@@ -67,34 +67,34 @@ interface SidebarColors {
   textDefault: string;
   textActive: string;
   divider: string;
-  purple: string;
+  brand: string;
   brandSub: string;
 }
 
-function buildSidebarColors(colors: ThemeColors, isDark: boolean): SidebarColors {
+function buildSidebarColors(isDark: boolean): SidebarColors {
   if (isDark) {
     return {
-      bg: '#16161A',
-      bgActive: '#1E1E22',
-      iconDefault: '#6A6A6E',
-      iconActive: '#7C3AED',
-      textDefault: '#A0A0A4',
+      bg: '#121212',
+      bgActive: '#1A1A1A',
+      iconDefault: '#6A6A6A',
+      iconActive: '#FFFFFF',
+      textDefault: '#B0B0B0',
       textActive: '#FFFFFF',
-      divider: '#2A2A2E',
-      purple: '#7C3AED',
-      brandSub: '#6A6A6E',
+      divider: '#2A2A2A',
+      brand: '#FFFFFF',
+      brandSub: '#6A6A6A',
     };
   }
   return {
     bg: '#FFFFFF',
-    bgActive: '#F2F2F5',
-    iconDefault: '#9CA3AF',
-    iconActive: colors.primary,
-    textDefault: '#6B7280',
-    textActive: '#111827',
-    divider: 'rgba(0,0,0,0.08)',
-    purple: colors.primary,
-    brandSub: '#9CA3AF',
+    bgActive: '#F0F0F0',
+    iconDefault: '#A0A0A0',
+    iconActive: '#1A1A1A',
+    textDefault: '#6A6A6A',
+    textActive: '#1A1A1A',
+    divider: '#E0E0E0',
+    brand: '#1A1A1A',
+    brandSub: '#A0A0A0',
   };
 }
 
@@ -119,8 +119,8 @@ function formatBytes(bytes: number): string {
 }
 
 export function Sidebar({ visible, activeModule, onModuleChange, onClose }: SidebarProps) {
-  const { colors: themeColors, isDark } = useThemeColors();
-  const c = useMemo(() => buildSidebarColors(themeColors, isDark), [themeColors, isDark]);
+  const { isDark } = useThemeColors();
+  const c = useMemo(() => buildSidebarColors(isDark), [isDark]);
   const styles = useMemo(() => createStyles(c), [c]);
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -349,8 +349,8 @@ interface MenuButtonProps {
 export function MenuButton({ onPress }: MenuButtonProps) {
   const { colors, isDark } = useThemeColors();
   const styles = useMemo(
-    () => createStyles(buildSidebarColors(colors, isDark)),
-    [colors, isDark]
+    () => createStyles(buildSidebarColors(isDark)),
+    [isDark]
   );
   return (
     <Pressable onPress={onPress} style={styles.menuButton}>
@@ -390,14 +390,14 @@ const createStyles = (c: SidebarColors) =>
       width: 30,
       height: 30,
       borderRadius: radius.sm + 2,
-      backgroundColor: c.purple,
+      backgroundColor: c.brand,
       alignItems: 'center',
       justifyContent: 'center',
     },
     brandTitle: {
       fontSize: 20,
       fontWeight: '700',
-      color: c.purple,
+      color: c.brand,
       letterSpacing: 1,
     },
     brandSubtitle: {
@@ -435,7 +435,7 @@ const createStyles = (c: SidebarColors) =>
       bottom: 10,
       width: 2,
       borderRadius: 1,
-      backgroundColor: c.purple,
+      backgroundColor: c.brand,
     },
     moduleIconWrap: {
       width: 28,

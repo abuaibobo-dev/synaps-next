@@ -22,16 +22,16 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue>({
   mode: 'system',
   setMode: () => {},
-  accent: 'purple',
+  accent: 'gray',
   setAccent: () => {},
   isDark: true,
-  colors: buildThemeColors('purple', true),
+  colors: buildThemeColors('gray', true),
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useColorScheme();
   const [mode, setModeState] = useState<ThemeMode>('system');
-  const [accent, setAccentState] = useState<AccentKey>('purple');
+  const [accent, setAccentState] = useState<AccentKey>('gray');
   const [webScheme, setWebScheme] = useState<'light' | 'dark' | null>(null);
 
   // 读取持久化主题模式与皮肤

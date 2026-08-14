@@ -21,29 +21,29 @@
   :root {
     @variant light {
       /* Base Colors */
-      --background: oklch(0.9702 0 0);
+      --background: #f5f5f5;
       --foreground: var(--eclipse);
 
       /* Surface: Used for non-overlay components (cards, accordions, disclosure groups) */
       --surface: var(--white);
       --surface-foreground: var(--foreground);
 
-      --surface-secondary: oklch(0.9524 0.0013 286.37);
+      --surface-secondary: #f0f0f0;
       --surface-secondary-foreground: var(--foreground);
 
-      --surface-tertiary: oklch(0.9373 0.0013 286.37);
+      --surface-tertiary: #f0f0f0;
       --surface-tertiary-foreground: var(--foreground);
 
       /* Overlay: Used for floating/overlay components (dialogs, popovers, modals, menus) */
       --overlay: var(--white);
       --overlay-foreground: var(--foreground);
 
-      --muted: oklch(0.5517 0.0138 285.94);
+      --muted: #a0a0a0;
 
-      --default: oklch(94% 0.001 286.375);
+      --default: #e0e0e0;
       --default-foreground: var(--eclipse);
 
-      --accent: oklch(0.6204 0.195 253.83);
+      --accent: #555555;
       --accent-foreground: var(--snow);
 
       /* Form Fields */
@@ -53,13 +53,13 @@
       --field-border: transparent; /* no border by default on form fields */
 
       /* Status Colors */
-      --success: oklch(0.7329 0.1935 150.81);
+      --success: #4caf50;
       --success-foreground: var(--eclipse);
 
-      --warning: oklch(0.7819 0.1585 72.33);
+      --warning: #ff9800;
       --warning-foreground: var(--eclipse);
 
-      --danger: oklch(0.6532 0.2328 25.74);
+      --danger: #f44336;
       --danger-foreground: var(--snow);
 
       /* Component Colors */
@@ -67,8 +67,8 @@
       --segment-foreground: var(--eclipse);
 
       /* Misc Colors */
-      --border: oklch(90% 0.004 286.32);
-      --separator: oklch(74% 0.004 286.32);
+      --border: #e0e0e0;
+      --separator: #e0e0e0;
       --focus: var(--accent);
       --link: var(--foreground);
 
@@ -86,54 +86,54 @@
 
     @variant dark {
       /* Base Colors */
-      --background: oklch(12% 0.005 285.823);
+      --background: #0d0d0d;
       --foreground: var(--snow);
 
       /* Surface: Used for non-overlay components (cards, accordions, disclosure groups) */
-      --surface: oklch(0.2103 0.0059 285.89);
+      --surface: #1a1a1a;
       --surface-foreground: var(--foreground);
 
-      --surface-secondary: oklch(0.257 0.0037 286.14);
+      --surface-secondary: #242424;
       --surface-secondary-foreground: var(--foreground);
 
-      --surface-tertiary: oklch(0.2721 0.0024 247.91);
+      --surface-tertiary: #242424;
       --surface-tertiary-foreground: var(--foreground);
 
       /* Overlay: Used for floating/overlay components (dialogs, popovers, modals, menus) - lighter for contrast */
-      --overlay: oklch(0.2103 0.0059 285.89);
+      --overlay: #1a1a1a;
       --overlay-foreground: var(--foreground);
 
-      --muted: oklch(70.5% 0.015 286.067);
+      --muted: #6a6a6a;
 
-      --default: oklch(27.4% 0.006 286.033);
+      --default: #3a3a3a;
       --default-foreground: var(--snow);
 
-      --accent: oklch(0.6204 0.195 253.83);
+      --accent: #555555;
       --accent-foreground: var(--snow);
 
       /* Form Field Defaults - Colors (only the ones that are different from light theme) */
-      --field-background: oklch(0.2103 0.0059 285.89);
+      --field-background: #1a1a1a;
       --field-foreground: var(--foreground);
       --field-placeholder: var(--muted);
       --field-border: transparent; /* no border by default on form fields */
 
       /* Status Colors */
-      --success: oklch(0.7329 0.1935 150.81);
+      --success: #4caf50;
       --success-foreground: var(--eclipse);
 
-      --warning: oklch(0.8203 0.1388 76.34);
+      --warning: #ff9800;
       --warning-foreground: var(--eclipse);
 
-      --danger: oklch(0.594 0.1967 24.63);
+      --danger: #f44336;
       --danger-foreground: var(--snow);
 
       /* Component Colors */
-      --segment: oklch(0.3964 0.01 285.93);
+      --segment: #3a3a3a;
       --segment-foreground: var(--foreground);
 
       /* Misc Colors */
-      --border: oklch(28% 0.006 286.033);
-      --separator: oklch(40% 0.006 286.033);
+      --border: #2a2a2a;
+      --separator: #2a2a2a;
       --focus: var(--accent);
       --link: var(--foreground);
 

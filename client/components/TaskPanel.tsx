@@ -67,10 +67,10 @@ function formatClock(ts: number): string {
 }
 
 const STATUS_LABEL: Record<TaskRecord['status'], { text: string; color: string }> = {
-  running: { text: '执行中', color: '#FCD34D' },
-  done: { text: '已完成', color: '#4ADE80' },
+  running: { text: '执行中', color: '#555555' },
+  done: { text: '已完成', color: '#4CAF50' },
   cancelled: { text: '已取消', color: '#9CA3AF' },
-  error: { text: '出错', color: '#F87171' },
+  error: { text: '出错', color: '#F44336' },
 };
 
 interface TaskPanelProps {
@@ -182,7 +182,7 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
                   <AppIcon
                     name={t.ok === false ? 'x-circle' : toolIcon(t.name)}
                     size={12}
-                    color={t.ok === false ? '#F87171' : colors.primary}
+                    color={t.ok === false ? '#F44336' : colors.primary}
                   />
                   <Text style={styles.toolName}>{t.name}</Text>
                   <Text style={styles.toolDuration}>{formatDuration(t.durationMs)}</Text>
@@ -331,7 +331,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   stepHint: {
     fontSize: fontSize.xs,
-    color: '#FCD34D',
+    color: '#555555',
   },
   toolRow: {
     gap: 2,
@@ -365,7 +365,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     fontFamily: 'monospace',
   },
   toolResultError: {
-    color: '#F87171',
+    color: '#F44336',
   },
   fileRow: {
     flexDirection: 'row',

@@ -27,6 +27,11 @@ import {
 
 const API_BASE = getApiBase();
 
+// 白灰主题：主强调（竖条/图标/分段激活/头像）
+const ACCENT = '#3A3A3A';
+// 交互态：聚焦边框 / 开关开启
+const INTERACTIVE = '#555555';
+
 interface SettingsScreenProps {
   onOpenSidebar: () => void;
 }
@@ -244,7 +249,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const { colors, isDark, mode, setMode, accent, setAccent } = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const sc = useMemo(() => settingsColors(colors, isDark), [colors, isDark]);
-  const bar = useMemo(() => (isDark ? '#7C3AED' : colors.primary), [colors, isDark]);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
@@ -794,30 +798,30 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const mainPage = (
     <>
-      <SettingsGroup title="账户与安全" sc={sc} bar={bar}>
-        <SettingRow label="账户与安全" value={balanceText} icon="user" iconColor={bar} sc={sc} onPress={() => setSection('account')} last />
+      <SettingsGroup title="账户与安全" sc={sc} bar={ACCENT}>
+        <SettingRow label="账户与安全" value={balanceText} icon="user" iconColor={ACCENT} sc={sc} onPress={() => setSection('account')} last />
       </SettingsGroup>
-      <SettingsGroup title="AI 模型" sc={sc} bar={bar}>
-        <SettingRow label="AI 模型" value={settings.ai_model} icon="bot" iconColor={bar} sc={sc} onPress={() => setSection('ai')} last />
+      <SettingsGroup title="AI 模型" sc={sc} bar={ACCENT}>
+        <SettingRow label="AI 模型" value={settings.ai_model} icon="bot" iconColor={ACCENT} sc={sc} onPress={() => setSection('ai')} last />
       </SettingsGroup>
-      <SettingsGroup title="开发环境" sc={sc} bar={bar}>
-        <SettingRow label="开发环境" value="Termux · GitHub · 构建" icon="terminal" iconColor={bar} sc={sc} onPress={() => setSection('dev')} last />
+      <SettingsGroup title="开发环境" sc={sc} bar={ACCENT}>
+        <SettingRow label="开发环境" value="Termux · GitHub · 构建" icon="terminal" iconColor={ACCENT} sc={sc} onPress={() => setSection('dev')} last />
       </SettingsGroup>
-      <SettingsGroup title="外观" sc={sc} bar={bar}>
-        <SettingRow label="外观" value={MODE_LABEL[mode]} icon="palette" iconColor={bar} sc={sc} onPress={() => setSection('appearance')} last />
+      <SettingsGroup title="外观" sc={sc} bar={ACCENT}>
+        <SettingRow label="外观" value={MODE_LABEL[mode]} icon="palette" iconColor={ACCENT} sc={sc} onPress={() => setSection('appearance')} last />
       </SettingsGroup>
-      <SettingsGroup title="安全" sc={sc} bar={bar}>
-        <SettingRow label="安全" value={`${trustedProjects.length} 个可信项目`} icon="shield" iconColor={bar} sc={sc} onPress={() => setSection('security')} last />
+      <SettingsGroup title="安全" sc={sc} bar={ACCENT}>
+        <SettingRow label="安全" value={`${trustedProjects.length} 个可信项目`} icon="shield" iconColor={ACCENT} sc={sc} onPress={() => setSection('security')} last />
       </SettingsGroup>
-      <SettingsGroup title="技能与 MCP" sc={sc} bar={bar}>
-        <SettingRow label="技能与 MCP" value={`${mcpServers.length} MCP · ${skills.length} 技能`} icon="plug" iconColor={bar} sc={sc} onPress={() => setSection('skills')} last />
+      <SettingsGroup title="技能与 MCP" sc={sc} bar={ACCENT}>
+        <SettingRow label="技能与 MCP" value={`${mcpServers.length} MCP · ${skills.length} 技能`} icon="plug" iconColor={ACCENT} sc={sc} onPress={() => setSection('skills')} last />
       </SettingsGroup>
-      <SettingsGroup title="存储与日志" sc={sc} bar={bar}>
+      <SettingsGroup title="存储与日志" sc={sc} bar={ACCENT}>
         <SettingRow
           label="存储与日志"
           value={storageSize}
           icon="database"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           onPress={() => {
             setSection('storage');
@@ -826,8 +830,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           last
         />
       </SettingsGroup>
-      <SettingsGroup title="关于" sc={sc} bar={bar}>
-        <SettingRow label="关于" value="v1.1.0" icon="info" iconColor={bar} sc={sc} onPress={() => setSection('about')} last />
+      <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
+        <SettingRow label="关于" value="v1.1.0" icon="info" iconColor={ACCENT} sc={sc} onPress={() => setSection('about')} last />
       </SettingsGroup>
       <Pressable
         style={[styles.clearCard, { backgroundColor: sc.cardBg, borderColor: sc.cardBorder }]}
@@ -841,9 +845,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const accountPage = (
     <>
-      <SettingsGroup title="账户" sc={sc} bar={bar}>
+      <SettingsGroup title="账户" sc={sc} bar={ACCENT}>
         <View style={styles.avatarRow}>
-          <View style={[styles.avatar, { backgroundColor: bar }]}>
+          <View style={[styles.avatar, { backgroundColor: ACCENT }]}>
             <AppIcon name="user" size={26} color="#FFFFFF" />
           </View>
           <View style={{ flex: 1 }}>
@@ -852,30 +856,30 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               value={settings.account_name}
               placeholder="Synaps 用户"
               sc={sc}
-              focusColor={bar}
+              focusColor={INTERACTIVE}
               onCommit={(v) => saveSetting('account_name', v)}
             />
           </View>
         </View>
       </SettingsGroup>
-      <SettingsGroup title="API Key" sc={sc} bar={bar}>
+      <SettingsGroup title="API Key" sc={sc} bar={ACCENT}>
         <FieldRow styles={styles} label="DeepSeek API Key" sc={sc}>
           <UnderlineInput
             value={settings.ai_api_key}
             placeholder="sk-..."
             secure
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             onCommit={(v) => saveSetting('ai_api_key', v)}
           />
         </FieldRow>
       </SettingsGroup>
-      <SettingsGroup title="余额" sc={sc} bar={bar}>
+      <SettingsGroup title="余额" sc={sc} bar={ACCENT}>
         <SettingRow
           label="当前余额"
           value={balanceText}
           icon="key"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           right={
             <Pressable onPress={fetchBalance} hitSlop={8} style={styles.refreshBtn}>
@@ -890,17 +894,17 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const aiPage = (
     <>
-      <SettingsGroup title="AI 模型" sc={sc} bar={bar}>
+      <SettingsGroup title="AI 模型" sc={sc} bar={ACCENT}>
         <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
           <Text style={[styles.fieldLabel, { color: sc.label }]}>提供商</Text>
-          <SegmentControl options={PROVIDER_OPTIONS} value={provider} onChange={setProvider} activeColor={bar} inactiveBg={sc.underline} textColor={sc.value} />
+          <SegmentControl options={PROVIDER_OPTIONS} value={provider} onChange={setProvider} activeColor={ACCENT} inactiveBg={sc.underline} textColor={sc.value} />
         </View>
         <FieldRow styles={styles} label="服务地址" sc={sc}>
           <UnderlineInput
             value={settings.ai_base_url}
             placeholder="https://api.deepseek.com"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
             onCommit={(v) => saveSetting('ai_base_url', v)}
@@ -911,7 +915,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.ai_model}
             placeholder="deepseek-chat"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('ai_model', v)}
           />
@@ -921,7 +925,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.ai_model_base_url}
             placeholder="DeepSeek 官方"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
             onCommit={(v) => saveSetting('ai_model_base_url', v)}
@@ -931,14 +935,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           <Text style={[styles.fieldValue, { color: sc.value }]}>{contextLimit}</Text>
         </FieldRow>
       </SettingsGroup>
-      <SettingsGroup title="语音识别" sc={sc} bar={bar}>
+      <SettingsGroup title="语音识别" sc={sc} bar={ACCENT}>
         <FieldRow styles={styles} label="STT API Key" sc={sc}>
           <UnderlineInput
             value={settings.stt_api_key}
             placeholder="sk-..."
             secure
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             onCommit={(v) => saveSetting('stt_api_key', v)}
           />
         </FieldRow>
@@ -947,7 +951,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.stt_base_url}
             placeholder="OpenAI 官方"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
             onCommit={(v) => saveSetting('stt_base_url', v)}
@@ -958,26 +962,26 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.stt_model}
             placeholder="whisper-1"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('stt_model', v)}
           />
         </FieldRow>
       </SettingsGroup>
-      <SettingsGroup title="DeepSeek Harness" sc={sc} bar={bar}>
+      <SettingsGroup title="DeepSeek Harness" sc={sc} bar={ACCENT}>
         <SettingRow
           label="启用 Harness"
           icon="bot"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
-          right={<AnimatedToggle value={settings.harness_enabled === 'true'} onValueChange={() => handleToggle('harness_enabled')} sc={sc} trackOn={bar} />}
+          right={<AnimatedToggle value={settings.harness_enabled === 'true'} onValueChange={() => handleToggle('harness_enabled')} sc={sc} trackOn={INTERACTIVE} />}
         />
         <FieldRow styles={styles} label="Node 22+ 路径" sc={sc}>
           <UnderlineInput
             value={settings.harness_node_path}
             placeholder="使用内置 Node"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('harness_node_path', v)}
           />
@@ -987,7 +991,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.harness_dsh_path}
             placeholder="自动 npx 安装"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('harness_dsh_path', v)}
           />
@@ -997,7 +1001,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.harness_model}
             placeholder="deepseek-chat"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('harness_model', v)}
           />
@@ -1008,7 +1012,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             placeholder="使用 AI 模型 Key"
             secure
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             onCommit={(v) => saveSetting('harness_api_key', v)}
           />
         </FieldRow>
@@ -1017,7 +1021,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.harness_base_url}
             placeholder="DeepSeek 官方"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
             onCommit={(v) => saveSetting('harness_base_url', v)}
@@ -1029,13 +1033,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const devPage = (
     <>
-      <SettingsGroup title="项目与终端" sc={sc} bar={bar}>
+      <SettingsGroup title="项目与终端" sc={sc} bar={ACCENT}>
         <FieldRow styles={styles} label="项目目录" sc={sc}>
           <UnderlineInput
             value={settings.project_root}
             placeholder="/storage/emulated/0/Synaps"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('project_root', v)}
           />
@@ -1045,59 +1049,59 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             value={settings.termux_path}
             placeholder="/data/data/com.termux"
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             autoCapitalize="none"
             onCommit={(v) => saveSetting('termux_path', v)}
           />
         </FieldRow>
       </SettingsGroup>
-      <SettingsGroup title="GitHub" sc={sc} bar={bar}>
+      <SettingsGroup title="GitHub" sc={sc} bar={ACCENT}>
         <FieldRow styles={styles} label="Access Token" sc={sc}>
           <UnderlineInput
             value={settings.github_token}
             placeholder="ghp_..."
             secure
             sc={sc}
-            focusColor={bar}
+            focusColor={INTERACTIVE}
             onCommit={(v) => saveSetting('github_token', v)}
           />
         </FieldRow>
         <SettingRow
           label="自动推送"
           icon="github"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
-          right={<AnimatedToggle value={settings.github_auto_push === 'true'} onValueChange={() => handleToggle('github_auto_push')} sc={sc} trackOn={bar} />}
+          right={<AnimatedToggle value={settings.github_auto_push === 'true'} onValueChange={() => handleToggle('github_auto_push')} sc={sc} trackOn={INTERACTIVE} />}
           last
         />
       </SettingsGroup>
-      <SettingsGroup title="构建" sc={sc} bar={bar}>
+      <SettingsGroup title="构建" sc={sc} bar={ACCENT}>
         <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
           <Text style={[styles.fieldLabel, { color: sc.label }]}>构建方式</Text>
           <SegmentControl
             options={BUILD_OPTIONS}
             value={settings.build_method === 'local' ? 'local' : 'github_actions'}
             onChange={(k) => saveSetting('build_method', k)}
-            activeColor={bar}
+            activeColor={ACCENT}
             inactiveBg={sc.underline}
             textColor={sc.value}
           />
         </View>
       </SettingsGroup>
-      <SettingsGroup title="设备控制" sc={sc} bar={bar}>
+      <SettingsGroup title="设备控制" sc={sc} bar={ACCENT}>
         <SettingRow
           label="启用设备控制"
           value={deviceServiceConnected ? '服务已连接' : '服务未连接'}
           icon="smartphone"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
-          right={<AnimatedToggle value={deviceEnabled} onValueChange={toggleDeviceControl} sc={sc} trackOn={bar} />}
+          right={<AnimatedToggle value={deviceEnabled} onValueChange={toggleDeviceControl} sc={sc} trackOn={INTERACTIVE} />}
         />
         <SettingRow
           label="打开无障碍设置"
           value={deviceServiceConnected ? '已开启' : '去开启'}
           icon="lock"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           onPress={openAccessibilitySettings}
           last
@@ -1108,13 +1112,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const appearancePage = (
     <>
-      <SettingsGroup title="主题" sc={sc} bar={bar}>
+      <SettingsGroup title="主题" sc={sc} bar={ACCENT}>
         <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
           <Text style={[styles.fieldLabel, { color: sc.label }]}>主题模式</Text>
-          <SegmentControl options={MODE_OPTIONS} value={mode} onChange={setMode} activeColor={bar} inactiveBg={sc.underline} textColor={sc.value} />
+          <SegmentControl options={MODE_OPTIONS} value={mode} onChange={setMode} activeColor={ACCENT} inactiveBg={sc.underline} textColor={sc.value} />
         </View>
       </SettingsGroup>
-      <SettingsGroup title="强调色" sc={sc} bar={bar}>
+      <SettingsGroup title="强调色" sc={sc} bar={ACCENT}>
         <View style={styles.accentRow}>
           {(Object.keys(ACCENTS) as AccentKey[]).map((key) => (
             <Pressable key={key} style={styles.accentItem} onPress={() => setAccent(key)} accessibilityLabel={`强调色 ${ACCENTS[key].label}`}>
@@ -1127,19 +1131,19 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               >
                 {accent === key && <AppIcon name="check-circle" size={13} color="#FFFFFF" />}
               </View>
-              <Text style={[styles.accentLabel, { color: accent === key ? bar : sc.value }]}>{ACCENTS[key].label}</Text>
+              <Text style={[styles.accentLabel, { color: accent === key ? ACCENT : sc.value }]}>{ACCENTS[key].label}</Text>
             </Pressable>
           ))}
         </View>
       </SettingsGroup>
-      <SettingsGroup title="字体大小" sc={sc} bar={bar}>
+      <SettingsGroup title="字体大小" sc={sc} bar={ACCENT}>
         <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
           <Text style={[styles.fieldLabel, { color: sc.label }]}>字体大小</Text>
           <SegmentControl
             options={FONT_OPTIONS}
             value={(settings.font_scale || 'medium') as FontKey}
             onChange={(k) => saveSetting('font_scale', k)}
-            activeColor={bar}
+            activeColor={ACCENT}
             inactiveBg={sc.underline}
             textColor={sc.value}
           />
@@ -1150,39 +1154,39 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const securityPage = (
     <>
-      <SettingsGroup title="权限分级" sc={sc} bar={bar}>
-        <SettingRow label="无风险操作" value="自动执行" icon="lock" iconColor={bar} sc={sc} />
-        <SettingRow label="中风险操作" value="需确认" icon="lock" iconColor={bar} sc={sc} />
-        <SettingRow label="高风险操作" value="需确认" icon="lock" iconColor={bar} sc={sc} />
-        <SettingRow label="极高风险操作" value="默认拒绝" icon="shield" iconColor={bar} sc={sc} last />
+      <SettingsGroup title="权限分级" sc={sc} bar={ACCENT}>
+        <SettingRow label="无风险操作" value="自动执行" icon="lock" iconColor={ACCENT} sc={sc} />
+        <SettingRow label="中风险操作" value="需确认" icon="lock" iconColor={ACCENT} sc={sc} />
+        <SettingRow label="高风险操作" value="需确认" icon="lock" iconColor={ACCENT} sc={sc} />
+        <SettingRow label="极高风险操作" value="默认拒绝" icon="shield" iconColor={ACCENT} sc={sc} last />
       </SettingsGroup>
-      <SettingsGroup title="策略" sc={sc} bar={bar}>
+      <SettingsGroup title="策略" sc={sc} bar={ACCENT}>
         <SettingRow
           label="工作区快照"
           icon="file-plus"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
-          right={<AnimatedToggle value={settings.snapshot_enabled === 'true'} onValueChange={() => handleToggle('snapshot_enabled')} sc={sc} trackOn={bar} />}
+          right={<AnimatedToggle value={settings.snapshot_enabled === 'true'} onValueChange={() => handleToggle('snapshot_enabled')} sc={sc} trackOn={INTERACTIVE} />}
         />
         <SettingRow
           label="Diff 审查"
           icon="file-text"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
-          right={<AnimatedToggle value={settings.diff_review_enabled === 'true'} onValueChange={() => handleToggle('diff_review_enabled')} sc={sc} trackOn={bar} />}
+          right={<AnimatedToggle value={settings.diff_review_enabled === 'true'} onValueChange={() => handleToggle('diff_review_enabled')} sc={sc} trackOn={INTERACTIVE} />}
           last
         />
       </SettingsGroup>
-      <SettingsGroup title="授权管理" sc={sc} bar={bar}>
+      <SettingsGroup title="授权管理" sc={sc} bar={ACCENT}>
         <SettingRow
           label="可信项目"
           value={`${trustedProjects.length} 个`}
           icon="shield"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           onPress={() => setTrustModalVisible(true)}
         />
-        <SettingRow label="操作审计日志" value="查看" icon="file-text" iconColor={bar} sc={sc} onPress={fetchAuditLogs} />
+        <SettingRow label="操作审计日志" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={fetchAuditLogs} />
         <SettingRow label="重置所有授权" icon="undo" danger sc={sc} onPress={resetPermissions} last />
       </SettingsGroup>
     </>
@@ -1190,7 +1194,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const skillsPage = (
     <>
-      <SettingsGroup title="MCP 服务器" sc={sc} bar={bar}>
+      <SettingsGroup title="MCP 服务器" sc={sc} bar={ACCENT}>
         {mcpServers.length === 0 && (
           <SettingRow label="未配置 MCP 服务器" sc={sc} />
         )}
@@ -1212,13 +1216,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <SettingRow
           label="添加 MCP 服务器"
           icon="plus"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           onPress={openMcpModal}
           last={mcpServers.length === 0}
         />
       </SettingsGroup>
-      <SettingsGroup title="已安装技能" sc={sc} bar={bar}>
+      <SettingsGroup title="已安装技能" sc={sc} bar={ACCENT}>
         {skills.length === 0 && <SettingRow label="暂无技能" sc={sc} last />}
         {skills.map((skill, idx) => (
           <SettingRow
@@ -1226,10 +1230,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             label={skill.name}
             value={skill.description || '无描述'}
             icon="bolt"
-            iconColor={bar}
+            iconColor={ACCENT}
             sc={sc}
             onPress={() => showSkillDetail(skill.name)}
-            right={<AnimatedToggle value={skill.enabled === 1} onValueChange={(v) => toggleSkill(skill.name, v)} sc={sc} trackOn={bar} />}
+            right={<AnimatedToggle value={skill.enabled === 1} onValueChange={(v) => toggleSkill(skill.name, v)} sc={sc} trackOn={INTERACTIVE} />}
             last={idx === skills.length - 1}
           />
         ))}
@@ -1239,12 +1243,12 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const storagePage = (
     <>
-      <SettingsGroup title="存储" sc={sc} bar={bar}>
+      <SettingsGroup title="存储" sc={sc} bar={ACCENT}>
         <SettingRow
           label="存储占用"
           value={storageSize}
           icon="database"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           right={
             <Pressable onPress={calcStorage} hitSlop={8} style={styles.refreshBtn}>
@@ -1254,24 +1258,24 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           last
         />
       </SettingsGroup>
-      <SettingsGroup title="数据备份" sc={sc} bar={bar}>
-        <SettingRow label="导出完整备份" value="JSON" icon="file-export" iconColor={bar} sc={sc} onPress={exportBackup} />
+      <SettingsGroup title="数据备份" sc={sc} bar={ACCENT}>
+        <SettingRow label="导出完整备份" value="JSON" icon="file-export" iconColor={ACCENT} sc={sc} onPress={exportBackup} />
         <SettingRow
           label="导入备份"
           value="粘贴 JSON"
           icon="file-import"
-          iconColor={bar}
+          iconColor={ACCENT}
           sc={sc}
           onPress={() => {
             setImportText('');
             setImportModalVisible(true);
           }}
         />
-        <SettingRow label="导出日志" value="JSON" icon="file-text" iconColor={bar} sc={sc} onPress={exportLogs} last />
+        <SettingRow label="导出日志" value="JSON" icon="file-text" iconColor={ACCENT} sc={sc} onPress={exportLogs} last />
       </SettingsGroup>
-      <SettingsGroup title="诊断与维护" sc={sc} bar={bar}>
-        <SettingRow label="一键自检" value="运行" icon="shield" iconColor={bar} sc={sc} onPress={runDiagnostics} />
-        <SettingRow label="崩溃日志" value="查看" icon="file-text" iconColor={bar} sc={sc} onPress={handleShowCrashLogs} />
+      <SettingsGroup title="诊断与维护" sc={sc} bar={ACCENT}>
+        <SettingRow label="一键自检" value="运行" icon="shield" iconColor={ACCENT} sc={sc} onPress={runDiagnostics} />
+        <SettingRow label="崩溃日志" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={handleShowCrashLogs} />
         <SettingRow label="清除缓存" icon="trash-2" danger sc={sc} onPress={handleClearCache} last />
       </SettingsGroup>
     </>
@@ -1279,10 +1283,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const aboutPage = (
     <>
-      <SettingsGroup title="关于" sc={sc} bar={bar}>
-        <SettingRow label="版本" value="v1.1.0" icon="info" iconColor={bar} sc={sc} />
-        <SettingRow label="检查更新" value="GitHub Releases" icon="refresh-cw" iconColor={bar} sc={sc} onPress={checkUpdate} />
-        <SettingRow label="使用指南" value="查看" icon="file-text" iconColor={bar} sc={sc} onPress={() => setGuideVisible(true)} last />
+      <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
+        <SettingRow label="版本" value="v1.1.0" icon="info" iconColor={ACCENT} sc={sc} />
+        <SettingRow label="检查更新" value="GitHub Releases" icon="refresh-cw" iconColor={ACCENT} sc={sc} onPress={checkUpdate} />
+        <SettingRow label="使用指南" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={() => setGuideVisible(true)} last />
       </SettingsGroup>
     </>
   );
@@ -1337,7 +1341,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               entering={SlideInRight.duration(300).easing(Easing.out(Easing.ease))}
               exiting={FadeOutLeft.duration(200)}
             >
-              <SubPageHeader title={sectionTitle[section]} onBack={() => setSection(null)} bar={bar} colors={colors} styles={styles} />
+              <SubPageHeader title={sectionTitle[section]} onBack={() => setSection(null)} bar={ACCENT} colors={colors} styles={styles} />
               {section === 'account' && accountPage}
               {section === 'ai' && aiPage}
               {section === 'dev' && devPage}
@@ -1481,7 +1485,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                       value={trustedProjects.includes(project.id)}
                       onValueChange={() => toggleTrust(project.id)}
                       sc={sc}
-                      trackOn={bar}
+                      trackOn={INTERACTIVE}
                     />
                   </View>
                 ))}

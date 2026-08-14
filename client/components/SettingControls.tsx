@@ -29,18 +29,18 @@ export interface SettingColors {
 
 export function settingsColors(colors: ThemeColors, isDark: boolean): SettingColors {
   return {
-    cardBg: isDark ? '#1A1A1E' : '#F7F7F9',
-    cardBorder: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-    separator: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
-    label: isDark ? '#E8E8EC' : colors.textPrimary,
-    value: isDark ? '#8A8A8E' : colors.textSecondary,
-    arrow: isDark ? '#4A4A4E' : colors.textMuted,
-    underline: isDark ? '#2A2A2E' : 'rgba(0,0,0,0.10)',
-    placeholder: isDark ? '#6A6A6E' : colors.textMuted,
-    trackOff: isDark ? '#3A3A3E' : 'rgba(0,0,0,0.20)',
+    cardBg: isDark ? '#1A1A1A' : '#FFFFFF',
+    cardBorder: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+    separator: isDark ? '#2A2A2A' : '#E0E0E0',
+    label: isDark ? '#FFFFFF' : '#1A1A1A',
+    value: isDark ? '#B0B0B0' : '#6A6A6A',
+    arrow: isDark ? '#6A6A6A' : '#A0A0A0',
+    underline: isDark ? '#2A2A2A' : '#E0E0E0',
+    placeholder: isDark ? '#6A6A6A' : '#A0A0A0',
+    trackOff: isDark ? '#2A2A2A' : '#E0E0E0',
     thumb: '#FFFFFF',
-    title: isDark ? '#8A8A8E' : colors.textMuted,
-    danger: colors.error,
+    title: isDark ? '#6A6A6A' : '#A0A0A0',
+    danger: '#F44336',
   };
 }
 
@@ -350,5 +350,5 @@ const styles = StyleSheet.create({
   },
 });
 
-// 供 SettingRow 危险行使用的红色
-export const DANGER_COLOR = '#EF4444';
+// 供 SettingRow 危险行使用的红色（规范错误色）
+export const DANGER_COLOR = '#F44336';

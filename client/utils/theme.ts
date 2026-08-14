@@ -1,4 +1,4 @@
-// Synaps Design Tokens - Light: 白底灰字 / Dark: 黑底白字
+// Synaps Design Tokens - Light: 白底灰字 / Dark: 黑底白字（白灰搭配，仅状态色保留彩色）
 export interface ThemeColors {
   bgRoot: string;
   bgCard: string;
@@ -23,8 +23,8 @@ export interface ThemeColors {
   separator: string;
 }
 
-// 皮肤（主题色）预设
-export type AccentKey = 'purple' | 'blue' | 'green' | 'orange' | 'pink';
+// 皮肤（主题色）预设：白灰搭配，单一石墨强调色
+export type AccentKey = 'gray';
 
 interface AccentPalette {
   label: string;
@@ -46,148 +46,76 @@ interface AccentPalette {
 }
 
 export const ACCENTS: Record<AccentKey, AccentPalette> = {
-  purple: {
-    label: '紫',
-    swatch: '#7C3AED',
+  gray: {
+    label: '石墨',
+    swatch: '#3A3A3A',
     light: {
-      primary: '#6D28D9',
-      primaryDark: '#5B21B6',
-      primaryLight: '#8B5CF6',
-      primaryGlow: 'rgba(109,40,217,0.08)',
-      primaryBorder: 'rgba(109,40,217,0.18)',
+      primary: '#3A3A3A',
+      primaryDark: '#2A2A2A',
+      primaryLight: '#555555',
+      primaryGlow: 'rgba(58,58,58,0.08)',
+      primaryBorder: 'rgba(58,58,58,0.18)',
     },
     dark: {
-      primary: '#A78BFA',
-      primaryDark: '#7C3AED',
-      primaryLight: '#C4B5FD',
-      primaryGlow: 'rgba(167,139,250,0.15)',
-      primaryBorder: 'rgba(167,139,250,0.22)',
-    },
-  },
-  blue: {
-    label: '蓝',
-    swatch: '#2563EB',
-    light: {
-      primary: '#1D4ED8',
-      primaryDark: '#1E40AF',
-      primaryLight: '#3B82F6',
-      primaryGlow: 'rgba(29,78,216,0.08)',
-      primaryBorder: 'rgba(29,78,216,0.18)',
-    },
-    dark: {
-      primary: '#60A5FA',
-      primaryDark: '#2563EB',
-      primaryLight: '#93C5FD',
-      primaryGlow: 'rgba(96,165,250,0.15)',
-      primaryBorder: 'rgba(96,165,250,0.22)',
-    },
-  },
-  green: {
-    label: '绿',
-    swatch: '#059669',
-    light: {
-      primary: '#047857',
-      primaryDark: '#065F46',
-      primaryLight: '#10B981',
-      primaryGlow: 'rgba(4,120,87,0.08)',
-      primaryBorder: 'rgba(4,120,87,0.18)',
-    },
-    dark: {
-      primary: '#34D399',
-      primaryDark: '#059669',
-      primaryLight: '#6EE7B7',
-      primaryGlow: 'rgba(52,211,153,0.15)',
-      primaryBorder: 'rgba(52,211,153,0.22)',
-    },
-  },
-  orange: {
-    label: '橙',
-    swatch: '#EA580C',
-    light: {
-      primary: '#C2410C',
-      primaryDark: '#9A3412',
-      primaryLight: '#F97316',
-      primaryGlow: 'rgba(194,65,12,0.08)',
-      primaryBorder: 'rgba(194,65,12,0.18)',
-    },
-    dark: {
-      primary: '#FB923C',
-      primaryDark: '#EA580C',
-      primaryLight: '#FDBA74',
-      primaryGlow: 'rgba(251,146,60,0.15)',
-      primaryBorder: 'rgba(251,146,60,0.22)',
-    },
-  },
-  pink: {
-    label: '粉',
-    swatch: '#DB2777',
-    light: {
-      primary: '#BE185D',
-      primaryDark: '#9D174D',
-      primaryLight: '#EC4899',
-      primaryGlow: 'rgba(190,24,93,0.08)',
-      primaryBorder: 'rgba(190,24,93,0.18)',
-    },
-    dark: {
-      primary: '#F472B6',
-      primaryDark: '#DB2777',
-      primaryLight: '#F9A8D4',
-      primaryGlow: 'rgba(244,114,182,0.15)',
-      primaryBorder: 'rgba(244,114,182,0.22)',
+      primary: '#3A3A3A',
+      primaryDark: '#2A2A2A',
+      primaryLight: '#555555',
+      primaryGlow: 'rgba(85,85,85,0.20)',
+      primaryBorder: 'rgba(255,255,255,0.14)',
     },
   },
 };
 
 const lightBase: Omit<ThemeColors, 'primary' | 'primaryDark' | 'primaryLight' | 'primaryGlow' | 'primaryBorder'> = {
   // Backgrounds
-  bgRoot: '#FFFFFF',
-  bgCard: '#F7F7F9',
-  bgCardHighlight: '#EFEFF3',
-  bgInput: '#F2F2F5',
+  bgRoot: '#F5F5F5',
+  bgCard: '#FFFFFF',
+  bgCardHighlight: '#F0F0F0',
+  bgInput: '#F0F0F0',
   bgElevated: '#FFFFFF',
 
   // Status
-  success: '#059669',
-  warning: '#D97706',
-  error: '#DC2626',
-  danger: '#DC2626',
-  info: '#2563EB',
+  success: '#4CAF50',
+  warning: '#FF9800',
+  error: '#F44336',
+  danger: '#F44336',
+  info: '#555555',
 
   // Text - 灰字
-  textPrimary: '#374151',
-  textSecondary: '#6B7280',
-  textMuted: '#9CA3AF',
+  textPrimary: '#1A1A1A',
+  textSecondary: '#6A6A6A',
+  textMuted: '#A0A0A0',
 
   // Borders
-  border: 'rgba(107,114,128,0.18)',
-  borderLight: 'rgba(0,0,0,0.06)',
-  separator: 'rgba(0,0,0,0.05)',
+  border: 'rgba(0,0,0,0.12)',
+  borderLight: 'rgba(0,0,0,0.05)',
+  separator: '#E0E0E0',
 };
 
 const darkBase: Omit<ThemeColors, 'primary' | 'primaryDark' | 'primaryLight' | 'primaryGlow' | 'primaryBorder'> = {
   // Backgrounds
-  bgRoot: '#000000',
-  bgCard: '#111114',
-  bgCardHighlight: '#1A1A1E',
-  bgInput: '#16161A',
-  bgElevated: '#1F1F24',
+  bgRoot: '#0D0D0D',
+  bgCard: '#1A1A1A',
+  bgCardHighlight: '#242424',
+  bgInput: '#242424',
+  bgElevated: '#242424',
 
   // Status
-  success: '#00FF88',
-  warning: '#FBBF24',
-  error: '#EF4444',
-  danger: '#EF4444',
-  info: '#60A5FA',
+  success: '#4CAF50',
+  warning: '#FF9800',
+  error: '#F44336',
+  danger: '#F44336',
+  info: '#555555',
 
   // Text - 白字
   textPrimary: '#FFFFFF',
-  textSecondary: '#C7C7CC',
-  textMuted: '#8E8E96',
+  textSecondary: '#B0B0B0',
+  textMuted: '#6A6A6A',
 
   // Borders
   border: 'rgba(255,255,255,0.12)',
   borderLight: 'rgba(255,255,255,0.06)',
-  separator: 'rgba(255,255,255,0.04)',
+  separator: '#2A2A2A',
 };
 
 export function buildThemeColors(accent: AccentKey, isDark: boolean): ThemeColors {
@@ -196,8 +124,8 @@ export function buildThemeColors(accent: AccentKey, isDark: boolean): ThemeColor
   return { ...base, ...accentColors };
 }
 
-export const lightColors: ThemeColors = buildThemeColors('purple', false);
-export const darkColors: ThemeColors = buildThemeColors('purple', true);
+export const lightColors: ThemeColors = buildThemeColors('gray', false);
+export const darkColors: ThemeColors = buildThemeColors('gray', true);
 
 // 兼容旧引用（默认深色）
 export const colors = darkColors;
