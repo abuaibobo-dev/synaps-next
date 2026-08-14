@@ -8,7 +8,6 @@ import {
   FlatList,
   ScrollView,
   Platform,
-  ActivityIndicator,
   Alert,
   Keyboard,
   Modal,
@@ -32,6 +31,50 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import { spacing, radius, fontSize } from '@/utils/theme';
 import type { ThemeColors } from '@/utils/theme';
 import { useThemeColors } from '@/components/ThemeProvider';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+  ReduceMotion,
+} from 'react-native-reanimated';
+import { AppIcon, toolIcon } from '@/components/AppIcon';
+import { useEntry, PressableScale, ThinkingDots, ToolSpinner, AnimatedProgressBar, Skeleton } from '@/components/motion';
+
+function PanelToggleIcon({
+  open,
+  sideBySide,
+  color,
+}: {
+  open: boolean;
+  sideBySide: boolean;
+  color: string;
+}) {
+  const rotate = useSharedValue(open ? 180 : 0);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotate.get()}deg` }],
+  }));
+
+  useEffect(() => {
+    rotate.set(
+      withTiming(open ? 180 : 0, {
+        duration: 200,
+        easing: Easing.inOut(Easing.ease),
+        reduceMotion: ReduceMotion.System,
+      })
+    );
+  }, [open, rotate]);
+
+  if (sideBySide) {
+    return <AppIcon name="box" size={15} color={color} />;
+  }
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <AppIcon name={open ? 'chevron-down' : 'chevron-up'} size={15} color={color} />
+    </Animated.View>
+  );
+}
 
 export const AGENT_OPTIONS = [
   { key: 'scheduler', label: '调度员', icon: 'sitemap' },
@@ -86,6 +129,8 @@ interface AgentScreenProps {
 export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const { colors, isDark } = useThemeColors();
   const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+  const messageEntry = useEntry('message');
+  const cardEntry = useEntry('card');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -104,6 +149,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [deviceReady, setDeviceReady] = useState<boolean | null>(null);
   const [currentTask, setCurrentTask] = useState<TaskRecord | null>(null);
   const [taskPanelVisible, setTaskPanelVisible] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [agentType, setAgentType] = useState<AgentOptionKey>('scheduler');
   const [agentInstanceIds, setAgentInstanceIds] = useState<Record<string, string>>({});
   const requestIdRef = useRef<string>('');
@@ -248,7 +294,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   useEffect(() => {
     (async () => {
       await loadAgents(currentProjectId);
-      loadAgentHistory(agentType, agentInstanceIds[agentType]);
+      await loadAgentHistory(agentType, agentInstanceIds[agentType]);
+      setInitialLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProjectId, agentType]);
@@ -713,10 +760,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const renderMessage = useCallback(({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
     return (
+      <Animated.View {...messageEntry} style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
       <Pressable
         onLongPress={() => openMessageMenu(item)}
         delayLongPress={350}
-        style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}
+        style={styles.messageRowInner}
       >
         <View style={[styles.avatarCircle, isUser ? styles.avatarUser : styles.avatarBot]}>
           <FontAwesome6
@@ -764,7 +812,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 return (
                   <View key={idx} style={styles.toolCallItem}>
                     <View style={styles.toolCallHeader}>
-                      <FontAwesome6 name="terminal" size={10} color={colors.primary} />
+                      <AppIcon name={toolIcon(tc.name)} size={11} color={colors.primary} />
                       <Text style={styles.toolCallName}>{tc.name}</Text>
                       {exitCode !== null && (
                         <Text
@@ -813,8 +861,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           )}
         </View>
       </Pressable>
+      </Animated.View>
     );
-  }, [openMessageMenu, styles]);
+  }, [openMessageMenu, styles, messageEntry]);
 
   const modelLabel = currentModel.startsWith('deepseek-')
     ? currentModel.slice('deepseek-'.length)
@@ -863,9 +912,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               </View>
             )}
             <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
-              <FontAwesome6
-                name={isSideBySide ? 'table-columns' : taskPanelVisible ? 'xmark' : 'list-check'}
-                size={15}
+              <PanelToggleIcon
+                open={taskPanelVisible}
+                sideBySide={isSideBySide}
                 color={taskPanelVisible ? colors.primary : colors.textSecondary}
               />
             </Pressable>
@@ -912,23 +961,28 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
         {/* 精简任务卡片 */}
         {currentTask && (
-          <Pressable style={styles.taskCard} onPress={() => setTaskPanelVisible(true)}>
-            <View style={styles.taskCardHeader}>
-              <FontAwesome6 name="list-check" size={12} color={colors.primary} />
-              <Text style={styles.taskCardName} numberOfLines={1}>{currentTask.name}</Text>
-              <Text style={[styles.taskCardStatus, currentTask.status === 'running' && styles.taskCardStatusRunning]}>
-                {currentTask.status === 'running' ? '执行中' : currentTask.status === 'done' ? '已完成' : currentTask.status === 'cancelled' ? '已取消' : '出错'}
-              </Text>
-            </View>
-            <View style={styles.taskCardTrack}>
-              <View style={[styles.taskCardFill, {
-                width: `${currentTask.steps.length > 0
-                  ? Math.max(4, Math.round((currentTask.steps.filter((st) => st.status === 'done' || st.status === 'error').length / currentTask.steps.length) * 100))
-                  : currentTask.status === 'running' ? 8 : 100}%`,
-              }]} />
-            </View>
-            <Text style={styles.taskCardHint}>点击查看任务详情</Text>
-          </Pressable>
+          <Animated.View {...cardEntry}>
+            <PressableScale style={styles.taskCard} onPress={() => setTaskPanelVisible(true)}>
+              <View style={styles.taskCardHeader}>
+                <AppIcon name="list-checks" size={12} color={colors.primary} />
+                <Text style={styles.taskCardName} numberOfLines={1}>{currentTask.name}</Text>
+                <Text style={[styles.taskCardStatus, currentTask.status === 'running' && styles.taskCardStatusRunning]}>
+                  {currentTask.status === 'running' ? '执行中' : currentTask.status === 'done' ? '已完成' : currentTask.status === 'cancelled' ? '已取消' : '出错'}
+                </Text>
+              </View>
+              <AnimatedProgressBar
+                progress={
+                  currentTask.steps.length > 0
+                    ? currentTask.steps.filter((st) => st.status === 'done' || st.status === 'error').length / currentTask.steps.length
+                    : currentTask.status === 'running' ? 0.08 : 1
+                }
+                color={colors.primary}
+                trackColor={colors.bgInput}
+                height={4}
+              />
+              <Text style={styles.taskCardHint}>点击查看任务详情</Text>
+            </PressableScale>
+          </Animated.View>
         )}
 
         {/* Messages */}
@@ -946,44 +1000,64 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             flatListRef.current?.scrollToEnd({ animated: true });
           }}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <View style={styles.emptyLogo}>
-                <FontAwesome6 name="bolt" size={28} color={colors.primary} />
+            initialLoading ? (
+              <View style={styles.skeletonWrap}>
+                <Skeleton width="85%" height={52} colors={colors} />
+                <Skeleton width="70%" height={52} colors={colors} />
+                <Skeleton width="90%" height={52} colors={colors} />
               </View>
-              <Text style={styles.emptyTitle}>SYNAPS AGENT</Text>
-              <Text style={styles.emptyDesc}>
-                开始你的第一次对话{''}
-                {'\n'}告诉我你想开发或修复什么
-              </Text>
-            </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <View style={styles.emptyLogo}>
+                  <AppIcon name="bolt" size={28} color={colors.primary} />
+                </View>
+                <Text style={styles.emptyTitle}>SYNAPS AGENT</Text>
+                <Text style={styles.emptyDesc}>
+                  开始你的第一次对话{''}
+                  {'\n'}告诉我你想开发或修复什么
+                </Text>
+              </View>
+            )
           }
           ListFooterComponent={
-            isStreaming && streamingContent ? (
-              <View style={[styles.messageRow, styles.messageRowAssistant]}>
-                <View style={[styles.avatarCircle, styles.avatarBot]}>
-                  <FontAwesome6 name="robot" size={14} color={colors.primary} />
+            isStreaming ? (
+              streamingContent ? (
+                <View style={[styles.messageRow, styles.messageRowAssistant]}>
+                  <View style={[styles.avatarCircle, styles.avatarBot]}>
+                    <AppIcon name="bot" size={14} color={colors.primary} />
+                  </View>
+                  <View style={[styles.messageBubble, styles.assistantBubble]}>
+                    <Text style={styles.messageContent}>{streamingContent}</Text>
+                    {currentToolCalls.length > 0 && (
+                      <View style={styles.toolCallsContainer}>
+                        {currentToolCalls.map((tc, idx) => {
+                          const command =
+                            typeof tc.args?.command === 'string' ? tc.args.command : '';
+                          return (
+                            <View key={idx} style={styles.toolCallBadge}>
+                              <ToolSpinner size={12} color={colors.primary} />
+                              <Text style={styles.toolCallText} numberOfLines={1}>
+                                {tc.name}
+                                {command ? `: ${command}` : ''}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
                 </View>
-                <View style={[styles.messageBubble, styles.assistantBubble]}>
-                  <Text style={styles.messageContent}>{streamingContent}</Text>
-                  {currentToolCalls.length > 0 && (
-                    <View style={styles.toolCallsContainer}>
-                      {currentToolCalls.map((tc, idx) => {
-                        const command =
-                          typeof tc.args?.command === 'string' ? tc.args.command : '';
-                        return (
-                          <View key={idx} style={styles.toolCallBadge}>
-                            <ActivityIndicator size="small" color={colors.primary} />
-                            <Text style={styles.toolCallText} numberOfLines={1}>
-                              {tc.name}
-                              {command ? `: ${command}` : ''}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
+              ) : (
+                <View style={[styles.messageRow, styles.messageRowAssistant]}>
+                  <View style={[styles.avatarCircle, styles.avatarBot]}>
+                    <AppIcon name="bot" size={14} color={colors.primary} />
+                  </View>
+                  <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble]}>
+                    <ThinkingDots color={colors.primary} size={6} />
+                    <Text style={styles.thinkingText}>Agent 思考中...</Text>
+                  </View>
                 </View>
-              </View>
+              )
             ) : null
           }
         />
@@ -1536,6 +1610,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     gap: spacing.sm,
     marginBottom: spacing.md,
   },
+  messageRowInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: spacing.sm,
+    flexShrink: 1,
+    maxWidth: '100%',
+  },
   messageRowUser: {
     justifyContent: 'flex-end',
   },
@@ -1572,6 +1653,16 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderWidth: 1,
     borderColor: colors.border,
     borderBottomLeftRadius: 4,
+  },
+  thinkingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minWidth: 120,
+  },
+  thinkingText: {
+    fontSize: fontSize.sm,
+    color: colors.textMuted,
   },
   messageContent: {
     fontSize: fontSize.md,
@@ -1723,6 +1814,11 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 80,
+  },
+  skeletonWrap: {
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
   },
   emptyLogo: {
     width: 64,

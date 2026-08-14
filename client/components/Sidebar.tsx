@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { spacing, radius, fontSize } from '@/utils/theme';
+import { AppIcon, type AppIconName } from './AppIcon';
 import type { ThemeColors } from '@/utils/theme';
 import { useThemeColors } from './ThemeProvider';
 
@@ -28,18 +29,18 @@ export type ModuleKey =
 interface SidebarModule {
   key: ModuleKey;
   label: string;
-  icon: React.ComponentProps<typeof FontAwesome6>['name'];
+  icon: AppIconName;
 }
 
 const MODULES: SidebarModule[] = [
-  { key: 'projects', label: '项目', icon: 'folder-open' },
-  { key: 'agent', label: 'Agent', icon: 'robot' },
+  { key: 'projects', label: '项目', icon: 'folder' },
+  { key: 'agent', label: 'Agent', icon: 'bot' },
   { key: 'code', label: '代码', icon: 'code' },
   { key: 'terminal', label: '终端', icon: 'terminal' },
-  { key: 'apk', label: 'APK', icon: 'box' },
-  { key: 'logs', label: '日志', icon: 'file-lines' },
+  { key: 'apk', label: 'APK', icon: 'package' },
+  { key: 'logs', label: '日志', icon: 'file-text' },
   { key: 'github', label: 'GitHub', icon: 'github' },
-  { key: 'settings', label: '设置', icon: 'gear' },
+  { key: 'settings', label: '设置', icon: 'settings' },
 ];
 
 interface SidebarProps {
@@ -141,7 +142,7 @@ export function Sidebar({ visible, activeModule, onModuleChange, onClose }: Side
                 }}
               >
                 <View style={[styles.iconContainer, isActive && styles.iconContainerActive]}>
-                  <FontAwesome6
+                  <AppIcon
                     name={mod.icon}
                     size={16}
                     color={isActive ? colors.primary : colors.textSecondary}
