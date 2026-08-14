@@ -205,6 +205,22 @@ export async function getDb(): Promise<SqlJsDatabase> {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      session_id TEXT,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      steps_json TEXT NOT NULL DEFAULT '[]',
+      tools_json TEXT NOT NULL DEFAULT '[]',
+      files_json TEXT NOT NULL DEFAULT '[]',
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    )
+  `);
+
   saveDb();
   return db;
 }

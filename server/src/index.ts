@@ -16,6 +16,7 @@ import auditRouter from "./routes/audit.js";
 import deviceRouter from "./routes/device.js";
 import backupRouter from "./routes/backup.js";
 import diagnosticsRouter from "./routes/diagnostics.js";
+import tasksRouter from "./routes/tasks.js";
 
 const app = express();
 const port = process.env.PORT || 19091;
@@ -46,6 +47,7 @@ app.use('/api/v1/audit', auditRouter);
 app.use('/api/v1/device', deviceRouter);
 app.use('/api/v1/backup', backupRouter);
 app.use('/api/v1/diagnostics', diagnosticsRouter);
+app.use('/api/v1/tasks', tasksRouter);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);

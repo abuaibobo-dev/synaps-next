@@ -16,7 +16,9 @@ import TerminalScreen from '@/screens/terminal';
 import ApkScreen from '@/screens/apk';
 import LogsScreen from '@/screens/logs';
 import GithubScreen from '@/screens/github';
+import TasksScreen from '@/screens/tasks';
 import SettingsScreen from '@/screens/settings';
+import Animated, { FadeIn } from 'react-native-reanimated';
 
 export default function WorkspaceScreen() {
   const { colors, isDark } = useThemeColors();
@@ -31,7 +33,7 @@ export default function WorkspaceScreen() {
       .catch(() => setOnboarded(true));
     AsyncStorage.getItem('synaps.lastModule')
       .then((v) => {
-        if (v === 'projects' || v === 'agent' || v === 'code' || v === 'terminal' || v === 'apk' || v === 'logs' || v === 'github' || v === 'settings') {
+        if (v === 'projects' || v === 'agent' || v === 'code' || v === 'terminal' || v === 'apk' || v === 'logs' || v === 'github' || v === 'tasks' || v === 'settings') {
           setActiveModule(v);
         }
       })
@@ -73,6 +75,8 @@ export default function WorkspaceScreen() {
         return <LogsScreen onOpenSidebar={handleOpenSidebar} />;
       case 'github':
         return <GithubScreen onOpenSidebar={handleOpenSidebar} />;
+      case 'tasks':
+        return <TasksScreen onOpenSidebar={handleOpenSidebar} />;
       case 'settings':
         return <SettingsScreen onOpenSidebar={handleOpenSidebar} />;
       default:
@@ -84,7 +88,13 @@ export default function WorkspaceScreen() {
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['left', 'right']} scrollable>
       <View style={styles.container}>
         <OfflineBanner />
-        {renderModule()}
+        <Animated.View
+          key={activeModule}
+          entering={FadeIn.duration(200).withInitialValues({ opacity: 0 })}
+          style={styles.moduleContainer}
+        >
+          {renderModule()}
+        </Animated.View>
         <Sidebar
           visible={sidebarVisible}
           activeModule={activeModule}
@@ -131,6 +141,9 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bgRoot,
+  },
+  moduleContainer: {
+    flex: 1,
   },
   onboardingOverlay: {
     flex: 1,

@@ -21,6 +21,14 @@ import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
 import {
+  createTask,
+  saveTaskProgress,
+  finishTask,
+  taskFilesFromTools,
+  type TaskStepRecord,
+  type TaskToolRecord,
+} from '../taskStore.js';
+import {
   getAgentTemplate,
   createAgentInstance,
   getOrCreateInstance,
@@ -1818,6 +1826,9 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
 router.post('/', async (req: express.Request, res: express.Response) => {
   let taskId = '';
   let taskStartedAt = 0;
+  const taskSteps: TaskStepRecord[] = [];
+  const taskTools: TaskToolRecord[] = [];
+  let taskFiles: string[] = [];
   try {
     await getDb();
     
@@ -1930,6 +1941,7 @@ router.post('/', async (req: express.Request, res: express.Response) => {
         agent: agentInstance ? { id: agentInstance.id, type: agentInstance.type, name: agentInstance.name } : null,
       },
     })}\n\n`);
+    createTask(taskId, projectId || null, sessionId, taskName, taskStartedAt);
 
     // Build system message with project context
     let systemPrompt = AGENT_SYSTEM_PROMPT;
@@ -2033,6 +2045,7 @@ All file operations should use paths relative to the project root.`;
           appendAgentMessage(agentInstance.id, 'assistant', fullResponse);
           updateAgentInstance(agentInstance.id, { status: 'idle' });
         }
+        finishTask(taskId, 'done', Date.now());
         res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'done', durationMs: Date.now() - taskStartedAt } })}\n\n`);
         res.write('data: [DONE]\n\n');
         abortRegistry.delete(taskId);
@@ -2052,6 +2065,10 @@ All file operations should use paths relative to the project root.`;
             durationMs: 0,
           },
         })}\n\n`);
+        taskSteps.push({ name: toolCall.tool, status: 'error' });
+        taskTools.push({ name: toolCall.tool, args: { command: toolCall.command, path: toolCall.path, query: toolCall.query }, result: whitelistMsg, ok: false, durationMs: 0, ts: Date.now() });
+        taskFiles = taskFilesFromTools(taskTools);
+        saveTaskProgress(taskId, taskSteps, taskTools, taskFiles);
         conversationMessages.push({ role: 'assistant', content: fullResponse });
         conversationMessages.push({
           role: 'user',
@@ -2086,6 +2103,10 @@ All file operations should use paths relative to the project root.`;
           },
         })}\n\n`);
         res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: 'error' } })}\n\n`);
+        taskSteps.push({ name: toolCall.tool, status: 'error' });
+        taskTools.push({ name: toolCall.tool, args: { command: toolCall.command, path: toolCall.path, query: toolCall.query, message: toolCall.message, repo: toolCall.repo, url: toolCall.url, server: toolCall.server, method: toolCall.method }, result: blockedResult, ok: false, durationMs: 0, ts: Date.now() });
+        taskFiles = taskFilesFromTools(taskTools);
+        saveTaskProgress(taskId, taskSteps, taskTools, taskFiles);
         conversationMessages.push({ role: 'assistant', content: fullResponse });
         conversationMessages.push({
           role: 'user',
@@ -2118,6 +2139,10 @@ All file operations should use paths relative to the project root.`;
             },
           })}\n\n`);
           res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: 'error' } })}\n\n`);
+          taskSteps.push({ name: toolCall.tool, status: 'error' });
+          taskTools.push({ name: toolCall.tool, args: { command: toolCall.command, path: toolCall.path, query: toolCall.query, message: toolCall.message, repo: toolCall.repo, url: toolCall.url, server: toolCall.server, method: toolCall.method }, result: deniedResult, ok: false, durationMs: 0, ts: Date.now() });
+          taskFiles = taskFilesFromTools(taskTools);
+          saveTaskProgress(taskId, taskSteps, taskTools, taskFiles);
           conversationMessages.push({ role: 'assistant', content: fullResponse });
           conversationMessages.push({
             role: 'user',
@@ -2131,6 +2156,10 @@ All file operations should use paths relative to the project root.`;
 
       // 任务步骤开始
       res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: 'running' } })}\n\n`);
+      if (!taskSteps.some((s) => s.name === toolCall.tool)) {
+        taskSteps.push({ name: toolCall.tool, status: 'running' });
+        saveTaskProgress(taskId, taskSteps, taskTools, taskFiles);
+      }
 
       // Execute tool
       const toolStartedAt = Date.now();
@@ -2168,6 +2197,30 @@ All file operations should use paths relative to the project root.`;
       })}\n\n`);
       res.write(`data: ${JSON.stringify({ task_step: { id: taskId, step: toolCall.tool, status: toolOk ? 'done' : 'error' } })}\n\n`);
 
+      // 持久化任务进度
+      const stepIdx = taskSteps.findIndex((s) => s.name === toolCall.tool);
+      if (stepIdx >= 0) taskSteps[stepIdx].status = toolOk ? 'done' : 'error';
+      taskTools.push({
+        name: toolCall.tool,
+        args: {
+          path: toolCall.path,
+          query: toolCall.query,
+          content: toolCall.content,
+          command: toolCall.command,
+          message: toolCall.message,
+          repo: toolCall.repo,
+          url: toolCall.url,
+          server: toolCall.server,
+          method: toolCall.method,
+        },
+        result: toolResult,
+        ok: toolOk,
+        durationMs: toolDurationMs,
+        ts: Date.now(),
+      });
+      taskFiles = taskFilesFromTools(taskTools);
+      saveTaskProgress(taskId, taskSteps, taskTools, taskFiles);
+
       // Add assistant response and tool result to conversation
       conversationMessages.push({
         role: 'assistant',
@@ -2189,6 +2242,7 @@ All file operations should use paths relative to the project root.`;
     res.write(`data: ${JSON.stringify({
       task_end: { id: taskId, status: cancelled ? 'cancelled' : 'done', durationMs: Date.now() - taskStartedAt },
     })}\n\n`);
+    finishTask(taskId, cancelled ? 'cancelled' : 'done', Date.now());
     res.write(`data: ${JSON.stringify({
       content: cancelled
         ? '\n\n[任务已取消]'
@@ -2204,6 +2258,7 @@ All file operations should use paths relative to the project root.`;
       res.status(500).json({ error: 'Internal server error' });
     } else {
       res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'error', durationMs: Date.now() - taskStartedAt } })}\n\n`);
+      finishTask(taskId, 'error', Date.now());
       res.write(`data: ${JSON.stringify({ error: 'Stream error' })}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();

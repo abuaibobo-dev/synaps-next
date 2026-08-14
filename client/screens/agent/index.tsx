@@ -25,6 +25,7 @@ import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
 import { getDeviceStatus, startDeviceBridge } from '@/utils/deviceControl';
+import { subscribe } from '@/utils/appBus';
 import TaskPanel, { isFileModifyingTool, type TaskRecord, type TaskToolRecord, type TaskStep } from '@/components/TaskPanel';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
@@ -299,6 +300,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProjectId, agentType]);
+
+  // 侧栏「最近项目」点击切换项目时同步当前项目
+  useEffect(() => {
+    return subscribe('project:changed', (project: ProjectOption) => {
+      setCurrentProjectId(project.id);
+    });
+  }, []);
 
   const switchAgent = useCallback((type: AgentOptionKey) => {
     setAgentType(type);
