@@ -46,6 +46,11 @@ You have access to tools that let you interact with the project files:
 - generate_tests: Generate unit tests for a file (args: path). Detects jest/vitest/pytest and writes a test file (creates a snapshot first)
 - run_tests: Run the project test suite (auto-detects npm test / jest / vitest / pytest); returns output and exit code
 - auto_test_fix: Run tests, analyze failures, and fix the code automatically (args: path optional; uses the current working-tree changes if path omitted). Creates a snapshot before changing files
+- team_plan: PLANNER role — break a task into a persisted step list (args: query "任务描述")
+- team_execute: CODE ENGINEER role — implement a plan step (args: query "step number" or auto-pick next pending step); writes files with snapshots
+- team_test: QA role — run the test suite and analyze failures
+- team_review: REVIEWER role — review changes (lint/typecheck/security/diff) and decide pass/fail
+- team_status: Show the current team plan and step progress
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -78,6 +83,15 @@ When the user asks you to "fix" or "repair" the project (e.g. "修复我", "检�
 9. When the APK artifact is ready, run download_and_install with the artifact download URL
 
 Explain each step before calling a tool. If a tool is blocked or denied by the permission system, stop and tell the user.
+
+## Team Mode
+When the user asks to develop a feature (e.g. "开发一个登录模块" or "实现一个功能"), organize a software team:
+1. team_plan: the PLANNER breaks the task into steps and persists the plan
+2. team_execute: the CODE ENGINEER implements each step (run it repeatedly with step numbers, or omit to auto-pick the next pending step)
+3. team_test: QA runs the test suite and analyzes failures
+4. team_review: the REVIEWER reviews changes (lint/typecheck/security/diff) and gates delivery
+5. Only when the review passes, run git_commit_push
+Track progress with team_status.
 
 ## Quality Gate
 Before calling git_commit_push, ensure all of the following pass:
@@ -120,6 +134,21 @@ interface ToolCall {
   server?: string;
   method?: string;
   params?: Record<string, unknown>;
+}
+
+interface TeamTask {
+  step: number;
+  title: string;
+  role: string;
+  files: string[];
+  status: 'pending' | 'done' | 'failed';
+  detail?: string;
+}
+
+interface TeamPlan {
+  id: string;
+  title: string;
+  tasks: TeamTask[];
 }
 
 function parseToolCall(response: string): ToolCall | null {
@@ -311,6 +340,107 @@ async function aiComplete(
   const raw = data.choices?.[0]?.message?.content || '';
   const m = raw.match(/```(?:\w+)?\n([\s\S]*?)```/);
   return m ? m[1] : raw;
+}
+
+function parseTaskList(text: string): TeamTask[] {
+  const m = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  const candidate = m ? m[1] : text;
+  const arrMatch = candidate.match(/\[[\s\S]*\]/);
+  if (!arrMatch) return [];
+  try {
+    const parsed = JSON.parse(arrMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((t: any) => t && typeof t.title === 'string')
+      .map((t: any, i: number) => ({
+        step: typeof t.step === 'number' ? t.step : i + 1,
+        title: t.title,
+        role: typeof t.role === 'string' ? t.role : 'engineer',
+        files: Array.isArray(t.files) ? t.files.filter((f: unknown) => typeof f === 'string') : [],
+        status: 'pending' as const,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function parseEngineerOutput(text: string): { files: Array<{ path: string; content: string }>; note: string } {
+  const m = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  const candidate = m ? m[1] : text;
+  const objMatch = candidate.match(/\{[\s\S]*\}/);
+  try {
+    const parsed = objMatch ? JSON.parse(objMatch[0]) : {};
+    const files = Array.isArray(parsed.files)
+      ? parsed.files
+          .filter((f: any) => f && typeof f.path === 'string' && typeof f.content === 'string')
+          .map((f: any) => ({ path: f.path as string, content: f.content as string }))
+      : [];
+    return { files, note: typeof parsed.note === 'string' ? parsed.note : '' };
+  } catch {
+    return { files: [], note: text.slice(0, 500) };
+  }
+}
+
+function saveTeamPlan(projectId: string, title: string, tasks: TeamTask[]): string {
+  const id = crypto.randomUUID();
+  runSql(
+    'INSERT INTO team_tasks (id, project_id, title, tasks_json) VALUES (?, ?, ?, ?)',
+    [id, projectId, title, JSON.stringify(tasks)]
+  );
+  saveDb();
+  return id;
+}
+
+function loadTeamPlan(projectId: string): TeamPlan | null {
+  const rows = queryAll('SELECT * FROM team_tasks WHERE project_id = ? ORDER BY created_at DESC LIMIT 1', [
+    projectId,
+  ]) as Record<string, string>[];
+  if (rows.length === 0) return null;
+  try {
+    const tasks = JSON.parse(rows[0].tasks_json);
+    return {
+      id: rows[0].id,
+      title: rows[0].title,
+      tasks: Array.isArray(tasks) ? (tasks as TeamTask[]) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function updateTeamPlan(plan: TeamPlan): void {
+  runSql(
+    "UPDATE team_tasks SET tasks_json = ?, status = 'active', current_step = ?, updated_at = datetime('now') WHERE id = ?",
+    [JSON.stringify(plan.tasks), plan.tasks.filter((t) => t.status === 'done').length, plan.id]
+  );
+  saveDb();
+}
+
+function buildProjectContext(cwd: string, files: string[]): string {
+  const parts: string[] = [];
+  try {
+    const entries = fs.readdirSync(cwd, { withFileTypes: true });
+    const structure = entries
+      .filter((e) => !e.name.startsWith('.') && !['node_modules', 'dist', 'build', '.git'].includes(e.name))
+      .slice(0, 30)
+      .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
+      .join('\n');
+    parts.push(`Project structure (top level):\n${structure || '(empty)'}`);
+  } catch {
+    // ignore
+  }
+  for (const rel of files.slice(0, 5)) {
+    const full = path.join(cwd, rel);
+    if (!fs.existsSync(full) || fs.statSync(full).isDirectory()) continue;
+    try {
+      const stat = fs.statSync(full);
+      if (stat.size > 200 * 1024) continue;
+      parts.push(`File ${rel}:\n\`\`\`\n${fs.readFileSync(full, 'utf-8')}\n\`\`\``);
+    } catch {
+      // skip
+    }
+  }
+  return parts.join('\n\n');
 }
 
 function detectTestCommand(cwd: string): string | null {
@@ -1139,6 +1269,166 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
       const rerun = await execInProject(cwd, testCmd, 300000);
       const rerunOut = [rerun.stdout.trim(), rerun.stderr.trim()].filter(Boolean).join('\n');
       return `Applied fixes:\n${fixes.join('\n') || '(none)'}\n\nRe-run tests: ${rerun.exitCode === 0 ? 'PASSED' : 'STILL FAILING'} (exit ${rerun.exitCode})\n\n${truncateText(rerunOut.slice(-3000), 3000)}`;
+    }
+
+    case 'team_plan': {
+      const { apiKey, baseUrl, model } = getAiConfig();
+      if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
+      const task = toolCall.query || '未指定任务';
+      const cwd = resolveProjectPath(projectId, '');
+      let structure = '';
+      try {
+        const entries = fs.readdirSync(cwd, { withFileTypes: true });
+        structure = entries
+          .filter((e) => !e.name.startsWith('.') && !['node_modules', 'dist', 'build', '.git'].includes(e.name))
+          .slice(0, 30)
+          .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
+          .join('\n');
+      } catch {
+        // ignore
+      }
+      const system =
+        'You are the PLANNER on a software engineering team. Break the task into concrete implementation steps. ' +
+        'Output ONLY a JSON array (no markdown fences, no explanations) with this shape: ' +
+        '[{"step":1,"title":"具体步骤","role":"engineer","files":["涉及文件路径"]}]. ' +
+        'Each step must be small enough for one agent action. Roles: engineer only.';
+      const user = `Task: ${task}\n\nProject structure (top level):\n${structure || '(empty)'}`;
+      let raw: string;
+      try {
+        raw = await aiComplete(apiKey, baseUrl, model, system, user);
+      } catch (err: any) {
+        return `Planning failed: ${err?.message || String(err)}`;
+      }
+      const tasks = parseTaskList(raw);
+      if (tasks.length === 0) {
+        return `Planning failed: no valid task list returned. Raw output:\n${raw.slice(0, 1000)}`;
+      }
+      saveTeamPlan(projectId, task, tasks);
+      return `Plan created (${tasks.length} steps), persisted to database:\n\n${tasks
+        .map((t) => `${t.step}. [${t.role}] ${t.title}${t.files.length ? ` (${t.files.join(', ')})` : ''}`)
+        .join('\n')}\n\nUse team_execute to implement (step number or auto-pick next), then team_test and team_review.`;
+    }
+
+    case 'team_execute': {
+      const { apiKey, baseUrl, model } = getAiConfig();
+      if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
+      const plan = loadTeamPlan(projectId);
+      if (!plan) return 'No team plan found. Run team_plan first.';
+
+      const stepArg = toolCall.query ? parseInt(toolCall.query, 10) : NaN;
+      const stepIndex = Number.isNaN(stepArg)
+        ? plan.tasks.findIndex((t) => t.status !== 'done')
+        : stepArg - 1;
+      if (stepIndex < 0 || stepIndex >= plan.tasks.length) {
+        return `Invalid step: ${toolCall.query || 'none'}. Plan has ${plan.tasks.length} steps.`;
+      }
+      const task = plan.tasks[stepIndex];
+
+      const cwd = resolveProjectPath(projectId, '');
+      const context = buildProjectContext(cwd, task.files);
+      const system =
+        'You are the CODE ENGINEER on a software engineering team. Implement the given step. ' +
+        'Output ONLY a JSON object (no markdown fences) with this shape: ' +
+        '{"files":[{"path":"relative/path","content":"complete file content"}],"note":"简短说明做了什么"}. ' +
+        'Only include files you create or modify. Content must be complete files, never diffs.';
+      const user = `Step ${task.step}: ${task.title}${task.files.length ? `\nTarget files: ${task.files.join(', ')}` : ''}\n\n${context}`;
+      let raw: string;
+      try {
+        raw = await aiComplete(apiKey, baseUrl, model, system, user);
+      } catch (err: any) {
+        return `Execute failed for step ${task.step}: ${err?.message || String(err)}`;
+      }
+      const result = parseEngineerOutput(raw);
+      if (result.files.length === 0) {
+        task.status = 'failed';
+        task.detail = result.note || 'No file changes produced';
+        updateTeamPlan(plan);
+        return `Step ${task.step} produced no files.\n\n${result.note || raw.slice(0, 500)}`;
+      }
+
+      const written: string[] = [];
+      for (const f of result.files.slice(0, 10)) {
+        const abs = path.join(cwd, f.path);
+        const dir = path.dirname(abs);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        try {
+          createSnapshot(projectId, `team_execute 步骤${task.step} 前快照`, [
+            { path: f.path, content: fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : '' },
+          ]);
+        } catch {
+          // best-effort
+        }
+        fs.writeFileSync(abs, f.content, 'utf-8');
+        written.push(f.path);
+      }
+      task.status = 'done';
+      task.detail = result.note || '';
+      updateTeamPlan(plan);
+      return `Step ${task.step} done: ${task.title}\n\n${result.note || ''}\n\nWrote ${written.length} file(s):\n${written.join('\n')}`;
+    }
+
+    case 'team_test': {
+      const cwd = resolveProjectPath(projectId, '');
+      const cmd = detectTestCommand(cwd);
+      if (!cmd) return 'No test configuration detected.';
+      const r = await execInProject(cwd, cmd, 300000);
+      const output = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n');
+      if (r.exitCode === 0) {
+        return `Tests PASSED (exit 0, ${r.duration}ms)\n\n${truncateText(output, 3000)}`;
+      }
+      const { apiKey, baseUrl, model } = getAiConfig();
+      if (apiKey) {
+        try {
+          const analysis = await aiComplete(
+            apiKey,
+            baseUrl,
+            model,
+            'You are the QA TESTER on a software engineering team. Analyze the failing test output and list likely root causes and concrete fixes concisely, in the same language as the user.',
+            `Test output (tail):\n${output.slice(-4000)}`
+          );
+          return `Tests FAILED (exit ${r.exitCode})\n\n${truncateText(output.slice(-3000), 3000)}\n\nTester analysis:\n${analysis}`;
+        } catch {
+          // fall through to raw output
+        }
+      }
+      return `Tests FAILED (exit ${r.exitCode})\n\n${truncateText(output, 4000)}`;
+    }
+
+    case 'team_review': {
+      const cwd = resolveProjectPath(projectId, '');
+      const diff = await execInProject(cwd, 'git diff --stat && echo "---" && git diff | head -300');
+      const issues = scanProject(cwd);
+      const checks = [
+        `Security scan: ${issues.length > 0 ? issues.length + ' issue(s)' : 'clean'}`,
+      ];
+      if (issues.length > 0) checks.push(formatIssues(issues.slice(0, 10)));
+
+      const { apiKey, baseUrl, model } = getAiConfig();
+      if (!apiKey) {
+        return `Review (no AI):\n\n${checks.join('\n')}\n\n${truncateText(diff.stdout, 3000)}`;
+      }
+      const system =
+        'You are the REVIEWER on a software engineering team. Review the changes and decide PASS or FAIL. ' +
+        "Output a concise review in the user language: verdict (PASS/FAIL), issues found (severity + file/line), and suggestions. " +
+        'Do not rubber-stamp: look for correctness bugs, security risks, and missing tests.';
+      const user = `Code changes:\n${truncateText(diff.stdout || '(no diff in working tree)', 5000)}\n\nChecks:\n${checks.join('\n')}`;
+      let review: string;
+      try {
+        review = await aiComplete(apiKey, baseUrl, model, system, user);
+      } catch (err: any) {
+        return `Review failed: ${err?.message || String(err)}`;
+      }
+      return `Review report:\n\n${review}`;
+    }
+
+    case 'team_status': {
+      const plan = loadTeamPlan(projectId);
+      if (!plan) return 'No team plan found. Run team_plan to create one.';
+      const done = plan.tasks.filter((t) => t.status === 'done').length;
+      const failed = plan.tasks.filter((t) => t.status === 'failed').length;
+      return `Task: ${plan.title} (${done}/${plan.tasks.length} done${failed ? `, ${failed} failed` : ''})\n\n${plan.tasks
+        .map((t) => `${t.status === 'done' ? '✅' : t.status === 'failed' ? '❌' : '⬜'} ${t.step}. [${t.role}] ${t.title}${t.detail ? ` — ${t.detail}` : ''}`)
+        .join('\n')}`;
     }
 
     default:

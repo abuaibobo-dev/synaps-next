@@ -149,6 +149,20 @@ export async function getDb(): Promise<SqlJsDatabase> {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS team_tasks (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      tasks_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      current_step INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY,
       project_id TEXT,

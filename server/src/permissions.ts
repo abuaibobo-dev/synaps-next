@@ -84,6 +84,10 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'mcp_list_tools':
     case 'security_scan':
     case 'run_tests':
+    case 'team_plan':
+    case 'team_test':
+    case 'team_review':
+    case 'team_status':
       return { level: 'none', impact: '只读分析操作，无副作用' };
     case 'write_file':
       return {
@@ -110,6 +114,8 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
       return { level: 'medium', impact: `为文件生成测试：${toolCall.path || '?'}（写入测试文件）` };
     case 'auto_test_fix':
       return { level: 'medium', impact: `根据测试失败自动修复代码：${toolCall.path || '工作区改动文件'}（修改前创建快照）` };
+    case 'team_execute':
+      return { level: 'medium', impact: `工程师角色执行步骤 ${toolCall.query || '下一待办'}（批量写入文件，修改前创建快照）` };
     case 'run_command': {
       const cmd = toolCall.command || '';
       if (CRITICAL_PATTERNS.some((p) => p.test(cmd))) {
