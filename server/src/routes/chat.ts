@@ -9,6 +9,7 @@ import { getDb, queryAll, queryOne, runSql, saveDb } from '../db.js';
 import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } from '../permissions.js';
 import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
+import { runHarnessTask, harnessStatus } from '../harness.js';
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -54,6 +55,8 @@ You have access to tools that let you interact with the project files:
 - skill_deps: Check a skill's declared dependencies (dependsOn skills, MCP servers, packages, env vars). Args: query "skill name"
 - project_export: Export the project config as a standardized AgentPack JSON (settings, trusted projects, MCP servers, installed tools, skills)
 - project_import: Import an AgentPack JSON to restore/migrate a project config (args: params.config with the JSON string). Medium risk, requires confirmation
+- harness_status: Check whether DeepSeek Harness is available (returns Node version, config status). Read-only.
+- harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -142,6 +145,7 @@ interface ToolCall {
   server?: string;
   method?: string;
   params?: Record<string, unknown>;
+  task?: string;
 }
 
 interface TeamTask {
@@ -1622,6 +1626,27 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
       }
       saveDb();
       return `AgentPack imported successfully.\n\nApplied: ${applied.join(', ')}.`;
+    }
+
+    case 'harness_status': {
+      return JSON.stringify(harnessStatus(), null, 2);
+    }
+
+    case 'harness_run': {
+      const task = toolCall.task || toolCall.query;
+      if (!task) return 'Error: harness_run requires a task argument (use task field)';
+      let projectPath: string | undefined;
+      try {
+        projectPath = resolveProjectPath(projectId, '');
+      } catch {
+        projectPath = undefined;
+      }
+      try {
+        const result = await runHarnessTask(task, projectPath);
+        return `[DeepSeek Harness result]\n${truncateText(result, 4000)}`;
+      } catch (err) {
+        return `[DeepSeek Harness error]\n${err instanceof Error ? err.message : String(err)}`;
+      }
     }
 
     default:

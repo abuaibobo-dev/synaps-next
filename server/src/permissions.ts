@@ -90,6 +90,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'team_status':
     case 'skill_deps':
     case 'project_export':
+    case 'harness_status':
       return { level: 'none', impact: '只读分析操作，无副作用' };
     case 'write_file':
       return {
@@ -120,6 +121,8 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
       return { level: 'medium', impact: `工程师角色执行步骤 ${toolCall.query || '下一待办'}（批量写入文件，修改前创建快照）` };
     case 'project_import':
       return { level: 'medium', impact: '导入 AgentPack 配置（覆盖设置/技能，可信项目与 MCP 配置）' };
+    case 'harness_run':
+      return { level: 'high', impact: '将任务交给 DeepSeek Harness 官方 Agent 在项目目录自主执行（可能修改代码/运行命令/推送）' };
     case 'run_command': {
       const cmd = toolCall.command || '';
       if (CRITICAL_PATTERNS.some((p) => p.test(cmd))) {

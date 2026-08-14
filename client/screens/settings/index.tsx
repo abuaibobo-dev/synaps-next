@@ -29,6 +29,12 @@ interface Settings {
   build_method: string;
   snapshot_enabled: string;
   diff_review_enabled: string;
+  harness_enabled: string;
+  harness_node_path: string;
+  harness_dsh_path: string;
+  harness_model: string;
+  harness_api_key: string;
+  harness_base_url: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -45,6 +51,12 @@ const DEFAULT_SETTINGS: Settings = {
   build_method: 'github_actions',
   snapshot_enabled: 'true',
   diff_review_enabled: 'true',
+  harness_enabled: 'false',
+  harness_node_path: '',
+  harness_dsh_path: '',
+  harness_model: 'deepseek-chat',
+  harness_api_key: '',
+  harness_base_url: '',
 };
 
 interface McpServer {
@@ -555,6 +567,77 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Pressable>
           </View>
 
+          {/* DeepSeek Harness */}
+          <Text style={styles.groupTitle}>DeepSeek Harness</Text>
+          <View style={styles.group}>
+            <View style={styles.settingItem}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="brain" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>启用 Harness</Text>
+              <View style={{ flex: 1 }} />
+              <Switch
+                value={settings.harness_enabled === 'true'}
+                onValueChange={() => handleToggle('harness_enabled')}
+                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
+                thumbColor={settings.harness_enabled === 'true' ? colors.primary : colors.textMuted}
+              />
+            </View>
+            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_node_path')}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="terminal" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>Node 22+ 路径</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>
+                {settings.harness_node_path || '使用内置 Node'}
+              </Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_dsh_path')}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="robot" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>dsh 入口路径</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>
+                {settings.harness_dsh_path || '自动 npx 安装'}
+              </Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_model')}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="microchip" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>模型</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>{settings.harness_model}</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_api_key')}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="key" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>API Key</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>
+                {maskValue(settings.harness_api_key) || '使用 AI 模型 Key'}
+              </Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_base_url')}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="server" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>API 地址</Text>
+              <Text style={styles.settingValue} numberOfLines={1}>
+                {settings.harness_base_url || 'DeepSeek 官方'}
+              </Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <View style={styles.settingHint}>
+              <Text style={styles.settingHintText}>
+                需要 Node 22.19+（Termux: pkg install nodejs）。启用后 Agent 可将复杂任务委托给官方 Harness 执行。
+              </Text>
+            </View>
+          </View>
+
           {/* 诊断 */}
           <Text style={styles.groupTitle}>诊断</Text>
           <View style={styles.group}>
@@ -916,6 +999,15 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
+  },
+  settingHint: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  settingHintText: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    lineHeight: 16,
   },
   settingItem: {
     flexDirection: 'row',
