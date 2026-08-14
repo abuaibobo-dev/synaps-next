@@ -7,6 +7,7 @@ import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { colors, spacing, radius, fontSize } from '@/utils/theme';
 
 
 interface Repository {

@@ -14,6 +14,7 @@ import { MenuButton } from '@/components/Sidebar';
 import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
+import { colors, spacing, radius, fontSize } from '@/utils/theme';
 
 
 interface FileEntry {
