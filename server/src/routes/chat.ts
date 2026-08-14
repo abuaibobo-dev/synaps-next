@@ -2,10 +2,16 @@ import express from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
-import { getDb, queryAll, queryOne } from '../db.js';
+import { getDb, queryAll, queryOne, runSql, saveDb } from '../db.js';
+import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } from '../permissions.js';
+import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
+import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
 
 const router = express.Router();
+const execAsync = promisify(exec);
 
 // Enhanced Agent system prompt with better intelligence
 const AGENT_SYSTEM_PROMPT = `You are Synaps, an AI software development agent running on a mobile phone.
@@ -19,6 +25,24 @@ You have access to tools that let you interact with the project files:
 - search_file: Search for files by name
 - list_skills: List available skills (methodologies/guides)
 - read_skill: Read a skill's full content by name
+- run_command: Execute a shell command in the project directory (e.g. npm test, git status, git diff, git log, ls -la). Include the exact command string in the "command" field.
+- run_lint: Run lint checks in the project; returns a list of errors
+- run_typecheck: Run type checking; returns a list of errors
+- analyze_code: Analyze code quality; returns issues with severity ([HIGH]/[MEDIUM]/[LOW])
+- auto_fix: Apply automatic fixes for lint/typecheck issues (creates a snapshot before changing files)
+- git_commit_push: Stage, commit and push all current changes (args: message optional; high risk, requires confirmation)
+- trigger_build: Trigger a GitHub Actions build (args: repo "owner/name", ref optional, workflowId optional)
+- check_build_status: Query the latest GitHub Actions runs (args: repo "owner/name" optional, inferred from git remote)
+- download_and_install: Download an APK and install it on this phone (args: url; high risk, requires confirmation)
+- search_tools: Search for external tools/packages (npm registry and GitHub). Args: query
+- install_tool: Install an external tool/package (npm global or pip). Args: query (package/tool name), manager ("npm" | "pip" | "auto"). High risk, requires confirmation. The tool is available immediately after install, no restart needed.
+- list_tools: List tools previously installed through install_tool
+- mcp_list_servers: List configured MCP servers (from Settings)
+- mcp_add_server: Register an MCP server (args: server "name", manager "stdio"|"sse", command for stdio, url for sse, params.args for stdio command args). Medium risk, requires confirmation.
+- mcp_list_tools: List tools exposed by an MCP server (args: server "name")
+- mcp_call: Call a tool on an MCP server (args: server "name", method "tool name", params object with the tool arguments). Medium risk, requires confirmation. Use after mcp_list_tools to see available tools.
+- security_scan: Scan the project (or a specific path) for security vulnerabilities; returns issues with severity, rule and line numbers
+- security_fix: Use AI to generate and apply fixes for security issues (creates a snapshot before changing files)
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -32,6 +56,32 @@ You have access to tools that let you interact with the project files:
 - Explain what you're doing at each step
 - If you encounter an error, try to understand and fix it
 - All paths are relative to the project root
+- Use run_command to verify changes: run tests, builds, git diff, git status, git log
+- Git operations (add/commit/push/branch/log/diff) are done through run_command
+- Never run destructive commands (rm -rf /, mkfs, dd) or commands that modify files outside the project
+- Commands run in the project root, time out after 30 seconds, and output is truncated
+
+## Repair Workflow
+When the user asks you to "fix" or "repair" the project (e.g. "修复我", "检查代码并修复"):
+1. Run run_lint and run_typecheck to find errors
+2. Run analyze_code to surface quality issues
+3. Run auto_fix for fixable issues, then re-run run_lint/run_typecheck to verify
+3.5. Run security_scan, then security_fix for any issues, then re-scan to verify
+4. Run git_commit_push with a clear commit message
+5. Run trigger_build (repo is inferred from git remote; ref is usually "main")
+6. Poll check_build_status until the run completes
+7. When the APK artifact is ready, run download_and_install with the artifact download URL
+Explain each step before calling a tool. If a tool is blocked or denied by the permission system, stop and tell the user.
+
+## Security Workflow
+After modifying code, always run security_scan. If issues are found, run security_fix, then run security_scan again to verify. Only push when the scan is clean.
+
+## Tool Discovery
+When the user says they lack a capability (e.g. "我缺一个处理 Excel 的工具" or "自动安装一个 PDF 解析工具"):
+1. Run search_tools to find candidates
+2. Recommend the best option with a short reason
+3. Run install_tool after user confirmation (trusted projects auto-approve)
+4. Run list_tools to confirm; installed tools are persisted and available in this session without restart
 
 ## Tool Usage
 When you need to use a tool, output ONLY the tool call block:
@@ -47,6 +97,16 @@ interface ToolCall {
   path?: string;
   query?: string;
   content?: string;
+  command?: string;
+  message?: string;
+  repo?: string;
+  ref?: string;
+  workflowId?: string;
+  url?: string;
+  manager?: string;
+  server?: string;
+  method?: string;
+  params?: Record<string, unknown>;
 }
 
 function parseToolCall(response: string): ToolCall | null {
@@ -72,6 +132,128 @@ function resolveProjectPath(projectId: string, relativePath: string): string {
   }
 
   return resolved;
+}
+
+interface PendingApproval {
+  resolve: (approved: boolean) => void;
+  timer: NodeJS.Timeout;
+}
+
+const pendingApprovals = new Map<string, PendingApproval>();
+
+function describeDetail(toolCall: ToolCall): string {
+  return toolCall.command || toolCall.path || toolCall.query || toolCall.tool;
+}
+
+function truncateText(text: string, max: number): string {
+  return text.length > max
+    ? `${text.slice(0, max)}\n...[truncated ${text.length - max} chars]`
+    : text;
+}
+
+async function execInProject(
+  cwd: string,
+  command: string,
+  timeout = 30000
+): Promise<{ stdout: string; stderr: string; exitCode: number; duration: number }> {
+  const startTime = Date.now();
+  let stdout = '';
+  let stderr = '';
+  let exitCode = 0;
+  try {
+    const result = await execAsync(command, {
+      cwd,
+      timeout,
+      maxBuffer: 1024 * 1024,
+      env: { ...process.env, PATH: process.env.PATH },
+    });
+    stdout = result.stdout;
+    stderr = result.stderr;
+  } catch (execError: any) {
+    stdout = execError.stdout || '';
+    stderr = execError.stderr || execError.message;
+    exitCode = execError.code || 1;
+  }
+  return { stdout, stderr, exitCode, duration: Date.now() - startTime };
+}
+
+async function inferRepo(cwd: string): Promise<string | null> {
+  const r = await execInProject(cwd, 'git remote get-url origin');
+  const url = r.stdout.trim();
+  if (!url) return null;
+  const m = url.match(/(?:github\.com[:/])([^/\s]+)\/([^/\s]+?)(?:\.git)?$/);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+function getGithubTokenFromSettings(): string | null {
+  try {
+    const row = queryOne('SELECT value FROM settings WHERE key = ?', ['github_token']);
+    if (row && typeof row.value === 'string' && row.value) return row.value;
+  } catch {
+    // ignore
+  }
+  return process.env.GITHUB_TOKEN || null;
+}
+
+function createSnapshot(
+  projectId: string,
+  label: string,
+  files: Array<{ path: string; content: string }>
+): void {
+  try {
+    const snapshotId = crypto.randomUUID();
+    runSql(
+      'INSERT INTO snapshots (id, project_id, label, file_count) VALUES (?, ?, ?, ?)',
+      [snapshotId, projectId, label, files.length]
+    );
+    for (const file of files) {
+      runSql(
+        'INSERT INTO snapshot_files (id, snapshot_id, file_path, original_content) VALUES (?, ?, ?, ?)',
+        [crypto.randomUUID(), snapshotId, file.path, file.content]
+      );
+    }
+    saveDb();
+  } catch (err) {
+    console.error('Failed to create snapshot:', err);
+  }
+}
+
+function requestApproval(
+  res: express.Response,
+  toolCall: ToolCall,
+  assessment: RiskAssessment
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => {
+      if (pendingApprovals.has(requestId)) {
+        pendingApprovals.delete(requestId);
+        resolve(false);
+      }
+    }, 60_000);
+
+    pendingApprovals.set(requestId, { resolve, timer });
+
+    res.write(`data: ${JSON.stringify({
+      permission_request: {
+        id: requestId,
+        level: assessment.level,
+        tool: toolCall.tool,
+        args: {
+          command: toolCall.command,
+          path: toolCall.path,
+          query: toolCall.query,
+          message: toolCall.message,
+          repo: toolCall.repo,
+          url: toolCall.url,
+          server: toolCall.server,
+          method: toolCall.method,
+          params: toolCall.params,
+        },
+        impact: assessment.impact,
+      },
+    })}\n\n`);
+  });
 }
 
 async function executeTool(projectId: string, toolCall: ToolCall): Promise<string> {
@@ -205,6 +387,538 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
       const skill = queryOne('SELECT name, description, content FROM skills WHERE name = ? AND enabled = 1', [toolCall.query]) as Record<string, string> | null;
       if (!skill) return `Skill "${toolCall.query}" not found. Use list_skills to see available skills.`;
       return `## ${skill.name}\n\n${skill.description}\n\n---\n\n${skill.content}`;
+    }
+
+    case 'run_command': {
+      if (!toolCall.command) return 'Error: command is required';
+
+      const cwd = resolveProjectPath(projectId, '');
+      if (!fs.existsSync(cwd)) return `Error: project directory not found: ${cwd}`;
+
+      const dangerousPatterns = [
+        /rm\s+-rf\s+\//,
+        /mkfs\./,
+        /dd\s+if=/,
+        /:\(\)\s*\{/,
+      ];
+      for (const pattern of dangerousPatterns) {
+        if (pattern.test(toolCall.command)) {
+          return `Error: Dangerous command blocked: ${toolCall.command}`;
+        }
+      }
+
+      const { stdout, stderr, exitCode, duration } = await execInProject(cwd, toolCall.command, 30000);
+
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+      return `$ ${toolCall.command} (${duration}ms, exit ${exitCode})\n\n${truncateText(output || '(no output)', 4000)}`;
+    }
+
+    case 'run_lint': {
+      const cwd = resolveProjectPath(projectId, '');
+      const pkgPath = path.join(cwd, 'package.json');
+      let cmd = '';
+      if (fs.existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+          if (pkg.scripts?.lint) cmd = 'npm run lint';
+          else if (pkg.scripts?.eslint) cmd = 'npm run eslint';
+          else cmd = 'npx eslint . --ext .js,.jsx,.ts,.tsx 2>/dev/null || true';
+        } catch {
+          cmd = 'npx eslint . --ext .js,.jsx,.ts,.tsx 2>/dev/null || true';
+        }
+      } else if (
+        fs.existsSync(path.join(cwd, 'pyproject.toml')) ||
+        fs.existsSync(path.join(cwd, 'requirements.txt'))
+      ) {
+        cmd = 'python3 -m ruff check . 2>/dev/null || python3 -m flake8 . 2>/dev/null || echo "No Python linter found"';
+      } else {
+        return 'No lint configuration detected (package.json or Python project not found).';
+      }
+      const { stdout, stderr, exitCode } = await execInProject(cwd, cmd, 120000);
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+      return `Lint ${exitCode === 0 ? 'PASSED' : 'FAILED'} (exit ${exitCode})\n\n${truncateText(output || '(no output)', 6000)}`;
+    }
+
+    case 'run_typecheck': {
+      const cwd = resolveProjectPath(projectId, '');
+      const pkgPath = path.join(cwd, 'package.json');
+      let cmd = 'npx tsc --noEmit';
+      if (fs.existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+          if (pkg.scripts?.typecheck) cmd = 'npm run typecheck';
+          else if (pkg.scripts?.tsc) cmd = 'npm run tsc';
+        } catch {
+          // fall back to npx tsc --noEmit
+        }
+      }
+      if (!fs.existsSync(path.join(cwd, 'tsconfig.json'))) {
+        return 'No tsconfig.json found; TypeScript typecheck not applicable.';
+      }
+      const { stdout, stderr, exitCode } = await execInProject(cwd, cmd, 120000);
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+      return `Typecheck ${exitCode === 0 ? 'PASSED' : 'FAILED'} (exit ${exitCode})\n\n${truncateText(output || '(no output)', 6000)}`;
+    }
+
+    case 'analyze_code': {
+      const cwd = resolveProjectPath(projectId, '');
+      const issues: string[] = [];
+      let scanned = 0;
+      const walk = (dir: string, depth: number) => {
+        if (depth > 4 || scanned > 80) return;
+        let entries;
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          if (
+            entry.name.startsWith('.') ||
+            ['node_modules', 'dist', 'build', 'coverage', '.git'].includes(entry.name)
+          ) {
+            continue;
+          }
+          const full = path.join(dir, entry.name);
+          const rel = path.relative(cwd, full);
+          if (entry.isDirectory()) {
+            walk(full, depth + 1);
+          } else if (/\.(ts|tsx|js|jsx|py)$/.test(entry.name)) {
+            if (scanned > 80) return;
+            scanned++;
+            try {
+              const stat = fs.statSync(full);
+              if (stat.size > 200 * 1024) {
+                issues.push(`[HIGH] ${rel}: 文件过大 (${Math.round(stat.size / 1024)}KB)`);
+              }
+              const content = fs.readFileSync(full, 'utf-8');
+              const lines = content.split('\n');
+              if (lines.length > 600) {
+                issues.push(`[MEDIUM] ${rel}: 行数过多 (${lines.length} 行)`);
+              }
+              lines.forEach((line, i) => {
+                const n = i + 1;
+                if (/console\.(log|debug|warn)/.test(line)) issues.push(`[LOW] ${rel}:${n} console 日志残留`);
+                else if (/TODO|FIXME|HACK/.test(line)) issues.push(`[LOW] ${rel}:${n} TODO/FIXME 注释`);
+                else if (/catch\s*\(.*\)\s*\{\s*\}/.test(line)) issues.push(`[MEDIUM] ${rel}:${n} 空 catch 块`);
+                else if (line.length > 120) issues.push(`[LOW] ${rel}:${n} 行过长 (>120)`);
+              });
+            } catch {
+              // skip unreadable files
+            }
+          }
+        }
+      };
+      walk(cwd, 0);
+      if (issues.length === 0) return 'No obvious code quality issues detected.';
+      return `Found ${issues.length} issue(s) in ${scanned} file(s):\n\n${issues.slice(0, 50).join('\n')}`;
+    }
+
+    case 'auto_fix': {
+      const cwd = resolveProjectPath(projectId, '');
+      const pkgPath = path.join(cwd, 'package.json');
+      let lintCmd = '';
+      if (fs.existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+          if (pkg.scripts?.lint) lintCmd = 'npm run lint -- --fix';
+          else lintCmd = 'npx eslint . --fix --ext .js,.jsx,.ts,.tsx';
+        } catch {
+          lintCmd = 'npx eslint . --fix --ext .js,.jsx,.ts,.tsx';
+        }
+      } else if (fs.existsSync(path.join(cwd, 'pyproject.toml'))) {
+        lintCmd = 'python3 -m ruff check . --fix 2>/dev/null || echo "No auto-fix tool found"';
+      } else {
+        return 'No lint/auto-fix configuration detected.';
+      }
+
+      const parseChanged = (out: string) =>
+        out
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => l.slice(3));
+
+      const before = await execInProject(cwd, 'git status --porcelain');
+      const fix = await execInProject(cwd, lintCmd, 120000);
+      const after = await execInProject(cwd, 'git status --porcelain');
+      const beforeSet = new Set(parseChanged(before.stdout));
+      const changed = parseChanged(after.stdout).filter((f) => !beforeSet.has(f));
+
+      // Snapshot changed files (original content from git HEAD)
+      try {
+        const files: Array<{ path: string; content: string }> = [];
+        for (const file of changed.slice(0, 50)) {
+          const show = await execInProject(cwd, `git show HEAD:${file}`);
+          if (show.exitCode === 0) files.push({ path: file, content: show.stdout });
+        }
+        if (files.length > 0) createSnapshot(projectId, 'auto-fix 前快照', files);
+      } catch {
+        // snapshot is best-effort
+      }
+
+      const fixOutput = [fix.stdout.trim(), fix.stderr.trim()].filter(Boolean).join('\n') || '(no output)';
+      const changedList = changed.length > 0 ? changed.join('\n') : '(no files changed)';
+      return `Auto-fix finished (exit ${fix.exitCode}):\n${truncateText(fixOutput, 3000)}\n\nChanged files:\n${truncateText(changedList, 2000)}`;
+    }
+
+    case 'git_commit_push': {
+      const cwd = resolveProjectPath(projectId, '');
+      const message = (toolCall.message || 'chore: auto-fix').replace(/'/g, `'\\''`);
+      const add = await execInProject(cwd, 'git add -A');
+      if (add.exitCode !== 0) return `git add failed:\n${truncateText(add.stderr, 2000)}`;
+      const status = await execInProject(cwd, 'git status --short');
+      if (!status.stdout.trim()) return 'No changes to commit.';
+      const commit = await execInProject(cwd, `git commit -m '${message}'`);
+      if (commit.exitCode !== 0) return `git commit failed:\n${truncateText(commit.stderr, 2000)}`;
+      const push = await execInProject(cwd, 'git push');
+      const pushOut = [push.stdout.trim(), push.stderr.trim()].filter(Boolean).join('\n');
+      return `Committed and pushed.\n\nChanges:\n${truncateText(status.stdout, 2000)}\n\n${commit.stdout.trim()}\n${pushOut}`;
+    }
+
+    case 'trigger_build': {
+      const cwd = resolveProjectPath(projectId, '');
+      const token = getGithubTokenFromSettings();
+      if (!token) return 'Error: GitHub token not configured (Settings → GitHub → Access Token)';
+      let repo = toolCall.repo;
+      if (!repo) {
+        const inferred = await inferRepo(cwd);
+        if (!inferred) return 'Error: repo (owner/name) is required and could not be inferred from git remote';
+        repo = inferred;
+      }
+      const ref = toolCall.ref || 'main';
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github.v3+json',
+        'User-Agent': 'Synaps-App',
+        'Content-Type': 'application/json',
+      };
+      let workflowId = toolCall.workflowId;
+      if (!workflowId) {
+        const wfRes = await fetch(`https://api.github.com/repos/${repo}/actions/workflows`, { headers });
+        const wfData = (await wfRes.json()) as { workflows?: Array<{ id?: number }> };
+        workflowId = String(wfData.workflows?.[0]?.id);
+        if (!workflowId) return `Error: no workflows found for ${repo}`;
+      }
+      const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowId}/dispatches`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ref }),
+      });
+      if (!res.ok) return `Error: build trigger failed (${res.status}): ${await res.text()}`;
+      return `Build triggered for ${repo} (workflow ${workflowId}, ref ${ref}).`;
+    }
+
+    case 'check_build_status': {
+      const cwd = resolveProjectPath(projectId, '');
+      const token = getGithubTokenFromSettings();
+      if (!token) return 'Error: GitHub token not configured (Settings → GitHub → Access Token)';
+      let repo = toolCall.repo;
+      if (!repo) {
+        const inferred = await inferRepo(cwd);
+        if (!inferred) return 'Error: repo (owner/name) is required and could not be inferred from git remote';
+        repo = inferred;
+      }
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github.v3+json',
+        'User-Agent': 'Synaps-App',
+      };
+      const res = await fetch(`https://api.github.com/repos/${repo}/actions/runs?per_page=5`, { headers });
+      if (!res.ok) return `Error: query failed (${res.status}): ${await res.text()}`;
+      const data = (await res.json()) as {
+        workflow_runs?: Array<{
+          status?: string;
+          conclusion?: string | null;
+          name?: string;
+          run_number?: number;
+          created_at?: string;
+        }>;
+      };
+      const runs = (data.workflow_runs || []).map((r: any) =>
+        `${r.status}${r.conclusion ? '/' + r.conclusion : ''} ${r.name} #${r.run_number} ${r.created_at}`
+      );
+      return runs.length > 0 ? runs.join('\n') : 'No build runs found.';
+    }
+
+    case 'download_and_install': {
+      const url = (toolCall.url || '').replace(/'/g, '');
+      if (!url) return 'Error: url (APK download link) is required';
+      if (!/^https?:\/\//.test(url)) return 'Error: invalid url (must start with http/https)';
+      const apkPath = `/sdcard/Download/synaps-${Date.now()}.apk`;
+      const dl = await execInProject(process.cwd(), `curl -sL --max-time 300 -o '${apkPath}' '${url}'`, 320000);
+      let size = -1;
+      try {
+        size = fs.statSync(apkPath).size;
+      } catch {
+        // not downloaded
+      }
+      if (size <= 0) return `Error: APK download failed.\n${truncateText(dl.stderr, 2000)}`;
+      const install = await execInProject(process.cwd(), `su -c "pm install -r '${apkPath}'"`, 60000);
+      if (install.exitCode === 0) {
+        return `APK installed successfully (${Math.round(size / 1024 / 1024)}MB). Path: ${apkPath}`;
+      }
+      return `APK downloaded to ${apkPath} (${Math.round(size / 1024 / 1024)}MB), but automatic install failed:\n${truncateText(install.stderr, 2000)}\n\nYou can install it manually from the Download folder.`;
+    }
+
+    case 'search_tools': {
+      const query = toolCall.query;
+      if (!query) return 'Error: query is required';
+      const results: string[] = [];
+
+      try {
+        const res = await fetch(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=5`);
+        const data = (await res.json()) as {
+          objects?: Array<{ package?: { name?: string; version?: string; description?: string } }>;
+        };
+        if (data.objects && data.objects.length > 0) {
+          results.push('npm packages:');
+          for (const obj of data.objects.slice(0, 5)) {
+            const pkg = obj.package || {};
+            results.push(`- ${pkg.name}@${pkg.version || ''}${pkg.description ? `: ${pkg.description}` : ''}`);
+          }
+        }
+      } catch {
+        results.push('(npm search unavailable)');
+      }
+
+      try {
+        const res = await fetch(
+          `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=5`,
+          { headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Synaps-App' } }
+        );
+        const data = (await res.json()) as {
+          items?: Array<{ full_name?: string; description?: string | null; stargazers_count?: number }>;
+        };
+        if (data.items && data.items.length > 0) {
+          results.push('GitHub repos:');
+          for (const item of data.items.slice(0, 5)) {
+            results.push(`- ${item.full_name} (${item.stargazers_count || 0}★): ${item.description || ''}`);
+          }
+        }
+      } catch {
+        results.push('(GitHub search unavailable)');
+      }
+
+      return results.length > 0
+        ? results.join('\n')
+        : `No results found for "${query}".`;
+    }
+
+    case 'install_tool': {
+      const toolName = toolCall.query;
+      if (!toolName) return 'Error: query (package/tool name) is required';
+      const manager = (toolCall.manager || 'auto').toLowerCase();
+
+      let cmd = '';
+      if (manager === 'npm') {
+        cmd = `npm install -g ${toolName}`;
+      } else if (manager === 'pip' || manager === 'python') {
+        cmd = `pip install ${toolName} 2>/dev/null || pip3 install ${toolName}`;
+      } else if (manager === 'auto') {
+        if (/^[a-z0-9-_.]+$/.test(toolName)) {
+          cmd = `npm install -g ${toolName} 2>/dev/null || pip install ${toolName} 2>/dev/null || pip3 install ${toolName}`;
+        } else {
+          cmd = `pip install ${toolName} 2>/dev/null || pip3 install ${toolName}`;
+        }
+      } else {
+        return 'Error: unsupported manager (use npm, pip, or auto)';
+      }
+
+      const cwd = resolveProjectPath(projectId, '');
+      const r = await execInProject(cwd, cmd, 180000);
+
+      if (r.exitCode === 0) {
+        try {
+          const row = queryOne('SELECT value FROM settings WHERE key = ?', ['installed_tools']);
+          let list: string[] = [];
+          try {
+            const parsed = JSON.parse((row && typeof row.value === 'string' ? row.value : '[]'));
+            if (Array.isArray(parsed)) list = parsed.filter((x) => typeof x === 'string');
+          } catch {
+            // reset list
+          }
+          if (!list.includes(toolName)) {
+            list.push(toolName);
+            runSql(
+              `INSERT INTO settings (key, value, updated_at) VALUES ('installed_tools', ?, datetime('now'))
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+              [JSON.stringify(list)]
+            );
+            saveDb();
+          }
+        } catch (err) {
+          console.error('Failed to persist installed tool:', err);
+        }
+      }
+
+      const output = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n');
+      return r.exitCode === 0
+        ? `Tool installed: ${toolName} (${manager}). It is available immediately; no restart needed.\n\n${truncateText(output, 2000)}`
+        : `Install failed (exit ${r.exitCode}):\n${truncateText(output, 2000)}`;
+    }
+
+    case 'list_tools': {
+      try {
+        const row = queryOne('SELECT value FROM settings WHERE key = ?', ['installed_tools']);
+        let list: string[] = [];
+        try {
+          const parsed = JSON.parse((row && typeof row.value === 'string' ? row.value : '[]'));
+          if (Array.isArray(parsed)) list = parsed.filter((x) => typeof x === 'string');
+        } catch {
+          // treat as empty
+        }
+        return list.length > 0
+          ? `Installed tools (${list.length}):\n${list.map((t) => `- ${t}`).join('\n')}`
+          : 'No tools installed yet. Use install_tool to install one.';
+      } catch {
+        return 'No tools installed yet.';
+      }
+    }
+
+    case 'mcp_list_servers': {
+      const servers = getMcpServers();
+      if (servers.length === 0) {
+        return 'No MCP servers configured. Use mcp_add_server to add one (stdio or sse).';
+      }
+      return servers
+        .map((srv) => `- ${srv.name} (${srv.transport}${srv.transport === 'stdio' ? `: ${srv.command || ''} ${(srv.args || []).join(' ')}` : `: ${srv.url || ''}`})`)
+        .join('\n');
+    }
+
+    case 'mcp_add_server': {
+      const name = toolCall.server;
+      if (!name) return 'Error: server (name) is required';
+      const transport = (toolCall.manager || '').toLowerCase();
+      if (transport !== 'stdio' && transport !== 'sse') {
+        return 'Error: manager must be "stdio" or "sse"';
+      }
+      if (transport === 'stdio' && !toolCall.command) {
+        return 'Error: stdio server requires a command';
+      }
+      if (transport === 'sse' && !toolCall.url) {
+        return 'Error: sse server requires a url';
+      }
+      const servers = getMcpServers().filter((srv) => srv.name !== name);
+      const args = Array.isArray(toolCall.params?.args) ? (toolCall.params.args as unknown[]).map(String) : [];
+      servers.push({ name, transport, command: toolCall.command, args, url: toolCall.url });
+      setMcpServers(servers);
+      return `MCP server "${name}" registered (${transport}). Use mcp_list_tools to discover its tools.`;
+    }
+
+    case 'mcp_list_tools': {
+      const serverName = toolCall.server;
+      if (!serverName) return 'Error: server (name) is required';
+      return await mcpListTools(serverName);
+    }
+
+    case 'mcp_call': {
+      const serverName = toolCall.server;
+      const method = toolCall.method;
+      if (!serverName) return 'Error: server (name) is required';
+      if (!method) return 'Error: method (MCP tool name) is required';
+      return await mcpCallTool(serverName, method, toolCall.params || {});
+    }
+
+    case 'security_scan': {
+      const cwd = resolveProjectPath(projectId, '');
+      const target = toolCall.path ? resolveProjectPath(projectId, toolCall.path) : cwd;
+      if (!fs.existsSync(target)) return `Error: path not found: ${toolCall.path || '(project root)'}`;
+      const issues = fs.statSync(target).isDirectory() ? scanProject(target) : scanFile(target);
+      return `Security scan of ${toolCall.path || '.'}:\n\n${formatIssues(issues)}`;
+    }
+
+    case 'security_fix': {
+      const apiKeyRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_api_key']);
+      const apiKey = apiKeyRow && typeof apiKeyRow.value === 'string' ? apiKeyRow.value : '';
+      if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
+      const baseUrlRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_base_url']);
+      const baseUrl = baseUrlRow && typeof baseUrlRow.value === 'string' && baseUrlRow.value
+        ? baseUrlRow.value
+        : 'https://api.deepseek.com';
+      const modelRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_model']);
+      const model = modelRow && typeof modelRow.value === 'string' && modelRow.value
+        ? modelRow.value
+        : 'deepseek-chat';
+
+      const cwd = resolveProjectPath(projectId, '');
+      const target = toolCall.path ? resolveProjectPath(projectId, toolCall.path) : cwd;
+      if (!fs.existsSync(target)) return `Error: path not found: ${toolCall.path || '(project root)'}`;
+      const issues = fs.statSync(target).isDirectory() ? scanProject(target) : scanFile(target);
+      if (issues.length === 0) return 'No security issues found; nothing to fix.';
+
+      const byFile = new Map<string, SecurityIssue[]>();
+      for (const issue of issues) {
+        const list = byFile.get(issue.file) || [];
+        list.push(issue);
+        byFile.set(issue.file, list);
+      }
+
+      const fixes: string[] = [];
+      for (const [rel, fileIssues] of [...byFile.entries()].slice(0, 5)) {
+        const full = path.join(cwd, rel);
+        let content: string;
+        try {
+          const stat = fs.statSync(full);
+          if (stat.size > 300 * 1024) {
+            fixes.push(`Skipped ${rel}: file too large (${Math.round(stat.size / 1024)}KB)`);
+            continue;
+          }
+          content = fs.readFileSync(full, 'utf-8');
+        } catch {
+          fixes.push(`Skipped ${rel}: unreadable`);
+          continue;
+        }
+
+        const issueList = fileIssues
+          .map((i) => `- [${i.severity}] line ${i.line}: ${i.message} (${i.rule})`)
+          .join('\n');
+        const userPrompt = `Fix the security issues in this file. Return ONLY the complete fixed file content wrapped in a single code block, no explanations, no diff.\n\nSecurity issues:\n${issueList}\n\nFile: ${rel}\n\n\`\`\`\n${content}\n\`\`\``;
+
+        let fixed: string;
+        try {
+          const res = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: 'system', content: 'You are a senior security engineer. Only output code, never explanations.' },
+                { role: 'user', content: userPrompt },
+              ],
+              temperature: 0.1,
+              max_tokens: 8000,
+            }),
+          });
+          if (!res.ok) {
+            fixes.push(`Fix failed for ${rel}: HTTP ${res.status}`);
+            continue;
+          }
+          const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+          const raw = data.choices?.[0]?.message?.content || '';
+          const m = raw.match(/```(?:\w+)?\n([\s\S]*?)```/);
+          fixed = m ? m[1] : raw;
+        } catch (err: any) {
+          fixes.push(`Fix failed for ${rel}: ${err?.message || String(err)}`);
+          continue;
+        }
+
+        if (!fixed.trim() || fixed.trim() === content.trim()) {
+          fixes.push(`No change for ${rel}`);
+          continue;
+        }
+
+        try {
+          createSnapshot(projectId, 'security_fix 前快照', [{ path: rel, content }]);
+        } catch {
+          // best-effort
+        }
+        fs.writeFileSync(full, fixed, 'utf-8');
+        fixes.push(`Fixed ${rel} (${content.length} → ${fixed.length} bytes)`);
+      }
+
+      const remaining = fs.statSync(target).isDirectory() ? scanProject(target) : scanFile(target);
+      return `Applied fixes:\n${fixes.join('\n') || '(none)'}\n\nRe-scan: ${remaining.length} issue(s) remaining.\n\n${formatIssues(remaining.slice(0, 10))}`;
     }
 
     default:
@@ -350,14 +1064,89 @@ All file operations should use paths relative to the project root.`;
         return;
       }
 
+      // Permission gate
+      const assessment = evaluateToolRisk(toolCall);
+      const trusted = isProjectTrusted(projectId);
+
+      if (assessment.level === 'critical') {
+        logAudit(projectId, toolCall.tool, describeDetail(toolCall), assessment.level, 'blocked');
+        const blockedResult = `[Permission denied] ${assessment.impact}`;
+        res.write(`data: ${JSON.stringify({
+          tool_call: {
+            name: toolCall.tool,
+            args: {
+              command: toolCall.command,
+              path: toolCall.path,
+              query: toolCall.query,
+              message: toolCall.message,
+              repo: toolCall.repo,
+              url: toolCall.url,
+              server: toolCall.server,
+              method: toolCall.method,
+            },
+            result: blockedResult,
+          },
+        })}\n\n`);
+        conversationMessages.push({ role: 'assistant', content: fullResponse });
+        conversationMessages.push({
+          role: 'user',
+          content: `[Tool blocked by permission policy]: ${assessment.impact}\n\nExplain this to the user and suggest a safer alternative.`,
+        });
+        continue;
+      }
+
+      if (assessment.level !== 'none' && !trusted) {
+        const approved = await requestApproval(res, toolCall, assessment);
+        logAudit(projectId, toolCall.tool, describeDetail(toolCall), assessment.level, approved ? 'approved' : 'denied');
+        if (!approved) {
+          const deniedResult = '[Permission denied] 用户拒绝了此操作';
+          res.write(`data: ${JSON.stringify({
+            tool_call: {
+              name: toolCall.tool,
+              args: {
+                command: toolCall.command,
+                path: toolCall.path,
+                query: toolCall.query,
+                message: toolCall.message,
+                repo: toolCall.repo,
+                url: toolCall.url,
+                server: toolCall.server,
+                method: toolCall.method,
+              },
+              result: deniedResult,
+            },
+          })}\n\n`);
+          conversationMessages.push({ role: 'assistant', content: fullResponse });
+          conversationMessages.push({
+            role: 'user',
+            content: `[Tool denied by user] 用户拒绝了 ${toolCall.tool} 操作（${describeDetail(toolCall)}）。请停止该操作，向用户说明，并等待新的指令。`,
+          });
+          continue;
+        }
+      } else {
+        logAudit(projectId, toolCall.tool, describeDetail(toolCall), assessment.level, trusted ? 'trusted' : 'auto');
+      }
+
       // Execute tool
       const toolResult = await executeTool(projectId, toolCall);
 
       // Send tool execution info to client
       res.write(`data: ${JSON.stringify({
-        tool: toolCall.tool,
-        path: toolCall.path || toolCall.query || '',
-        status: 'completed',
+        tool_call: {
+          name: toolCall.tool,
+          args: {
+            path: toolCall.path,
+            query: toolCall.query,
+            content: toolCall.content,
+            command: toolCall.command,
+            message: toolCall.message,
+            repo: toolCall.repo,
+            url: toolCall.url,
+            server: toolCall.server,
+            method: toolCall.method,
+          },
+          result: toolResult,
+        },
       })}\n\n`);
 
       // Add assistant response and tool result to conversation
@@ -474,6 +1263,28 @@ router.get('/analyze-project/:projectId', async (req: express.Request, res: expr
     console.error('Analyze project error:', error);
     res.status(500).json({ error: 'Failed to analyze project' });
   }
+});
+
+/**
+ * POST /api/v1/chat/approval
+ * Body: { requestId: string, approved: boolean }
+ * 客户端在权限确认弹窗中回传用户决定，agent 循环据此继续或中止。
+ */
+router.post('/approval', (req: express.Request, res: express.Response) => {
+  const { requestId, approved } = req.body as { requestId?: string; approved?: boolean };
+  if (!requestId) {
+    res.status(400).json({ error: 'requestId is required' });
+    return;
+  }
+  const pending = pendingApprovals.get(requestId);
+  if (!pending) {
+    res.status(404).json({ error: 'Approval request not found or expired' });
+    return;
+  }
+  pendingApprovals.delete(requestId);
+  clearTimeout(pending.timer);
+  pending.resolve(approved === true);
+  res.json({ success: true });
 });
 
 export default router;

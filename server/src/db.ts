@@ -148,6 +148,19 @@ export async function getDb(): Promise<SqlJsDatabase> {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      action TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      risk_level TEXT NOT NULL DEFAULT 'none',
+      decision TEXT NOT NULL DEFAULT 'auto',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    )
+  `);
+
   saveDb();
   return db;
 }

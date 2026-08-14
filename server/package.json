@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@supabase/supabase-js": "2.95.3",
     "archiver": "^8.0.0",
     "cors": "^2.8.5",
