@@ -7,6 +7,7 @@ import { useThemeColors } from '@/components/ThemeProvider';
 import { spacing, radius, fontSize } from '@/utils/theme';
 import type { ThemeColors } from '@/utils/theme';
 import { FontAwesome6 } from '@expo/vector-icons';
+import OfflineBanner from '@/components/OfflineBanner';
 
 import ProjectsScreen from '@/screens/projects';
 import AgentScreen from '@/screens/agent';
@@ -28,6 +29,13 @@ export default function WorkspaceScreen() {
     AsyncStorage.getItem('synaps.onboarded')
       .then((v) => setOnboarded(v === '1'))
       .catch(() => setOnboarded(true));
+    AsyncStorage.getItem('synaps.lastModule')
+      .then((v) => {
+        if (v === 'projects' || v === 'agent' || v === 'code' || v === 'terminal' || v === 'apk' || v === 'logs' || v === 'github' || v === 'settings') {
+          setActiveModule(v);
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   const finishOnboarding = useCallback((module?: ModuleKey) => {
@@ -46,6 +54,7 @@ export default function WorkspaceScreen() {
 
   const handleModuleChange = useCallback((key: ModuleKey) => {
     setActiveModule(key);
+    AsyncStorage.setItem('synaps.lastModule', key).catch(() => undefined);
   }, []);
 
   const renderModule = () => {
@@ -74,6 +83,7 @@ export default function WorkspaceScreen() {
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['left', 'right']} scrollable>
       <View style={styles.container}>
+        <OfflineBanner />
         {renderModule()}
         <Sidebar
           visible={sidebarVisible}

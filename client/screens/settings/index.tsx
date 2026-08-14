@@ -8,6 +8,8 @@ import { useThemeColors } from '@/components/ThemeProvider';
 import { getApiBase } from '@/utils';
 import { getCrashLogs, clearCrashLogs } from '@/utils/crashReporter';
 import { getDeviceStatus, setDeviceControlEnabled } from '@/utils/deviceControl';
+import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system/legacy';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 
@@ -123,6 +125,62 @@ function EditModal({ visible, title, value, placeholder, secure, onClose, onSave
   );
 }
 
+function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; label: string; detail: string }> {
+  if (!d) return [];
+  const rows: Array<{ ok: boolean; label: string; detail: string }> = [];
+  const backend = d.backend || {};
+  rows.push({
+    ok: backend.status === 'ok',
+    label: '后端服务',
+    detail: `状态 ${backend.status || '未知'} · 端口 ${backend.port ?? '-'} · 运行 ${backend.uptimeSec ?? 0}s · Node ${backend.nodeVersion || '-'}`,
+  });
+  const ai = d.ai || {};
+  rows.push({
+    ok: !!ai.apiKeyConfigured,
+    label: 'AI 模型',
+    detail: `${ai.model || '-'} · ${ai.apiKeyConfigured ? '已配置 Key' : '未配置 Key'}`,
+  });
+  const github = d.github || {};
+  rows.push({
+    ok: !!github.tokenConfigured,
+    label: 'GitHub',
+    detail: `${github.tokenConfigured ? '已配置 Token' : '未配置 Token'} · 自动推送 ${github.autoPush ? '开' : '关'}`,
+  });
+  const termux = d.termux || {};
+  rows.push({
+    ok: !!termux.exists,
+    label: 'Termux',
+    detail: `${termux.path || '-'} · ${termux.exists ? '存在' : '不存在'}`,
+  });
+  const device = d.device || {};
+  rows.push({
+    ok: !!device.enabled,
+    label: '设备控制',
+    detail: device.enabled ? '已启用' : '未启用（设置 → 设备控制）',
+  });
+  const mcp = d.mcp || {};
+  const mcpNames = Array.isArray(mcp.servers) ? (mcp.servers as string[]).join(', ') : '';
+  rows.push({
+    ok: true,
+    label: 'MCP 服务器',
+    detail: `${mcp.count ?? 0} 个${mcpNames ? `（${mcpNames}）` : ''}`,
+  });
+  const harness = d.harness || {};
+  rows.push({
+    ok: !!harness.enabled,
+    label: 'DeepSeek Harness',
+    detail: `${harness.enabled ? '已启用' : '未启用'} · Node ${harness.nodeVersion || '-'} · ${harness.nodeSatisfied ? '版本满足' : '版本过低'}`,
+  });
+  const db = d.db || {};
+  const sizeKb = Math.round((db.fileSizeBytes ?? 0) / 1024);
+  rows.push({
+    ok: true,
+    label: '数据库',
+    detail: `${db.projects ?? 0} 项目 · ${db.agents ?? 0} Agent · ${db.skills ?? 0} 技能 · ${sizeKb} KB`,
+  });
+  return rows;
+}
+
 export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const { colors, isDark, mode, setMode, accent, setAccent } = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -144,6 +202,15 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [mcpFormCommand, setMcpFormCommand] = useState('');
   const [mcpFormArgs, setMcpFormArgs] = useState('');
   const [mcpFormUrl, setMcpFormUrl] = useState('');
+  const [backupModalVisible, setBackupModalVisible] = useState(false);
+  const [backupJson, setBackupJson] = useState('');
+  const [backupSummary, setBackupSummary] = useState('');
+  const [importModalVisible, setImportModalVisible] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
+  const [diagnosticsData, setDiagnosticsData] = useState<Record<string, any> | null>(null);
+  const [guideVisible, setGuideVisible] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -244,6 +311,99 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       { text: '清空', style: 'destructive', onPress: () => clearCrashLogs() },
       { text: '关闭', style: 'cancel' },
     ]);
+  };
+
+  const exportBackup = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/backup/export`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const json = JSON.stringify(data, null, 2);
+      setBackupJson(json);
+      const counts = Object.entries(data.tables || {})
+        .map(([k, v]) => `${k}:${Array.isArray(v) ? v.length : 0}`)
+        .join('  ');
+      setBackupSummary(`共导出 ${counts}`);
+      setBackupModalVisible(true);
+      try {
+        if (FileSystem.documentDirectory) {
+          const uri = FileSystem.documentDirectory + `synaps-backup-${new Date().toISOString().slice(0, 10)}.json`;
+          await FileSystem.writeAsStringAsync(uri, json);
+        }
+      } catch {
+        // 保存文件失败不影响复制
+      }
+    } catch (err) {
+      Alert.alert('导出失败', String(err));
+    }
+  };
+
+  const copyBackup = async () => {
+    await Clipboard.setStringAsync(backupJson);
+    Alert.alert('已复制', '备份 JSON 已复制到剪贴板，可在另一台设备上「导入备份」');
+  };
+
+  const exportLogs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/backup/logs`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const json = JSON.stringify(data, null, 2);
+      setBackupJson(json);
+      setBackupSummary(`审计日志 ${data.auditLogs?.length ?? 0} 条 · 命令历史 ${data.commandHistory?.length ?? 0} 条`);
+      setBackupModalVisible(true);
+      try {
+        if (FileSystem.documentDirectory) {
+          const uri = FileSystem.documentDirectory + `synaps-logs-${new Date().toISOString().slice(0, 10)}.json`;
+          await FileSystem.writeAsStringAsync(uri, json);
+        }
+      } catch {
+        // 保存文件失败不影响复制
+      }
+    } catch (err) {
+      Alert.alert('导出失败', String(err));
+    }
+  };
+
+  const importBackup = async () => {
+    if (!importText.trim()) {
+      Alert.alert('提示', '请粘贴备份 JSON 内容');
+      return;
+    }
+    setImporting(true);
+    try {
+      const parsed = JSON.parse(importText);
+      const payload = parsed.tables ? parsed : { data: parsed };
+      const res = await fetch(`${API_BASE}/api/v1/backup/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'HTTP ' + res.status);
+      const counts = Object.entries(result.counts || {})
+        .map(([k, v]) => `${k}:${v}`)
+        .join('  ');
+      setImportModalVisible(false);
+      setImportText('');
+      Alert.alert('导入成功', `已恢复数据：${counts}`);
+    } catch (err) {
+      Alert.alert('导入失败', String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const runDiagnostics = async () => {
+    setDiagnosticsData(null);
+    setDiagnosticsVisible(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/diagnostics`);
+      const data = await res.json();
+      setDiagnosticsData(data);
+    } catch (err) {
+      setDiagnosticsData({ error: String(err) });
+    }
   };
 
   const toggleTrust = async (projectId: string) => {
@@ -737,6 +897,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           {/* 诊断 */}
           <Text style={styles.groupTitle}>诊断</Text>
           <View style={styles.group}>
+            <Pressable style={styles.settingItem} onPress={runDiagnostics}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="stethoscope" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>一键自检</Text>
+              <Text style={styles.settingValue}>运行</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
             <Pressable style={styles.settingItem} onPress={handleShowCrashLogs}>
               <View style={styles.settingIcon}>
                 <FontAwesome6 name="bug" size={14} color={colors.primary} />
@@ -745,6 +913,40 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               <Text style={styles.settingValue}>查看</Text>
               <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
             </Pressable>
+          </View>
+
+          {/* 数据备份 */}
+          <Text style={styles.groupTitle}>数据备份</Text>
+          <View style={styles.group}>
+            <Pressable style={styles.settingItem} onPress={exportBackup}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="file-export" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>导出完整备份</Text>
+              <Text style={styles.settingValue}>JSON</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={() => { setImportText(''); setImportModalVisible(true); }}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="file-import" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>导入备份</Text>
+              <Text style={styles.settingValue}>粘贴 JSON</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <Pressable style={styles.settingItem} onPress={exportLogs}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="file-lines" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>导出日志</Text>
+              <Text style={styles.settingValue}>JSON</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
+            <View style={styles.settingHint}>
+              <Text style={styles.settingHintText}>
+                备份包含项目、对话、设置、技能、Agent 上下文与审计日志，可用于换机迁移或恢复。
+              </Text>
+            </View>
           </View>
 
           {/* Security */}
@@ -873,8 +1075,16 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <FontAwesome6 name="circle-info" size={14} color={colors.primary} />
               </View>
               <Text style={styles.settingLabel}>版本</Text>
-              <Text style={styles.settingValue}>v1.0.0</Text>
+              <Text style={styles.settingValue}>v1.1.0</Text>
             </View>
+            <Pressable style={styles.settingItem} onPress={() => setGuideVisible(true)}>
+              <View style={styles.settingIcon}>
+                <FontAwesome6 name="book" size={14} color={colors.primary} />
+              </View>
+              <Text style={styles.settingLabel}>使用指南</Text>
+              <Text style={styles.settingValue}>查看</Text>
+              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
+            </Pressable>
             <Pressable style={styles.settingItem} onPress={handleClearCache}>
               <View style={[styles.settingIcon, styles.settingIconDanger]}>
                 <FontAwesome6 name="trash" size={14} color={colors.error} />
@@ -886,6 +1096,119 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
           <View style={{ height: 40 }} />
         </ScrollView>
+
+        {/* 备份导出结果 Modal */}
+        <Modal visible={backupModalVisible} transparent animationType="fade" onRequestClose={() => setBackupModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>导出成功</Text>
+              <Text style={styles.modalEmptyText}>{backupSummary}</Text>
+              <Text style={styles.modalHint}>
+                文件已保存到应用文档目录（synaps-backup-*.json / synaps-logs-*.json），也可点击「复制 JSON」后粘贴到其它设备的「导入备份」。
+              </Text>
+              <View style={styles.modalButtons}>
+                <Pressable style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setBackupModalVisible(false)}>
+                  <Text style={styles.modalBtnText}>关闭</Text>
+                </Pressable>
+                <Pressable style={[styles.modalBtn, styles.modalBtnSave]} onPress={copyBackup}>
+                  <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>复制 JSON</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 导入备份 Modal */}
+        <Modal visible={importModalVisible} transparent animationType="fade" onRequestClose={() => setImportModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>导入备份</Text>
+              <TextInput
+                style={[styles.modalInput, { minHeight: 160, textAlignVertical: 'top' }]}
+                placeholder={'粘贴完整的备份 JSON（{"meta":...,"tables":{...}}）'}
+                placeholderTextColor={colors.textMuted}
+                value={importText}
+                onChangeText={setImportText}
+                multiline
+                autoCapitalize="none"
+              />
+              <Text style={styles.modalHint}>导入会覆盖当前全部数据，建议先导出一次备份。</Text>
+              <View style={styles.modalButtons}>
+                <Pressable style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setImportModalVisible(false)}>
+                  <Text style={styles.modalBtnText}>取消</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modalBtn, styles.modalBtnSave, importing && styles.modalBtnDisabled]}
+                  onPress={importBackup}
+                  disabled={importing}
+                >
+                  <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>{importing ? '导入中...' : '导入'}</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 一键自检 Modal */}
+        <Modal visible={diagnosticsVisible} transparent animationType="fade" onRequestClose={() => setDiagnosticsVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>一键自检</Text>
+              {!diagnosticsData ? (
+                <Text style={styles.modalEmptyText}>运行中...</Text>
+              ) : diagnosticsData.error ? (
+                <Text style={styles.modalEmptyText}>自检失败：{diagnosticsData.error}</Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 380 }}>
+                  {renderDiagnostics(diagnosticsData).map((row, i) => (
+                    <View key={i} style={styles.diagItem}>
+                      <Text style={[styles.diagStatus, row.ok ? styles.diagOk : styles.diagBad]}>{row.ok ? '✓' : '✗'}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.diagLabel}>{row.label}</Text>
+                        <Text style={styles.diagDetail}>{row.detail}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+              <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setDiagnosticsVisible(false)}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>关闭</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 使用指南 Modal */}
+        <Modal visible={guideVisible} transparent animationType="fade" onRequestClose={() => setGuideVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>使用指南</Text>
+              <ScrollView style={{ maxHeight: 420 }}>
+                <Text style={styles.guideSection}>快速开始</Text>
+                <Text style={styles.guideText}>1. 在「项目」页新建或导入项目（可用模板一键生成骨架）</Text>
+                <Text style={styles.guideText}>2. 进入「Agent」页与 AI 对话，直接描述开发任务</Text>
+                <Text style={styles.guideText}>3. Agent 会自动读写代码、执行命令、验证结果并推送</Text>
+                <Text style={styles.guideSection}>核心能力</Text>
+                <Text style={styles.guideText}>· 执行命令 / 运行程序 / Git 操作 / 触发构建 / 安装 APK</Text>
+                <Text style={styles.guideText}>· 独立 Agent：10 种角色，各有专属上下文与工具白名单</Text>
+                <Text style={styles.guideText}>· 设备控制：开启无障碍后 Agent 可点击、滑动、截图、读屏</Text>
+                <Text style={styles.guideText}>· MCP 服务器：接入 GitHub / Jira / Slack 等外部工具</Text>
+                <Text style={styles.guideSection}>修复闭环</Text>
+                <Text style={styles.guideText}>说「修复我」或「检查代码并修复」，Agent 会自动执行 lint → 类型检查 → 安全扫描 → 测试 → 提交 → 构建 → 安装。</Text>
+                <Text style={styles.guideSection}>常见问题</Text>
+                <Text style={styles.guideText}>· 顶部出现离线横幅：说明内嵌后端未启动，Agent / 终端功能不可用</Text>
+                <Text style={styles.guideText}>· 工具调用无响应：运行「一键自检」查看配置，确认 AI Key 已填写</Text>
+                <Text style={styles.guideText}>· 换机迁移：设置 → 数据备份 → 导出完整备份，另一台设备导入</Text>
+                <Text style={styles.guideSection}>更新日志</Text>
+                <Text style={styles.guideText}>v1.1.0 · 项目模板、全量备份导入导出、一键自检、离线提示、使用指南</Text>
+                <Text style={styles.guideText}>v1.0.0 · 双栏任务面板、独立 Agent 架构、设备控制、DeepSeek Harness</Text>
+              </ScrollView>
+              <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setGuideVisible(false)}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>关闭</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
 
         {/* Edit Modal */}
         <EditModal
@@ -1393,5 +1716,52 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   transportBtnTextActive: {
     color: colors.primary,
+  },
+  modalBtnDisabled: {
+    opacity: 0.5,
+  },
+  diagItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.separator,
+  },
+  diagStatus: {
+    width: 20,
+    fontSize: fontSize.md,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  diagOk: {
+    color: colors.success,
+  },
+  diagBad: {
+    color: colors.error,
+  },
+  diagLabel: {
+    fontSize: fontSize.sm,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  diagDetail: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  guideSection: {
+    fontSize: fontSize.sm,
+    color: colors.primary,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  guideText: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: 19,
+    marginBottom: 4,
   },
 });

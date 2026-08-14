@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { getDb, queryAll, queryOne, runSql } from '../db.js';
+import { listProjectTemplates, scaffoldProject } from '../templates.js';
 
 const router = Router();
 
@@ -43,6 +44,15 @@ router.get('/recent', async (req, res) => {
 });
 
 /**
+ * GET /api/v1/projects/templates
+ * 列出可用的项目模板
+ */
+router.get('/templates', async (_req, res) => {
+  await getDb();
+  res.json({ templates: listProjectTemplates() });
+});
+
+/**
  * GET /api/v1/projects/:id
  * Path 参数：id: string
  */
@@ -62,17 +72,26 @@ router.get('/:id', async (req, res) => {
 
 /**
  * POST /api/v1/projects
- * Body 参数：name: string, path: string, description?: string
+ * Body 参数：name: string, path: string, description?: string, template?: string
  */
 router.post('/', async (req, res) => {
   await getDb();
-  const { name, path: projectPath, description } = req.body;
+  const { name, path: projectPath, description, template } = req.body;
 
   if (!name || typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
   }
   if (!projectPath || typeof projectPath !== 'string' || !projectPath.trim()) {
     return res.status(400).json({ error: 'Path is required' });
+  }
+
+  const templateId = typeof template === 'string' && template.trim() ? template.trim() : 'blank';
+  let scaffold;
+  if (templateId !== 'blank') {
+    scaffold = scaffoldProject(projectPath.trim(), templateId, name.trim());
+    if (scaffold.created.length === 0 && scaffold.skipped.length === 0) {
+      return res.status(400).json({ error: `Unknown template: ${templateId}` });
+    }
   }
 
   const id = randomUUID();
@@ -82,7 +101,7 @@ router.post('/', async (req, res) => {
   );
 
   const project = queryOne(`SELECT * FROM projects WHERE id = ?`, [id]);
-  res.status(201).json({ project });
+  res.status(201).json({ project, scaffold: scaffold || { created: [], skipped: [] } });
 });
 
 /**

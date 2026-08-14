@@ -94,6 +94,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'device_status':
     case 'agent_list':
     case 'agent_status':
+    case 'system_diagnostics':
       return { level: 'none', impact: '只读分析操作，无副作用' };
     case 'write_file':
       return {

@@ -19,6 +19,7 @@ import {
 } from '../device.js';
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
+import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
 import {
   getAgentTemplate,
   createAgentInstance,
@@ -85,6 +86,7 @@ You have access to tools that let you interact with the project files:
 - harness_status: Check whether DeepSeek Harness is available (returns Node version, config status). Read-only.
 - harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
 - device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
+- system_diagnostics: Run a full self-check of the Synaps environment (Node version, AI API key, Termux path, device control, MCP servers, Harness, DB stats). Read-only, returns a summary with recommended fixes.
 - agent_list: List agent instances for the current session (id/type/name/status/context length). Read-only.
 - agent_create: Create a new agent instance (args: type one of scheduler/code_engineer/file_manager/search_assistant/general_chat/automator/ui_operator/researcher/translator/memory_admin, name optional). Medium risk, requires confirmation.
 - agent_delegate: Delegate a task to a sub-agent by type (args: type + task). The sub-agent answers with its own role prompt; useful for specialized opinions (review, research, translation). Medium risk.
@@ -1688,6 +1690,15 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
 
     case 'device_status': {
       return deviceStatusSummary();
+    }
+
+    case 'system_diagnostics': {
+      try {
+        await getDb();
+        return diagnosticsToText(runDiagnostics());
+      } catch (err) {
+        return 'Error: diagnostics failed: ' + String(err);
+      }
     }
 
     case 'device_action': {

@@ -89,6 +89,8 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
   const [formName, setFormName] = useState('');
   const [formPath, setFormPath] = useState('');
   const [formDesc, setFormDesc] = useState('');
+  const [formTemplate, setFormTemplate] = useState('blank');
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string; icon: string; description: string }>>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchProjects = useCallback(async () => {
@@ -104,10 +106,21 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
     }
   }, [searchQuery]);
 
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/projects/templates`);
+      const data = await response.json();
+      setTemplates(data.templates || []);
+    } catch {
+      // 模板获取失败时静默，默认空白模板
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       fetchProjects();
-    }, [fetchProjects])
+      fetchTemplates();
+    }, [fetchProjects, fetchTemplates])
   );
 
   const handleAdd = () => {
@@ -115,6 +128,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
     setFormName('');
     setFormPath('');
     setFormDesc('');
+    setFormTemplate('blank');
     setModalVisible(true);
   };
 
@@ -189,6 +203,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
             name: formName.trim(),
             path: formPath.trim(),
             description: formDesc.trim(),
+            template: formTemplate,
           }),
         });
       }
@@ -320,6 +335,33 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
                     onChangeText={setFormPath}
                     autoCapitalize="none"
                   />
+
+                  {!editingProject && (
+                    <>
+                      <Text style={styles.label}>项目模板</Text>
+                      <View style={styles.templateRow}>
+                        {templates.map((t) => (
+                          <Pressable
+                            key={t.id}
+                            style={[styles.templateChip, formTemplate === t.id && styles.templateChipActive]}
+                            onPress={() => setFormTemplate(t.id)}
+                          >
+                            <Text style={[styles.templateChipText, formTemplate === t.id && styles.templateChipTextActive]}>
+                              {t.name}
+                            </Text>
+                          </Pressable>
+                        ))}
+                        {templates.length === 0 && (
+                          <Text style={styles.templateHint}>模板加载中...</Text>
+                        )}
+                      </View>
+                      {formTemplate !== 'blank' && (
+                        <Text style={styles.templateHint}>
+                          {templates.find((t) => t.id === formTemplate)?.description || '将在项目路径下生成基础骨架文件'}
+                        </Text>
+                      )}
+                    </>
+                  )}
 
                   <Text style={styles.label}>描述（可选）</Text>
                   <TextInput
@@ -586,5 +628,37 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     color: '#FFFFFF',
     fontSize: fontSize.md,
     fontWeight: '600',
+  },
+  templateRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  templateChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgElevated,
+  },
+  templateChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryGlow,
+  },
+  templateChipText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  templateChipTextActive: {
+    color: colors.primary,
+  },
+  templateHint: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+    lineHeight: 15,
   },
 });
