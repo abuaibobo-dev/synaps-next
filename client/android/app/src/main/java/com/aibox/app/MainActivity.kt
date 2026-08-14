@@ -12,6 +12,8 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+  private var nodeServiceStarted = false
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
@@ -21,10 +23,20 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
-    try {
-      startService(android.content.Intent(this, com.aibox.app.node.NodeService::class.java))
-    } catch (t: Throwable) {
-      android.util.Log.e("SYNAPS_NODE", "failed to start NodeService", t)
+  }
+
+  // Start the embedded Node server once the activity is actually resumed
+  // (foreground). Starting in onCreate is racy on Android 16: the system can
+  // reject it with "Background start not allowed".
+  override fun onResume() {
+    super.onResume()
+    if (!nodeServiceStarted) {
+      nodeServiceStarted = true
+      try {
+        startService(android.content.Intent(this, com.aibox.app.node.NodeService::class.java))
+      } catch (t: Throwable) {
+        android.util.Log.e("SYNAPS_NODE", "failed to start NodeService", t)
+      }
     }
   }
 
@@ -64,7 +76,7 @@ class MainActivity : ReactActivity() {
       }
 
       // Use the default back button implementation on Android S
-      // because it's doing more than [Activity.moveTaskToBack] in fact.
+      // because it's doing more than Activity.moveTaskToBack in fact.
       super.invokeDefaultOnBackPressed()
   }
 }
