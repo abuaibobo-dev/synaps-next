@@ -7,7 +7,7 @@
 
 ## 嵌入式 Node 集成（nodejs-mobile）
 - `client/android/app/build.gradle`
-  - `downloadNodejs`（preBuild）：从 nodejs-mobile v18.20.4 release 下载预编译包（MD5 校验），解压到 `app/libnode/`（.gitignore 忽略）
+  - `downloadNodejs`（preBuild）：从本仓库 `nodejs-mobile-r27` release 下载 NDK r27（clang 18）重编译的 libnode（与 RN libc++ ABI 兼容，MD5 校验），解压到 `app/libnode/`（.gitignore 忽略）
   - `copyNodeProject`（preBuild）：`node server/build.js` 重新打包 server → 复制 `dist/index.cjs` + `sql-wasm.wasm` 到 `app/src/main/assets/nodejs-project/`，并生成入口 `main.cjs`（先设 `SYNAPS_DATA_DIR` 再加载 server）
 - `client/android/app/src/main/cpp/`：CMake + native-lib.cpp（JNI 桥，`node::Start`，stdout/stderr 重定向 logcat）
 - `client/android/app/src/main/java/com/aibox/app/node/NodeBridge.kt`：assets 复制 + 单线程启动
