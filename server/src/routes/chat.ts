@@ -51,6 +51,9 @@ You have access to tools that let you interact with the project files:
 - team_test: QA role — run the test suite and analyze failures
 - team_review: REVIEWER role — review changes (lint/typecheck/security/diff) and decide pass/fail
 - team_status: Show the current team plan and step progress
+- skill_deps: Check a skill's declared dependencies (dependsOn skills, MCP servers, packages, env vars). Args: query "skill name"
+- project_export: Export the project config as a standardized AgentPack JSON (settings, trusted projects, MCP servers, installed tools, skills)
+- project_import: Import an AgentPack JSON to restore/migrate a project config (args: params.config with the JSON string). Medium risk, requires confirmation
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -83,6 +86,11 @@ When the user asks you to "fix" or "repair" the project (e.g. "修复我", "检�
 9. When the APK artifact is ready, run download_and_install with the artifact download URL
 
 Explain each step before calling a tool. If a tool is blocked or denied by the permission system, stop and tell the user.
+
+## Agent Infrastructure
+- Skills can declare dependencies in their metadata: dependsOn (skill names), mcp (server configs), packages (tool packages), env (setting keys).
+- Use skill_deps to verify a skill's dependencies before relying on it; install missing packages with install_tool, register missing MCP servers with mcp_add_server.
+- project_export produces a portable AgentPack; project_import restores it on another device/project.
 
 ## Team Mode
 When the user asks to develop a feature (e.g. "开发一个登录模块" or "实现一个功能"), organize a software team:
@@ -1429,6 +1437,164 @@ async function executeTool(projectId: string, toolCall: ToolCall): Promise<strin
       return `Task: ${plan.title} (${done}/${plan.tasks.length} done${failed ? `, ${failed} failed` : ''})\n\n${plan.tasks
         .map((t) => `${t.status === 'done' ? '✅' : t.status === 'failed' ? '❌' : '⬜'} ${t.step}. [${t.role}] ${t.title}${t.detail ? ` — ${t.detail}` : ''}`)
         .join('\n')}`;
+    }
+
+    case 'skill_deps': {
+      const skillName = toolCall.query;
+      if (!skillName) return 'Error: query (skill name) is required';
+      const row = queryOne('SELECT name, description, metadata FROM skills WHERE name = ?', [skillName]) as Record<string, string> | null;
+      if (!row) return `Skill "${skillName}" not found. Use list_skills to see available skills.`;
+      let metadata: Record<string, any> = {};
+      try {
+        metadata = JSON.parse(row.metadata || '{}');
+      } catch {
+        // treat as empty
+      }
+
+      const report: string[] = [`Skill: ${skillName}`, ''];
+      let missing = 0;
+
+      const dependsOn = Array.isArray(metadata.dependsOn) ? metadata.dependsOn.filter((d: unknown) => typeof d === 'string') : [];
+      if (dependsOn.length > 0) {
+        report.push(`Dependency skills (${dependsOn.length}):`);
+        for (const dep of dependsOn) {
+          const depRow = queryOne('SELECT enabled FROM skills WHERE name = ?', [dep]) as Record<string, number> | null;
+          if (depRow && depRow.enabled === 1) {
+            report.push(`  ✅ ${dep}`);
+          } else {
+            report.push(`  ❌ ${dep} (missing or disabled)`);
+            missing++;
+          }
+        }
+      }
+
+      const mcp = Array.isArray(metadata.mcp) ? metadata.mcp : [];
+      if (mcp.length > 0) {
+        report.push(`MCP servers (${mcp.length}):`);
+        const servers = getMcpServers();
+        for (const cfg of mcp) {
+          const name = cfg && typeof cfg === 'object' && typeof (cfg as any).name === 'string' ? (cfg as any).name : '?';
+          if (servers.some((sv) => sv.name === name)) {
+            report.push(`  ✅ ${name}`);
+          } else {
+            report.push(`  ❌ ${name} (not configured)`);
+            missing++;
+          }
+        }
+      }
+
+      const packages = Array.isArray(metadata.packages) ? metadata.packages.filter((p: unknown) => typeof p === 'string') : [];
+      if (packages.length > 0) {
+        report.push(`Packages (${packages.length}):`);
+        const toolsRow = queryOne('SELECT value FROM settings WHERE key = ?', ['installed_tools']);
+        let installed: string[] = [];
+        try {
+          const parsed = JSON.parse(toolsRow && typeof toolsRow.value === 'string' ? toolsRow.value : '[]');
+          if (Array.isArray(parsed)) installed = parsed.filter((x: unknown) => typeof x === 'string');
+        } catch {
+          // empty
+        }
+        for (const pkg of packages) {
+          if (installed.includes(pkg)) {
+            report.push(`  ✅ ${pkg}`);
+          } else {
+            report.push(`  ❌ ${pkg} (not installed)`);
+            missing++;
+          }
+        }
+      }
+
+      const envKeys = Array.isArray(metadata.env) ? metadata.env.filter((e: unknown) => typeof e === 'string') : [];
+      if (envKeys.length > 0) {
+        report.push(`Env/settings (${envKeys.length}):`);
+        for (const key of envKeys) {
+          const val = queryOne('SELECT value FROM settings WHERE key = ?', [key]) as Record<string, string> | null;
+          if (val && typeof val.value === 'string' && val.value) {
+            report.push(`  ✅ ${key}`);
+          } else {
+            report.push(`  ❌ ${key} (not configured)`);
+            missing++;
+          }
+        }
+      }
+
+      if (missing === 0) {
+        report.push('', 'All dependencies satisfied.');
+      } else {
+        report.push('', `${missing} missing dependency(ies). Use install_tool / mcp_add_server / Settings to resolve them.`);
+      }
+      return report.join('\n');
+    }
+
+    case 'project_export': {
+      const project = queryOne('SELECT id, name, path FROM projects WHERE id = ?', [projectId]) as Record<string, string> | null;
+      const settings: Record<string, string> = {};
+      const keys = ['ai_model', 'ai_base_url', 'ai_model_base_url', 'github_token', 'github_auto_push', 'termux_path', 'build_method', 'snapshot_enabled', 'diff_review_enabled', 'trusted_projects', 'mcp_servers', 'installed_tools'];
+      for (const key of keys) {
+        const row = queryOne('SELECT value FROM settings WHERE key = ?', [key]) as Record<string, string> | null;
+        if (row && typeof row.value === 'string') settings[key] = row.value;
+      }
+      const skills = queryAll('SELECT name, description, content, metadata, source, enabled FROM skills ORDER BY name') as Record<string, unknown>[];
+
+      const pack = {
+        format: 'synaps-agentpack',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        project: project ? { id: project.id, name: project.name, path: project.path } : null,
+        settings,
+        skills,
+      };
+      return `AgentPack export (${JSON.stringify(pack).length} bytes):\n\n\`\`\`json\n${JSON.stringify(pack, null, 2).slice(0, 20000)}\n\`\`\``;
+    }
+
+    case 'project_import': {
+      const rawConfig = typeof toolCall.params?.config === 'string' ? toolCall.params.config : '';
+      if (!rawConfig.trim()) return 'Error: params.config (AgentPack JSON string) is required';
+      let pack: any;
+      try {
+        pack = JSON.parse(rawConfig);
+      } catch {
+        return 'Error: params.config is not valid JSON';
+      }
+      if (pack.format !== 'synaps-agentpack') {
+        return `Error: not a Synaps AgentPack (format: ${pack.format || 'unknown'})`;
+      }
+
+      const applied: string[] = [];
+      if (pack.settings && typeof pack.settings === 'object') {
+        for (const [key, value] of Object.entries(pack.settings)) {
+          if (typeof value !== 'string') continue;
+          runSql(
+            `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+            [key, value]
+          );
+        }
+        applied.push(`settings: ${Object.keys(pack.settings).length} keys`);
+      }
+      if (Array.isArray(pack.skills)) {
+        let imported = 0;
+        for (const item of pack.skills) {
+          if (!item || typeof item.name !== 'string' || typeof item.content !== 'string') continue;
+          const id = `import_${crypto.randomUUID()}`;
+          runSql(
+            `INSERT INTO skills (id, name, description, content, metadata, source, enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+               description = excluded.description,
+               content = excluded.content,
+               metadata = excluded.metadata,
+               source = excluded.source,
+               enabled = excluded.enabled,
+               updated_at = datetime('now')`,
+            [id, item.name, item.description || '', item.content, JSON.stringify(item.metadata || {}), item.source || '', item.enabled === 1 || item.enabled === true ? 1 : 1]
+          );
+          imported++;
+        }
+        applied.push(`skills: ${imported}`);
+      }
+      saveDb();
+      return `AgentPack imported successfully.\n\nApplied: ${applied.join(', ')}.`;
     }
 
     default:
