@@ -12,7 +12,9 @@ export type AppIconName =
   // 控制按钮
   | 'x' | 'rotate-cw' | 'undo' | 'download' | 'chevron-down' | 'chevron-up'
   | 'stop' | 'spinner' | 'file-pen' | 'quote-left' | 'microchip' | 'bars'
-  | 'copy' | 'share-2' | 'bolt' | 'file-export' | 'file-import';
+  | 'copy' | 'share-2' | 'bolt' | 'file-export' | 'file-import'
+  | 'chevron-left' | 'user' | 'key' | 'info' | 'plug' | 'database'
+  | 'refresh-cw' | 'trash-2' | 'lock' | 'palette' | 'plus' | 'chevron-right';
 
 // Feather 线性图标（统一线条风格），缺失的少量图标用 FontAwesome6 兜底
 const FEATHER_NAMES: Partial<Record<AppIconName, keyof typeof Feather.glyphMap>> = {
@@ -43,6 +45,16 @@ const FEATHER_NAMES: Partial<Record<AppIconName, keyof typeof Feather.glyphMap>>
   'share-2': 'share-2',
   bolt: 'zap',
   box: 'box',
+  'chevron-left': 'chevron-left',
+  user: 'user',
+  key: 'key',
+  info: 'info',
+  database: 'database',
+  'refresh-cw': 'refresh-cw',
+  'trash-2': 'trash-2',
+  lock: 'lock',
+  plus: 'plus',
+  'chevron-right': 'chevron-right',
 };
 
 const FA6_FALLBACK: Partial<Record<AppIconName, React.ComponentProps<typeof FontAwesome6>['name']>> = {
@@ -58,6 +70,8 @@ const FA6_FALLBACK: Partial<Record<AppIconName, React.ComponentProps<typeof Font
   bars: 'bars',
   'file-export': 'file-export',
   'file-import': 'file-import',
+  palette: 'palette',
+  plug: 'plug',
 };
 
 interface AppIconProps {

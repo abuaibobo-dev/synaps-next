@@ -1,18 +1,31 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert, Modal, Switch, Platform, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput } from 'react-native';
+import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
+import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
 import type { ThemeColors, AccentKey } from '@/utils/theme';
 import { useThemeColors } from '@/components/ThemeProvider';
+import type { ThemeMode } from '@/components/ThemeProvider';
 import { getApiBase } from '@/utils';
 import { getCrashLogs, clearCrashLogs } from '@/utils/crashReporter';
 import { getDeviceStatus, setDeviceControlEnabled } from '@/utils/deviceControl';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
-const API_BASE = getApiBase();
-import { FontAwesome6 } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
+import {
+  settingsColors,
+  SettingsGroup,
+  SettingRow,
+  UnderlineInput,
+  AnimatedToggle,
+  SegmentControl,
+  DANGER_COLOR,
+  type SettingColors,
+} from '@/components/SettingControls';
 
+const API_BASE = getApiBase();
 
 interface SettingsScreenProps {
   onOpenSidebar: () => void;
@@ -38,6 +51,9 @@ interface Settings {
   harness_model: string;
   harness_api_key: string;
   harness_base_url: string;
+  account_name: string;
+  project_root: string;
+  font_scale: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -60,6 +76,9 @@ const DEFAULT_SETTINGS: Settings = {
   harness_model: 'deepseek-chat',
   harness_api_key: '',
   harness_base_url: '',
+  account_name: 'Synaps 用户',
+  project_root: '/storage/emulated/0/Synaps',
+  font_scale: 'medium',
 };
 
 interface McpServer {
@@ -77,53 +96,44 @@ interface SkillItem {
   enabled: number;
 }
 
-interface EditModalProps {
-  visible: boolean;
-  title: string;
-  value: string;
-  placeholder?: string;
-  secure?: boolean;
-  onClose: () => void;
-  onSave: (value: string) => void;
-}
+type SectionKey = 'account' | 'ai' | 'dev' | 'appearance' | 'security' | 'skills' | 'storage' | 'about';
+type ProviderKey = 'deepseek' | 'openai' | 'custom';
+type FontKey = 'small' | 'medium' | 'large';
 
-function EditModal({ visible, title, value, placeholder, secure, onClose, onSave }: EditModalProps) {
-  const { colors } = useThemeColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const [inputValue, setInputValue] = useState(value);
+const MODE_OPTIONS: Array<{ key: ThemeMode; label: string }> = [
+  { key: 'system', label: '跟随系统' },
+  { key: 'light', label: '浅色' },
+  { key: 'dark', label: '深色' },
+];
 
-  useEffect(() => {
-    setInputValue(value);
-  }, [value]);
+const MODE_LABEL: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' };
 
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>{title}</Text>
-          <TextInput
-            style={styles.modalInput}
-            value={inputValue}
-            onChangeText={setInputValue}
-            placeholder={placeholder}
-            placeholderTextColor={colors.textMuted}
-            secureTextEntry={secure}
-            multiline={false}
-            autoCapitalize="none"
-          />
-          <View style={styles.modalButtons}>
-            <Pressable style={[styles.modalBtn, styles.modalBtnCancel]} onPress={onClose}>
-              <Text style={styles.modalBtnText}>取消</Text>
-            </Pressable>
-            <Pressable style={[styles.modalBtn, styles.modalBtnSave]} onPress={() => onSave(inputValue)}>
-              <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>保存</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
+const PROVIDER_OPTIONS: Array<{ key: ProviderKey; label: string }> = [
+  { key: 'deepseek', label: 'DeepSeek' },
+  { key: 'openai', label: 'OpenAI' },
+  { key: 'custom', label: '自定义' },
+];
+
+const FONT_OPTIONS: Array<{ key: FontKey; label: string }> = [
+  { key: 'small', label: '小' },
+  { key: 'medium', label: '标准' },
+  { key: 'large', label: '大' },
+];
+
+const BUILD_OPTIONS: Array<{ key: 'github_actions' | 'local'; label: string }> = [
+  { key: 'github_actions', label: 'GitHub Actions' },
+  { key: 'local', label: '本地构建' },
+];
+
+const CONTEXT_LIMITS: Record<string, string> = {
+  'deepseek-chat': '128K',
+  'deepseek-reasoner': '128K',
+  'gpt-4o': '128K',
+  'gpt-4o-mini': '128K',
+  'gpt-4.1': '1M',
+  'claude-3-5-sonnet': '200K',
+  'claude-3-7-sonnet': '200K',
+};
 
 function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; label: string; detail: string }> {
   if (!d) return [];
@@ -156,7 +166,7 @@ function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; 
   rows.push({
     ok: !!device.enabled,
     label: '设备控制',
-    detail: device.enabled ? '已启用' : '未启用（设置 → 设备控制）',
+    detail: device.enabled ? '已启用' : '未启用（设置 → 开发环境 → 设备控制）',
   });
   const mcp = d.mcp || {};
   const mcpNames = Array.isArray(mcp.servers) ? (mcp.servers as string[]).join(', ') : '';
@@ -181,11 +191,62 @@ function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; 
   return rows;
 }
 
+function FieldRow({
+  label,
+  sc,
+  styles,
+  last,
+  children,
+}: {
+  label: string;
+  sc: SettingColors;
+  styles: ReturnType<typeof createStyles>;
+  last?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View
+      style={[
+        styles.fieldRow,
+        !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: sc.separator },
+      ]}
+    >
+      <Text style={[styles.fieldLabel, { color: sc.label }]}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
+function SubPageHeader({
+  title,
+  onBack,
+  bar,
+  colors,
+  styles,
+}: {
+  title: string;
+  onBack: () => void;
+  bar: string;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={styles.subHeader}>
+      <Pressable onPress={onBack} hitSlop={10} style={styles.backBtn}>
+        <AppIcon name="chevron-left" size={22} color={bar} />
+      </Pressable>
+      <Text style={[styles.subHeaderTitle, { color: colors.textPrimary }]}>{title}</Text>
+    </View>
+  );
+}
+
 export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const { colors, isDark, mode, setMode, accent, setAccent } = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const sc = useMemo(() => settingsColors(colors, isDark), [colors, isDark]);
+  const bar = useMemo(() => (isDark ? '#7C3AED' : colors.primary), [colors, isDark]);
+  const [section, setSection] = useState<SectionKey | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [editKey, setEditKey] = useState<keyof Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [trustedProjects, setTrustedProjects] = useState<string[]>([]);
@@ -211,6 +272,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
   const [diagnosticsData, setDiagnosticsData] = useState<Record<string, any> | null>(null);
   const [guideVisible, setGuideVisible] = useState(false);
+  const [balance, setBalance] = useState<{ balance: number; available: boolean; message?: string } | null>(null);
+  const [storageSize, setStorageSize] = useState('计算中...');
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -229,6 +292,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+
   const fetchPermissionData = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/projects`);
@@ -254,6 +318,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchPermissionData();
   }, [fetchPermissionData]);
+
   const fetchMcpAndSkills = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/settings`);
@@ -280,7 +345,42 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     fetchMcpAndSkills();
   }, [fetchMcpAndSkills]);
 
-  const updateSetting = async (key: keyof Settings, value: string) => {
+  const fetchBalance = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/balance`);
+      if (res.ok) setBalance(await res.json());
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBalance();
+  }, [fetchBalance]);
+
+  const calcStorage = useCallback(async () => {
+    setStorageSize('计算中...');
+    try {
+      const dir = FileSystem.documentDirectory;
+      if (!dir) {
+        setStorageSize('未知');
+        return;
+      }
+      let bytes = 0;
+      const entries = await FileSystem.readDirectoryAsync(dir);
+      for (const name of entries) {
+        const f = await FileSystem.getInfoAsync(dir + name);
+        if (f.exists && 'size' in f) bytes += Number(f.size || 0);
+      }
+      if (bytes > 1024 * 1024) setStorageSize(`${(bytes / 1024 / 1024).toFixed(1)} MB`);
+      else if (bytes > 1024) setStorageSize(`${(bytes / 1024).toFixed(0)} KB`);
+      else setStorageSize(`${bytes} B`);
+    } catch {
+      setStorageSize('未知');
+    }
+  }, []);
+
+  const updateSetting = useCallback(async (key: keyof Settings, value: string): Promise<boolean> => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/settings`, {
         method: 'PUT',
@@ -288,20 +388,34 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         body: JSON.stringify({ [key]: value }),
       });
       if (res.ok) {
-        setSettings(prev => ({ ...prev, [key]: value }));
+        setSettings((prev) => ({ ...prev, [key]: value }));
+        return true;
       }
+      return false;
     } catch (error) {
       console.error('Failed to update setting:', error);
       Alert.alert('错误', '保存设置失败');
+      return false;
     }
-  };
+  }, []);
 
-  const handleToggle = (key: keyof Settings) => {
-    const currentValue = settings[key] === 'true';
-    updateSetting(key, (!currentValue).toString());
-  };
+  const saveSetting = useCallback(
+    async (key: keyof Settings, value: string) => {
+      const ok = await updateSetting(key, value);
+      if (ok) Toast.show({ type: 'success', text1: '已保存' });
+    },
+    [updateSetting]
+  );
 
-  const handleShowCrashLogs = async () => {
+  const handleToggle = useCallback(
+    (key: keyof Settings) => {
+      const currentValue = settings[key] === 'true';
+      updateSetting(key, (!currentValue).toString());
+    },
+    [settings, updateSetting]
+  );
+
+  const handleShowCrashLogs = useCallback(async () => {
     const logs = await getCrashLogs();
     if (logs.length === 0) {
       Alert.alert('崩溃日志', '暂无崩溃日志');
@@ -311,9 +425,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       { text: '清空', style: 'destructive', onPress: () => clearCrashLogs() },
       { text: '关闭', style: 'cancel' },
     ]);
-  };
+  }, []);
 
-  const exportBackup = async () => {
+  const exportBackup = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/backup/export`);
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -336,14 +450,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch (err) {
       Alert.alert('导出失败', String(err));
     }
-  };
+  }, []);
 
-  const copyBackup = async () => {
+  const copyBackup = useCallback(async () => {
     await Clipboard.setStringAsync(backupJson);
     Alert.alert('已复制', '备份 JSON 已复制到剪贴板，可在另一台设备上「导入备份」');
-  };
+  }, [backupJson]);
 
-  const exportLogs = async () => {
+  const exportLogs = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/backup/logs`);
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -363,9 +477,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch (err) {
       Alert.alert('导出失败', String(err));
     }
-  };
+  }, []);
 
-  const importBackup = async () => {
+  const importBackup = useCallback(async () => {
     if (!importText.trim()) {
       Alert.alert('提示', '请粘贴备份 JSON 内容');
       return;
@@ -392,9 +506,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } finally {
       setImporting(false);
     }
-  };
+  }, [importText]);
 
-  const runDiagnostics = async () => {
+  const runDiagnostics = useCallback(async () => {
     setDiagnosticsData(null);
     setDiagnosticsVisible(true);
     try {
@@ -404,25 +518,28 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch (err) {
       setDiagnosticsData({ error: String(err) });
     }
-  };
+  }, []);
 
-  const toggleTrust = async (projectId: string) => {
-    const next = trustedProjects.includes(projectId)
-      ? trustedProjects.filter((id) => id !== projectId)
-      : [...trustedProjects, projectId];
-    setTrustedProjects(next);
-    try {
-      await fetch(`${API_BASE}/api/v1/settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trusted_projects: JSON.stringify(next) }),
-      });
-    } catch {
-      Alert.alert('错误', '保存失败');
-    }
-  };
+  const toggleTrust = useCallback(
+    async (projectId: string) => {
+      const next = trustedProjects.includes(projectId)
+        ? trustedProjects.filter((id) => id !== projectId)
+        : [...trustedProjects, projectId];
+      setTrustedProjects(next);
+      try {
+        await fetch(`${API_BASE}/api/v1/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trusted_projects: JSON.stringify(next) }),
+        });
+      } catch {
+        Alert.alert('错误', '保存失败');
+      }
+    },
+    [trustedProjects]
+  );
 
-  const fetchAuditLogs = async () => {
+  const fetchAuditLogs = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/audit?limit=50`);
       const data = await res.json();
@@ -431,9 +548,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch {
       Alert.alert('错误', '加载审计日志失败');
     }
-  };
+  }, []);
 
-  const resetPermissions = () => {
+  const resetPermissions = useCallback(() => {
     Alert.alert('重置授权', '将清除所有项目的可信标记。确定继续？', [
       { text: '取消', style: 'cancel' },
       {
@@ -454,23 +571,68 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         },
       },
     ]);
-  };
+  }, []);
 
-  const riskLabel = (level: string) =>
-    ({ none: '无风险', medium: '中风险', high: '高风险', critical: '极高风险' }[level] || level);
-  const decisionLabel = (decision: string) =>
-    ({ auto: '自动放行', trusted: '可信项目', approved: '用户允许', denied: '用户拒绝', blocked: '策略拦截' }[decision] || decision);
+  const clearAllData = useCallback(() => {
+    Alert.alert('清除所有数据', '将清除所有设置、可信授权、MCP 配置与本地缓存，且无法恢复。确定继续？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '继续',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert('再次确认', '此操作不可撤销，将重置所有数据。', [
+            { text: '取消', style: 'cancel' },
+            {
+              text: '确认清除',
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  await fetch(`${API_BASE}/api/v1/settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      ...DEFAULT_SETTINGS,
+                      trusted_projects: '[]',
+                      mcp_servers: '[]',
+                    }),
+                  });
+                  setSettings({ ...DEFAULT_SETTINGS });
+                  setTrustedProjects([]);
+                  setMcpServers([]);
+                  setBalance(null);
+                  Alert.alert('完成', '所有数据已清除');
+                } catch {
+                  Alert.alert('错误', '清除失败');
+                }
+              },
+            },
+          ]);
+        },
+      },
+    ]);
+  }, []);
 
-  const openMcpModal = () => {
+  const riskLabel = useCallback(
+    (level: string) =>
+      ({ none: '无风险', medium: '中风险', high: '高风险', critical: '极高风险' }[level] || level),
+    []
+  );
+  const decisionLabel = useCallback(
+    (decision: string) =>
+      ({ auto: '自动放行', trusted: '可信项目', approved: '用户允许', denied: '用户拒绝', blocked: '策略拦截' }[decision] || decision),
+    []
+  );
+
+  const openMcpModal = useCallback(() => {
     setMcpFormName('');
     setMcpFormTransport('stdio');
     setMcpFormCommand('');
     setMcpFormArgs('');
     setMcpFormUrl('');
     setMcpModalVisible(true);
-  };
+  }, []);
 
-  const saveMcpServer = async () => {
+  const saveMcpServer = useCallback(async () => {
     if (!mcpFormName.trim()) {
       Alert.alert('提示', '请输入服务器名称');
       return;
@@ -502,32 +664,35 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch {
       Alert.alert('错误', '保存失败');
     }
-  };
+  }, [mcpFormName, mcpFormTransport, mcpFormCommand, mcpFormArgs, mcpFormUrl, mcpServers]);
 
-  const removeMcpServer = (name: string) => {
-    Alert.alert('删除 MCP 服务器', `确定删除 "${name}"？`, [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: async () => {
-          const next = mcpServers.filter((x) => x.name !== name);
-          setMcpServers(next);
-          try {
-            await fetch(`${API_BASE}/api/v1/settings`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ mcp_servers: JSON.stringify(next) }),
-            });
-          } catch {
-            Alert.alert('错误', '保存失败');
-          }
+  const removeMcpServer = useCallback(
+    (name: string) => {
+      Alert.alert('删除 MCP 服务器', `确定删除 "${name}"？`, [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            const next = mcpServers.filter((x) => x.name !== name);
+            setMcpServers(next);
+            try {
+              await fetch(`${API_BASE}/api/v1/settings`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mcp_servers: JSON.stringify(next) }),
+              });
+            } catch {
+              Alert.alert('错误', '保存失败');
+            }
+          },
         },
-      },
-    ]);
-  };
+      ]);
+    },
+    [mcpServers]
+  );
 
-  const toggleSkill = async (name: string, enabled: boolean) => {
+  const toggleSkill = useCallback(async (name: string, enabled: boolean) => {
     setSkills((prev) => prev.map((x) => (x.name === name ? { ...x, enabled: enabled ? 1 : 0 } : x)));
     try {
       await fetch(`${API_BASE}/api/v1/skills/${encodeURIComponent(name)}`, {
@@ -538,9 +703,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch {
       Alert.alert('错误', '保存失败');
     }
-  };
+  }, []);
 
-  const showSkillDetail = async (name: string) => {
+  const showSkillDetail = useCallback(async (name: string) => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/skills/${encodeURIComponent(name)}`);
       const data = await res.json();
@@ -552,14 +717,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch {
       Alert.alert('错误', '加载技能失败');
     }
-  };
+  }, []);
 
-  const handleClearCache = () => {
+  const handleClearCache = useCallback(() => {
     Alert.alert('清除缓存', '确定要清除所有缓存数据吗？', [
       { text: '取消', style: 'cancel' },
       { text: '确定', style: 'destructive', onPress: () => Alert.alert('完成', '缓存已清除') },
     ]);
-  };
+  }, []);
 
   const refreshDeviceStatus = useCallback(async () => {
     const st = await getDeviceStatus();
@@ -573,13 +738,16 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     return () => clearInterval(timer);
   }, [refreshDeviceStatus]);
 
-  const toggleDeviceControl = async (value: boolean) => {
-    const ok = await setDeviceControlEnabled(value);
-    setDeviceEnabled(ok ? value : !value);
-    refreshDeviceStatus();
-  };
+  const toggleDeviceControl = useCallback(
+    async (value: boolean) => {
+      const ok = await setDeviceControlEnabled(value);
+      setDeviceEnabled(ok ? value : !value);
+      refreshDeviceStatus();
+    },
+    [refreshDeviceStatus]
+  );
 
-  const openAccessibilitySettings = () => {
+  const openAccessibilitySettings = useCallback(() => {
     if (Platform.OS === 'android') {
       Linking.openURL('intent:#Intent;action=android.settings.ACCESSIBILITY_SETTINGS;end').catch(() => {
         Alert.alert('提示', '请在系统设置 → 无障碍 中开启 Synaps 设备控制');
@@ -587,13 +755,537 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } else {
       Alert.alert('提示', '设备控制仅支持 Android');
     }
-  };
+  }, []);
 
-  const maskValue = (value: string) => {
+  const maskValue = useCallback((value: string) => {
     if (!value) return '未配置';
     if (value.length <= 8) return '***';
     return value.slice(0, 4) + '...' + value.slice(-4);
-  };
+  }, []);
+
+  const provider = useMemo<ProviderKey>(() => {
+    if (settings.ai_base_url.includes('openai')) return 'openai';
+    if (settings.ai_base_url.includes('deepseek')) return 'deepseek';
+    return 'custom';
+  }, [settings.ai_base_url]);
+
+  const setProvider = useCallback(
+    (key: ProviderKey) => {
+      if (key === 'deepseek') saveSetting('ai_base_url', 'https://api.deepseek.com');
+      else if (key === 'openai') saveSetting('ai_base_url', 'https://api.openai.com/v1');
+    },
+    [saveSetting]
+  );
+
+  const contextLimit = useMemo(() => CONTEXT_LIMITS[settings.ai_model] || '32K', [settings.ai_model]);
+
+  const balanceText = useMemo(() => {
+    if (!balance) return '查询中...';
+    if (balance.balance === -1) return '额度未知';
+    if (!balance.available) return balance.message || '未配置';
+    return `¥${Number(balance.balance).toFixed(2)}`;
+  }, [balance]);
+
+  const checkUpdate = useCallback(() => {
+    Linking.openURL('https://github.com/abuaibobo-dev/synaps-next/releases').catch(() => {
+      Alert.alert('提示', '无法打开浏览器，请访问 GitHub Releases 页面');
+    });
+  }, []);
+
+  const mainPage = (
+    <>
+      <SettingsGroup title="账户与安全" sc={sc} bar={bar}>
+        <SettingRow label="账户与安全" value={balanceText} icon="user" iconColor={bar} sc={sc} onPress={() => setSection('account')} last />
+      </SettingsGroup>
+      <SettingsGroup title="AI 模型" sc={sc} bar={bar}>
+        <SettingRow label="AI 模型" value={settings.ai_model} icon="bot" iconColor={bar} sc={sc} onPress={() => setSection('ai')} last />
+      </SettingsGroup>
+      <SettingsGroup title="开发环境" sc={sc} bar={bar}>
+        <SettingRow label="开发环境" value="Termux · GitHub · 构建" icon="terminal" iconColor={bar} sc={sc} onPress={() => setSection('dev')} last />
+      </SettingsGroup>
+      <SettingsGroup title="外观" sc={sc} bar={bar}>
+        <SettingRow label="外观" value={MODE_LABEL[mode]} icon="palette" iconColor={bar} sc={sc} onPress={() => setSection('appearance')} last />
+      </SettingsGroup>
+      <SettingsGroup title="安全" sc={sc} bar={bar}>
+        <SettingRow label="安全" value={`${trustedProjects.length} 个可信项目`} icon="shield" iconColor={bar} sc={sc} onPress={() => setSection('security')} last />
+      </SettingsGroup>
+      <SettingsGroup title="技能与 MCP" sc={sc} bar={bar}>
+        <SettingRow label="技能与 MCP" value={`${mcpServers.length} MCP · ${skills.length} 技能`} icon="plug" iconColor={bar} sc={sc} onPress={() => setSection('skills')} last />
+      </SettingsGroup>
+      <SettingsGroup title="存储与日志" sc={sc} bar={bar}>
+        <SettingRow
+          label="存储与日志"
+          value={storageSize}
+          icon="database"
+          iconColor={bar}
+          sc={sc}
+          onPress={() => {
+            setSection('storage');
+            calcStorage();
+          }}
+          last
+        />
+      </SettingsGroup>
+      <SettingsGroup title="关于" sc={sc} bar={bar}>
+        <SettingRow label="关于" value="v1.1.0" icon="info" iconColor={bar} sc={sc} onPress={() => setSection('about')} last />
+      </SettingsGroup>
+      <Pressable
+        style={[styles.clearCard, { backgroundColor: sc.cardBg, borderColor: sc.cardBorder }]}
+        onPress={clearAllData}
+      >
+        <AppIcon name="trash-2" size={18} color={DANGER_COLOR} />
+        <Text style={[styles.clearText, { color: DANGER_COLOR }]}>清除所有数据</Text>
+      </Pressable>
+    </>
+  );
+
+  const accountPage = (
+    <>
+      <SettingsGroup title="账户" sc={sc} bar={bar}>
+        <View style={styles.avatarRow}>
+          <View style={[styles.avatar, { backgroundColor: bar }]}>
+            <AppIcon name="user" size={26} color="#FFFFFF" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.fieldLabel, { color: sc.label }]}>账户名</Text>
+            <UnderlineInput
+              value={settings.account_name}
+              placeholder="Synaps 用户"
+              sc={sc}
+              focusColor={bar}
+              onCommit={(v) => saveSetting('account_name', v)}
+            />
+          </View>
+        </View>
+      </SettingsGroup>
+      <SettingsGroup title="API Key" sc={sc} bar={bar}>
+        <FieldRow styles={styles} label="DeepSeek API Key" sc={sc}>
+          <UnderlineInput
+            value={settings.ai_api_key}
+            placeholder="sk-..."
+            secure
+            sc={sc}
+            focusColor={bar}
+            onCommit={(v) => saveSetting('ai_api_key', v)}
+          />
+        </FieldRow>
+      </SettingsGroup>
+      <SettingsGroup title="余额" sc={sc} bar={bar}>
+        <SettingRow
+          label="当前余额"
+          value={balanceText}
+          icon="key"
+          iconColor={bar}
+          sc={sc}
+          right={
+            <Pressable onPress={fetchBalance} hitSlop={8} style={styles.refreshBtn}>
+              <AppIcon name="refresh-cw" size={16} color={sc.arrow} />
+            </Pressable>
+          }
+          last
+        />
+      </SettingsGroup>
+    </>
+  );
+
+  const aiPage = (
+    <>
+      <SettingsGroup title="AI 模型" sc={sc} bar={bar}>
+        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+          <Text style={[styles.fieldLabel, { color: sc.label }]}>提供商</Text>
+          <SegmentControl options={PROVIDER_OPTIONS} value={provider} onChange={setProvider} activeColor={bar} inactiveBg={sc.underline} textColor={sc.value} />
+        </View>
+        <FieldRow styles={styles} label="服务地址" sc={sc}>
+          <UnderlineInput
+            value={settings.ai_base_url}
+            placeholder="https://api.deepseek.com"
+            sc={sc}
+            focusColor={bar}
+            keyboardType="url"
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('ai_base_url', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="模型" sc={sc}>
+          <UnderlineInput
+            value={settings.ai_model}
+            placeholder="deepseek-chat"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('ai_model', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="模型 API 地址" sc={sc}>
+          <UnderlineInput
+            value={settings.ai_model_base_url}
+            placeholder="DeepSeek 官方"
+            sc={sc}
+            focusColor={bar}
+            keyboardType="url"
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('ai_model_base_url', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="上下文限制" sc={sc} last>
+          <Text style={[styles.fieldValue, { color: sc.value }]}>{contextLimit}</Text>
+        </FieldRow>
+      </SettingsGroup>
+      <SettingsGroup title="语音识别" sc={sc} bar={bar}>
+        <FieldRow styles={styles} label="STT API Key" sc={sc}>
+          <UnderlineInput
+            value={settings.stt_api_key}
+            placeholder="sk-..."
+            secure
+            sc={sc}
+            focusColor={bar}
+            onCommit={(v) => saveSetting('stt_api_key', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="STT 服务地址" sc={sc}>
+          <UnderlineInput
+            value={settings.stt_base_url}
+            placeholder="OpenAI 官方"
+            sc={sc}
+            focusColor={bar}
+            keyboardType="url"
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('stt_base_url', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="STT 模型" sc={sc} last>
+          <UnderlineInput
+            value={settings.stt_model}
+            placeholder="whisper-1"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('stt_model', v)}
+          />
+        </FieldRow>
+      </SettingsGroup>
+      <SettingsGroup title="DeepSeek Harness" sc={sc} bar={bar}>
+        <SettingRow
+          label="启用 Harness"
+          icon="bot"
+          iconColor={bar}
+          sc={sc}
+          right={<AnimatedToggle value={settings.harness_enabled === 'true'} onValueChange={() => handleToggle('harness_enabled')} sc={sc} trackOn={bar} />}
+        />
+        <FieldRow styles={styles} label="Node 22+ 路径" sc={sc}>
+          <UnderlineInput
+            value={settings.harness_node_path}
+            placeholder="使用内置 Node"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('harness_node_path', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="dsh 入口路径" sc={sc}>
+          <UnderlineInput
+            value={settings.harness_dsh_path}
+            placeholder="自动 npx 安装"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('harness_dsh_path', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="模型" sc={sc}>
+          <UnderlineInput
+            value={settings.harness_model}
+            placeholder="deepseek-chat"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('harness_model', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="API Key" sc={sc}>
+          <UnderlineInput
+            value={settings.harness_api_key}
+            placeholder="使用 AI 模型 Key"
+            secure
+            sc={sc}
+            focusColor={bar}
+            onCommit={(v) => saveSetting('harness_api_key', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="API 地址" sc={sc} last>
+          <UnderlineInput
+            value={settings.harness_base_url}
+            placeholder="DeepSeek 官方"
+            sc={sc}
+            focusColor={bar}
+            keyboardType="url"
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('harness_base_url', v)}
+          />
+        </FieldRow>
+      </SettingsGroup>
+    </>
+  );
+
+  const devPage = (
+    <>
+      <SettingsGroup title="项目与终端" sc={sc} bar={bar}>
+        <FieldRow styles={styles} label="项目目录" sc={sc}>
+          <UnderlineInput
+            value={settings.project_root}
+            placeholder="/storage/emulated/0/Synaps"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('project_root', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="Termux 路径" sc={sc} last>
+          <UnderlineInput
+            value={settings.termux_path}
+            placeholder="/data/data/com.termux"
+            sc={sc}
+            focusColor={bar}
+            autoCapitalize="none"
+            onCommit={(v) => saveSetting('termux_path', v)}
+          />
+        </FieldRow>
+      </SettingsGroup>
+      <SettingsGroup title="GitHub" sc={sc} bar={bar}>
+        <FieldRow styles={styles} label="Access Token" sc={sc}>
+          <UnderlineInput
+            value={settings.github_token}
+            placeholder="ghp_..."
+            secure
+            sc={sc}
+            focusColor={bar}
+            onCommit={(v) => saveSetting('github_token', v)}
+          />
+        </FieldRow>
+        <SettingRow
+          label="自动推送"
+          icon="github"
+          iconColor={bar}
+          sc={sc}
+          right={<AnimatedToggle value={settings.github_auto_push === 'true'} onValueChange={() => handleToggle('github_auto_push')} sc={sc} trackOn={bar} />}
+          last
+        />
+      </SettingsGroup>
+      <SettingsGroup title="构建" sc={sc} bar={bar}>
+        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+          <Text style={[styles.fieldLabel, { color: sc.label }]}>构建方式</Text>
+          <SegmentControl
+            options={BUILD_OPTIONS}
+            value={settings.build_method === 'local' ? 'local' : 'github_actions'}
+            onChange={(k) => saveSetting('build_method', k)}
+            activeColor={bar}
+            inactiveBg={sc.underline}
+            textColor={sc.value}
+          />
+        </View>
+      </SettingsGroup>
+      <SettingsGroup title="设备控制" sc={sc} bar={bar}>
+        <SettingRow
+          label="启用设备控制"
+          value={deviceServiceConnected ? '服务已连接' : '服务未连接'}
+          icon="smartphone"
+          iconColor={bar}
+          sc={sc}
+          right={<AnimatedToggle value={deviceEnabled} onValueChange={toggleDeviceControl} sc={sc} trackOn={bar} />}
+        />
+        <SettingRow
+          label="打开无障碍设置"
+          value={deviceServiceConnected ? '已开启' : '去开启'}
+          icon="lock"
+          iconColor={bar}
+          sc={sc}
+          onPress={openAccessibilitySettings}
+          last
+        />
+      </SettingsGroup>
+    </>
+  );
+
+  const appearancePage = (
+    <>
+      <SettingsGroup title="主题" sc={sc} bar={bar}>
+        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+          <Text style={[styles.fieldLabel, { color: sc.label }]}>主题模式</Text>
+          <SegmentControl options={MODE_OPTIONS} value={mode} onChange={setMode} activeColor={bar} inactiveBg={sc.underline} textColor={sc.value} />
+        </View>
+      </SettingsGroup>
+      <SettingsGroup title="强调色" sc={sc} bar={bar}>
+        <View style={styles.accentRow}>
+          {(Object.keys(ACCENTS) as AccentKey[]).map((key) => (
+            <Pressable key={key} style={styles.accentItem} onPress={() => setAccent(key)} accessibilityLabel={`强调色 ${ACCENTS[key].label}`}>
+              <View
+                style={[
+                  styles.accentSwatch,
+                  { backgroundColor: ACCENTS[key].swatch },
+                  accent === key && styles.accentSwatchActive,
+                ]}
+              >
+                {accent === key && <AppIcon name="check-circle" size={13} color="#FFFFFF" />}
+              </View>
+              <Text style={[styles.accentLabel, { color: accent === key ? bar : sc.value }]}>{ACCENTS[key].label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </SettingsGroup>
+      <SettingsGroup title="字体大小" sc={sc} bar={bar}>
+        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+          <Text style={[styles.fieldLabel, { color: sc.label }]}>字体大小</Text>
+          <SegmentControl
+            options={FONT_OPTIONS}
+            value={(settings.font_scale || 'medium') as FontKey}
+            onChange={(k) => saveSetting('font_scale', k)}
+            activeColor={bar}
+            inactiveBg={sc.underline}
+            textColor={sc.value}
+          />
+        </View>
+      </SettingsGroup>
+    </>
+  );
+
+  const securityPage = (
+    <>
+      <SettingsGroup title="权限分级" sc={sc} bar={bar}>
+        <SettingRow label="无风险操作" value="自动执行" icon="lock" iconColor={bar} sc={sc} />
+        <SettingRow label="中风险操作" value="需确认" icon="lock" iconColor={bar} sc={sc} />
+        <SettingRow label="高风险操作" value="需确认" icon="lock" iconColor={bar} sc={sc} />
+        <SettingRow label="极高风险操作" value="默认拒绝" icon="shield" iconColor={bar} sc={sc} last />
+      </SettingsGroup>
+      <SettingsGroup title="策略" sc={sc} bar={bar}>
+        <SettingRow
+          label="工作区快照"
+          icon="file-plus"
+          iconColor={bar}
+          sc={sc}
+          right={<AnimatedToggle value={settings.snapshot_enabled === 'true'} onValueChange={() => handleToggle('snapshot_enabled')} sc={sc} trackOn={bar} />}
+        />
+        <SettingRow
+          label="Diff 审查"
+          icon="file-text"
+          iconColor={bar}
+          sc={sc}
+          right={<AnimatedToggle value={settings.diff_review_enabled === 'true'} onValueChange={() => handleToggle('diff_review_enabled')} sc={sc} trackOn={bar} />}
+          last
+        />
+      </SettingsGroup>
+      <SettingsGroup title="授权管理" sc={sc} bar={bar}>
+        <SettingRow
+          label="可信项目"
+          value={`${trustedProjects.length} 个`}
+          icon="shield"
+          iconColor={bar}
+          sc={sc}
+          onPress={() => setTrustModalVisible(true)}
+        />
+        <SettingRow label="操作审计日志" value="查看" icon="file-text" iconColor={bar} sc={sc} onPress={fetchAuditLogs} />
+        <SettingRow label="重置所有授权" icon="undo" danger sc={sc} onPress={resetPermissions} last />
+      </SettingsGroup>
+    </>
+  );
+
+  const skillsPage = (
+    <>
+      <SettingsGroup title="MCP 服务器" sc={sc} bar={bar}>
+        {mcpServers.length === 0 && (
+          <SettingRow label="未配置 MCP 服务器" sc={sc} />
+        )}
+        {mcpServers.map((server) => (
+          <View key={server.name} style={[styles.mcpRow, { borderBottomColor: sc.separator }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.mcpName, { color: sc.label }]} numberOfLines={1}>{server.name}</Text>
+              <Text style={[styles.mcpPath, { color: sc.value }]} numberOfLines={1}>
+                {server.transport === 'stdio'
+                  ? `${server.command || ''} ${(server.args || []).join(' ')}`
+                  : server.url || ''}
+              </Text>
+            </View>
+            <Pressable onPress={() => removeMcpServer(server.name)} hitSlop={8} style={styles.mcpDelete}>
+              <AppIcon name="trash-2" size={16} color={DANGER_COLOR} />
+            </Pressable>
+          </View>
+        ))}
+        <SettingRow
+          label="添加 MCP 服务器"
+          icon="plus"
+          iconColor={bar}
+          sc={sc}
+          onPress={openMcpModal}
+          last={mcpServers.length === 0}
+        />
+      </SettingsGroup>
+      <SettingsGroup title="已安装技能" sc={sc} bar={bar}>
+        {skills.length === 0 && <SettingRow label="暂无技能" sc={sc} last />}
+        {skills.map((skill, idx) => (
+          <SettingRow
+            key={skill.name}
+            label={skill.name}
+            value={skill.description || '无描述'}
+            icon="bolt"
+            iconColor={bar}
+            sc={sc}
+            onPress={() => showSkillDetail(skill.name)}
+            right={<AnimatedToggle value={skill.enabled === 1} onValueChange={(v) => toggleSkill(skill.name, v)} sc={sc} trackOn={bar} />}
+            last={idx === skills.length - 1}
+          />
+        ))}
+      </SettingsGroup>
+    </>
+  );
+
+  const storagePage = (
+    <>
+      <SettingsGroup title="存储" sc={sc} bar={bar}>
+        <SettingRow
+          label="存储占用"
+          value={storageSize}
+          icon="database"
+          iconColor={bar}
+          sc={sc}
+          right={
+            <Pressable onPress={calcStorage} hitSlop={8} style={styles.refreshBtn}>
+              <AppIcon name="refresh-cw" size={16} color={sc.arrow} />
+            </Pressable>
+          }
+          last
+        />
+      </SettingsGroup>
+      <SettingsGroup title="数据备份" sc={sc} bar={bar}>
+        <SettingRow label="导出完整备份" value="JSON" icon="file-export" iconColor={bar} sc={sc} onPress={exportBackup} />
+        <SettingRow
+          label="导入备份"
+          value="粘贴 JSON"
+          icon="file-import"
+          iconColor={bar}
+          sc={sc}
+          onPress={() => {
+            setImportText('');
+            setImportModalVisible(true);
+          }}
+        />
+        <SettingRow label="导出日志" value="JSON" icon="file-text" iconColor={bar} sc={sc} onPress={exportLogs} last />
+      </SettingsGroup>
+      <SettingsGroup title="诊断与维护" sc={sc} bar={bar}>
+        <SettingRow label="一键自检" value="运行" icon="shield" iconColor={bar} sc={sc} onPress={runDiagnostics} />
+        <SettingRow label="崩溃日志" value="查看" icon="file-text" iconColor={bar} sc={sc} onPress={handleShowCrashLogs} />
+        <SettingRow label="清除缓存" icon="trash-2" danger sc={sc} onPress={handleClearCache} last />
+      </SettingsGroup>
+    </>
+  );
+
+  const aboutPage = (
+    <>
+      <SettingsGroup title="关于" sc={sc} bar={bar}>
+        <SettingRow label="版本" value="v1.1.0" icon="info" iconColor={bar} sc={sc} />
+        <SettingRow label="检查更新" value="GitHub Releases" icon="refresh-cw" iconColor={bar} sc={sc} onPress={checkUpdate} />
+        <SettingRow label="使用指南" value="查看" icon="file-text" iconColor={bar} sc={sc} onPress={() => setGuideVisible(true)} last />
+      </SettingsGroup>
+    </>
+  );
 
   if (loading) {
     return (
@@ -611,489 +1303,51 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     );
   }
 
+  const sectionTitle: Record<SectionKey, string> = {
+    account: '账户与安全',
+    ai: 'AI 模型',
+    dev: '开发环境',
+    appearance: '外观',
+    security: '安全',
+    skills: '技能与 MCP',
+    storage: '存储与日志',
+    about: '关于',
+  };
+
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
           <Text style={styles.headerTitle}>设置</Text>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {/* 外观 */}
-          <Text style={styles.groupTitle}>外观</Text>
-          <View style={styles.group}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="palette" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>主题模式</Text>
-              <View style={styles.themeSeg}>
-                {(['system', 'light', 'dark'] as const).map((m) => (
-                  <Pressable
-                    key={m}
-                    style={[styles.themeSegItem, mode === m && styles.themeSegItemActive]}
-                    onPress={() => setMode(m)}
-                  >
-                    <Text style={[styles.themeSegText, mode === m && styles.themeSegTextActive]}>
-                      {m === 'system' ? '跟随系统' : m === 'light' ? '浅色' : '深色'}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="brush" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>皮肤</Text>
-              <View style={styles.accentRow}>
-                {(Object.keys(ACCENTS) as AccentKey[]).map((key) => (
-                  <Pressable
-                    key={key}
-                    style={styles.accentItem}
-                    onPress={() => setAccent(key)}
-                    accessibilityLabel={`皮肤 ${ACCENTS[key].label}`}
-                  >
-                    <View
-                      style={[
-                        styles.accentSwatch,
-                        { backgroundColor: ACCENTS[key].swatch },
-                        accent === key && styles.accentSwatchActive,
-                      ]}
-                    >
-                      {accent === key && <FontAwesome6 name="check" size={12} color="#FFFFFF" />}
-                    </View>
-                    <Text style={[styles.accentLabel, accent === key && styles.accentLabelActive]}>
-                      {ACCENTS[key].label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </View>
-
-          {/* 设备控制 */}
-          <Text style={styles.groupTitle}>设备控制</Text>
-          <View style={styles.group}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="hand-pointer" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>启用设备控制</Text>
-              <View style={styles.settingState}>
-                <View style={[styles.settingStateDot, deviceServiceConnected ? styles.settingStateDotOn : styles.settingStateDotOff]} />
-                <Text style={styles.settingStateText}>
-                  {deviceServiceConnected ? '服务已连接' : '服务未连接'}
-                </Text>
-              </View>
-              <Switch
-                value={deviceEnabled}
-                onValueChange={toggleDeviceControl}
-                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                thumbColor={deviceEnabled ? colors.primary : colors.textMuted}
-              />
-            </View>
-            <Pressable style={styles.settingItem} onPress={openAccessibilitySettings}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="universal-access" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>打开无障碍设置</Text>
-              <Text style={styles.settingValue}>{deviceServiceConnected ? '已开启' : '去开启'}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <View style={styles.settingHint}>
-              <Text style={styles.settingHintText}>
-                开启后 Agent 获得 device_action 工具：点击、滑动、截图、读取界面、返回/主页/打开应用。请在系统无障碍列表中找到“Synaps 设备控制”并打开开关。
-              </Text>
-            </View>
-          </View>
-
-          {/* AI Model */}
-          <Text style={styles.groupTitle}>AI 模型</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('ai_model')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="robot" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>模型</Text>
-              <Text style={styles.settingValue}>{settings.ai_model}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('ai_api_key')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="key" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>DeepSeek API Key</Text>
-              <Text style={styles.settingValue}>{maskValue(settings.ai_api_key)}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('ai_base_url')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="server" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>服务地址</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.ai_base_url || 'DeepSeek 官方'}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('ai_model_base_url')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="code-branch" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>模型 API 地址</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.ai_model_base_url || 'DeepSeek 官方'}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* 语音识别 */}
-          <Text style={styles.groupTitle}>语音识别</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('stt_api_key')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="key" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>STT API Key</Text>
-              <Text style={styles.settingValue}>{maskValue(settings.stt_api_key)}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('stt_base_url')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="server" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>STT 服务地址</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.stt_base_url || 'OpenAI 官方'}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('stt_model')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="microphone" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>STT 模型</Text>
-              <Text style={styles.settingValue}>{settings.stt_model || 'whisper-1'}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* GitHub */}
-          <Text style={styles.groupTitle}>GitHub</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('github_token')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="github" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>Access Token</Text>
-              <Text style={styles.settingValue}>{maskValue(settings.github_token)}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="arrow-rotate-right" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>自动推送</Text>
-              <View style={{ flex: 1 }} />
-              <Switch
-                value={settings.github_auto_push === 'true'}
-                onValueChange={() => handleToggle('github_auto_push')}
-                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                thumbColor={settings.github_auto_push === 'true' ? colors.primary : colors.textMuted}
-              />
-            </View>
-          </View>
-
-          {/* Development */}
-          <Text style={styles.groupTitle}>开发环境</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('termux_path')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="terminal" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>Termux 路径</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.termux_path}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('build_method')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="cloud" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>构建方式</Text>
-              <Text style={styles.settingValue}>{settings.build_method === 'github_actions' ? 'GitHub Actions' : '本地构建'}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* DeepSeek Harness */}
-          <Text style={styles.groupTitle}>DeepSeek Harness</Text>
-          <View style={styles.group}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="brain" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>启用 Harness</Text>
-              <View style={{ flex: 1 }} />
-              <Switch
-                value={settings.harness_enabled === 'true'}
-                onValueChange={() => handleToggle('harness_enabled')}
-                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                thumbColor={settings.harness_enabled === 'true' ? colors.primary : colors.textMuted}
-              />
-            </View>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_node_path')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="terminal" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>Node 22+ 路径</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>
-                {settings.harness_node_path || '使用内置 Node'}
-              </Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_dsh_path')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="robot" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>dsh 入口路径</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>
-                {settings.harness_dsh_path || '自动 npx 安装'}
-              </Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_model')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="microchip" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>模型</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>{settings.harness_model}</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_api_key')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="key" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>API Key</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>
-                {maskValue(settings.harness_api_key) || '使用 AI 模型 Key'}
-              </Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => setEditKey('harness_base_url')}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="server" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>API 地址</Text>
-              <Text style={styles.settingValue} numberOfLines={1}>
-                {settings.harness_base_url || 'DeepSeek 官方'}
-              </Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <View style={styles.settingHint}>
-              <Text style={styles.settingHintText}>
-                需要 Node 22.19+（Termux: pkg install nodejs）。启用后 Agent 可将复杂任务委托给官方 Harness 执行。
-              </Text>
-            </View>
-          </View>
-
-          {/* 诊断 */}
-          <Text style={styles.groupTitle}>诊断</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={runDiagnostics}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="stethoscope" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>一键自检</Text>
-              <Text style={styles.settingValue}>运行</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={handleShowCrashLogs}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="bug" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>崩溃日志</Text>
-              <Text style={styles.settingValue}>查看</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* 数据备份 */}
-          <Text style={styles.groupTitle}>数据备份</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={exportBackup}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="file-export" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>导出完整备份</Text>
-              <Text style={styles.settingValue}>JSON</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={() => { setImportText(''); setImportModalVisible(true); }}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="file-import" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>导入备份</Text>
-              <Text style={styles.settingValue}>粘贴 JSON</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={exportLogs}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="file-lines" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>导出日志</Text>
-              <Text style={styles.settingValue}>JSON</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <View style={styles.settingHint}>
-              <Text style={styles.settingHintText}>
-                备份包含项目、对话、设置、技能、Agent 上下文与审计日志，可用于换机迁移或恢复。
-              </Text>
-            </View>
-          </View>
-
-          {/* Security */}
-          <Text style={styles.groupTitle}>安全</Text>
-          <View style={styles.group}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="camera" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>工作区快照</Text>
-              <View style={{ flex: 1 }} />
-              <Switch
-                value={settings.snapshot_enabled === 'true'}
-                onValueChange={() => handleToggle('snapshot_enabled')}
-                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                thumbColor={settings.snapshot_enabled === 'true' ? colors.primary : colors.textMuted}
-              />
-            </View>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="eye" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>Diff 审查</Text>
-              <View style={{ flex: 1 }} />
-              <Switch
-                value={settings.diff_review_enabled === 'true'}
-                onValueChange={() => handleToggle('diff_review_enabled')}
-                trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                thumbColor={settings.diff_review_enabled === 'true' ? colors.primary : colors.textMuted}
-              />
-            </View>
-          </View>
-
-          {/* Agent 权限 */}
-          <Text style={styles.groupTitle}>Agent 权限</Text>
-          <View style={styles.group}>
-            <Pressable style={styles.settingItem} onPress={() => setTrustModalVisible(true)}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="shield" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>可信项目</Text>
-              <Text style={styles.settingValue}>{trustedProjects.length} 个</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={fetchAuditLogs}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="scroll" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>操作审计日志</Text>
-              <Text style={styles.settingValue}>查看</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={resetPermissions}>
-              <View style={[styles.settingIcon, styles.settingIconDanger]}>
-                <FontAwesome6 name="rotate-left" size={14} color={colors.error} />
-              </View>
-              <Text style={[styles.settingLabel, styles.settingLabelDanger]}>重置所有授权</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* MCP 服务器 */}
-          <Text style={styles.groupTitle}>MCP 服务器</Text>
-          <View style={styles.group}>
-            {mcpServers.length === 0 && (
-              <View style={styles.settingItem}>
-                <Text style={[styles.settingLabel, { color: colors.textMuted }]}>未配置 MCP 服务器</Text>
-              </View>
-            )}
-            {mcpServers.map((server) => (
-              <View key={server.name} style={styles.settingItem}>
-                <View style={styles.settingIcon}>
-                  <FontAwesome6 name="plug" size={14} color={colors.primary} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.settingLabel} numberOfLines={1}>{server.name}</Text>
-                  <Text style={styles.mcpPath} numberOfLines={1}>
-                    {server.transport === 'stdio'
-                      ? `${server.command || ''} ${(server.args || []).join(' ')}`
-                      : server.url || ''}
-                  </Text>
-                </View>
-                <Pressable style={styles.mcpDelete} onPress={() => removeMcpServer(server.name)} hitSlop={8}>
-                  <FontAwesome6 name="trash-can" size={12} color={colors.danger} />
-                </Pressable>
-              </View>
-            ))}
-            <Pressable style={styles.settingItem} onPress={openMcpModal}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="plus" size={14} color={colors.success} />
-              </View>
-              <Text style={styles.settingLabel}>添加 MCP 服务器</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
-          {/* 技能 */}
-          <Text style={styles.groupTitle}>技能</Text>
-          <View style={styles.group}>
-            {skills.length === 0 && (
-              <View style={styles.settingItem}>
-                <Text style={[styles.settingLabel, { color: colors.textMuted }]}>暂无技能</Text>
-              </View>
-            )}
-            {skills.map((skill) => (
-              <View key={skill.name} style={styles.settingItem}>
-                <Pressable style={{ flex: 1 }} onPress={() => showSkillDetail(skill.name)}>
-                  <Text style={styles.settingLabel} numberOfLines={1}>{skill.name}</Text>
-                  <Text style={styles.mcpPath} numberOfLines={1}>{skill.description || '无描述'}</Text>
-                </Pressable>
-                <Switch
-                  value={skill.enabled === 1}
-                  onValueChange={(v) => toggleSkill(skill.name, v)}
-                  trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                  thumbColor={skill.enabled === 1 ? colors.primary : colors.textMuted}
-                />
-              </View>
-            ))}
-          </View>
-
-          {/* About */}
-          <Text style={styles.groupTitle}>关于</Text>
-          <View style={styles.group}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="circle-info" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>版本</Text>
-              <Text style={styles.settingValue}>v1.1.0</Text>
-            </View>
-            <Pressable style={styles.settingItem} onPress={() => setGuideVisible(true)}>
-              <View style={styles.settingIcon}>
-                <FontAwesome6 name="book" size={14} color={colors.primary} />
-              </View>
-              <Text style={styles.settingLabel}>使用指南</Text>
-              <Text style={styles.settingValue}>查看</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-            <Pressable style={styles.settingItem} onPress={handleClearCache}>
-              <View style={[styles.settingIcon, styles.settingIconDanger]}>
-                <FontAwesome6 name="trash" size={14} color={colors.error} />
-              </View>
-              <Text style={[styles.settingLabel, styles.settingLabelDanger]}>清除缓存</Text>
-              <FontAwesome6 name="chevron-right" size={10} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          {section === null ? (
+            <Animated.View key="main" entering={FadeIn.duration(200)}>
+              {mainPage}
+            </Animated.View>
+          ) : (
+            <Animated.View
+              key={`sub-${section}`}
+              entering={SlideInRight.duration(300).easing(Easing.out(Easing.ease))}
+              exiting={FadeOutLeft.duration(200)}
+            >
+              <SubPageHeader title={sectionTitle[section]} onBack={() => setSection(null)} bar={bar} colors={colors} styles={styles} />
+              {section === 'account' && accountPage}
+              {section === 'ai' && aiPage}
+              {section === 'dev' && devPage}
+              {section === 'appearance' && appearancePage}
+              {section === 'security' && securityPage}
+              {section === 'skills' && skillsPage}
+              {section === 'storage' && storagePage}
+              {section === 'about' && aboutPage}
+            </Animated.View>
+          )}
           <View style={{ height: 40 }} />
         </ScrollView>
 
@@ -1140,7 +1394,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <Pressable
                   style={[styles.modalBtn, styles.modalBtnSave, importing && styles.modalBtnDisabled]}
                   onPress={importBackup}
-                  disabled={importing}
                 >
                   <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>{importing ? '导入中...' : '导入'}</Text>
                 </Pressable>
@@ -1154,8 +1407,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>一键自检</Text>
-              {!diagnosticsData ? (
-                <Text style={styles.modalEmptyText}>运行中...</Text>
+              {diagnosticsData === null ? (
+                <Text style={styles.modalEmptyText}>正在检查...</Text>
               ) : diagnosticsData.error ? (
                 <Text style={styles.modalEmptyText}>自检失败：{diagnosticsData.error}</Text>
               ) : (
@@ -1198,7 +1451,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <Text style={styles.guideSection}>常见问题</Text>
                 <Text style={styles.guideText}>· 顶部出现离线横幅：说明内嵌后端未启动，Agent / 终端功能不可用</Text>
                 <Text style={styles.guideText}>· 工具调用无响应：运行「一键自检」查看配置，确认 AI Key 已填写</Text>
-                <Text style={styles.guideText}>· 换机迁移：设置 → 数据备份 → 导出完整备份，另一台设备导入</Text>
+                <Text style={styles.guideText}>· 换机迁移：设置 → 存储与日志 → 导出完整备份，另一台设备导入</Text>
                 <Text style={styles.guideSection}>更新日志</Text>
                 <Text style={styles.guideText}>v1.1.0 · 项目模板、全量备份导入导出、一键自检、离线提示、使用指南</Text>
                 <Text style={styles.guideText}>v1.0.0 · 双栏任务面板、独立 Agent 架构、设备控制、DeepSeek Harness</Text>
@@ -1209,32 +1462,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </View>
           </View>
         </Modal>
-
-        {/* Edit Modal */}
-        <EditModal
-          visible={editKey !== null}
-          title={
-            editKey === 'ai_model' ? '模型名称' :
-            editKey === 'ai_api_key' ? 'API Key' :
-            editKey === 'github_token' ? 'GitHub Token' :
-            editKey === 'termux_path' ? 'Termux 路径' :
-            editKey === 'build_method' ? '构建方式' : ''
-          }
-          value={editKey ? settings[editKey] : ''}
-          placeholder={
-            editKey === 'ai_api_key' ? 'sk-...' :
-            editKey === 'github_token' ? 'ghp_...' :
-            editKey === 'termux_path' ? '/data/data/com.termux' : ''
-          }
-          secure={editKey === 'ai_api_key' || editKey === 'github_token'}
-          onClose={() => setEditKey(null)}
-          onSave={(value) => {
-            if (editKey) {
-              updateSetting(editKey, value);
-            }
-            setEditKey(null);
-          }}
-        />
 
         {/* 可信项目 Modal */}
         <Modal visible={trustModalVisible} transparent animationType="fade" onRequestClose={() => setTrustModalVisible(false)}>
@@ -1250,11 +1477,11 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                       <Text style={styles.trustItemName} numberOfLines={1}>{project.name}</Text>
                       <Text style={styles.trustItemPath} numberOfLines={1}>{project.path}</Text>
                     </View>
-                    <Switch
+                    <AnimatedToggle
                       value={trustedProjects.includes(project.id)}
                       onValueChange={() => toggleTrust(project.id)}
-                      trackColor={{ false: colors.bgElevated, true: colors.primaryGlow }}
-                      thumbColor={trustedProjects.includes(project.id) ? colors.primary : colors.textMuted}
+                      sc={sc}
+                      trackOn={bar}
                     />
                   </View>
                 ))}
@@ -1375,393 +1602,362 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   );
 }
 
-const createStyles = (colors: ThemeColors) => StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: spacing.lg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
-    gap: spacing.md,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: fontSize.xl,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.md,
-  },
-  groupTitle: {
-    fontSize: fontSize.xs,
-    fontWeight: '600',
-    color: colors.textMuted,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-    marginTop: spacing.lg,
-    marginLeft: spacing.xs,
-  },
-  group: {
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
-  settingState: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginRight: spacing.xs,
-  },
-  settingStateDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  settingStateDotOn: {
-    backgroundColor: '#22C55E',
-  },
-  settingStateDotOff: {
-    backgroundColor: colors.textMuted,
-  },
-  settingStateText: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-  },
-  settingHint: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  settingHintText: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    lineHeight: 16,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.md + 2,
-    paddingHorizontal: spacing.lg,
-    gap: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
-  },
-  settingIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm + 2,
-    backgroundColor: colors.primaryGlow,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  settingIconDanger: {
-    backgroundColor: 'rgba(239,68,68,0.1)',
-  },
-  settingLabel: {
-    flex: 1,
-    fontSize: fontSize.md,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  },
-  settingLabelDanger: {
-    color: colors.error,
-  },
-  settingValue: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    marginRight: spacing.sm,
-    maxWidth: 120,
-  },
-  themeSeg: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-  },
-  themeSegItem: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    backgroundColor: colors.bgInput,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  themeSegItemActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  themeSegText: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  themeSegTextActive: {
-    color: '#FFFFFF',
-  },
-  accentRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  accentItem: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  accentSwatch: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  accentSwatchActive: {
-    borderColor: colors.textPrimary,
-  },
-  accentLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-  },
-  accentLabelActive: {
-    color: colors.primary,
-    fontWeight: '700',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.xl,
-  },
-  modalTitle: {
-    fontSize: fontSize.lg,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: spacing.lg,
-  },
-  modalInput: {
-    backgroundColor: colors.bgElevated,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.textPrimary,
-    marginBottom: spacing.lg,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'flex-end',
-  },
-  modalBtn: {
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: radius.md,
-  },
-  modalBtnCancel: {
-    backgroundColor: colors.bgElevated,
-  },
-  modalBtnSave: {
-    backgroundColor: colors.primary,
-  },
-  modalBtnText: {
-    fontSize: fontSize.md,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  modalBtnTextSave: {
-    color: '#FFFFFF',
-  },
-
-  modalHint: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    marginBottom: spacing.lg,
-    lineHeight: 18,
-  },
-  modalEmptyText: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
-    textAlign: 'center',
-    paddingVertical: spacing.xl,
-  },
-  modalBtnFull: {
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  trustItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
-    gap: spacing.md,
-  },
-  trustItemName: {
-    fontSize: fontSize.md,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  trustItemPath: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  auditItem: {
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
-  },
-  auditHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.xs,
-  },
-  auditAction: {
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    fontWeight: '600',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  auditBadge: {
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-    overflow: 'hidden',
-  },
-  auditBadgeMedium: {
-    color: colors.warning,
-    backgroundColor: 'rgba(251,191,36,0.12)',
-  },
-  auditBadgeHigh: {
-    color: colors.error,
-    backgroundColor: 'rgba(239,68,68,0.12)',
-  },
-  auditBadgeCritical: {
-    color: '#FFFFFF',
-    backgroundColor: colors.error,
-  },
-  auditDetail: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-  },
-  auditMeta: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 4,
-  },
-
-  mcpPath: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  mcpDelete: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  transportRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  transportBtn: {
-    flex: 1,
-    height: 40,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.bgElevated,
-  },
-  transportBtnActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryGlow,
-  },
-  transportBtnText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  transportBtnTextActive: {
-    color: colors.primary,
-  },
-  modalBtnDisabled: {
-    opacity: 0.5,
-  },
-  diagItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
-  },
-  diagStatus: {
-    width: 20,
-    fontSize: fontSize.md,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  diagOk: {
-    color: colors.success,
-  },
-  diagBad: {
-    color: colors.error,
-  },
-  diagLabel: {
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  diagDetail: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  guideSection: {
-    fontSize: fontSize.sm,
-    color: colors.primary,
-    fontWeight: '700',
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  guideText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 19,
-    marginBottom: 4,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      paddingHorizontal: spacing.lg,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.lg,
+      gap: spacing.md,
+    },
+    headerTitle: {
+      flex: 1,
+      fontSize: fontSize.xl,
+      fontWeight: '700',
+      color: colors.textPrimary,
+    },
+    loadingContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    loadingText: {
+      color: colors.textSecondary,
+      fontSize: fontSize.md,
+    },
+    subHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: spacing.md,
+    },
+    backBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    subHeaderTitle: {
+      flex: 1,
+      fontSize: fontSize.lg,
+      fontWeight: '700',
+      marginLeft: spacing.xs,
+    },
+    fieldRow: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+    },
+    fieldLabel: {
+      fontSize: 12,
+      fontWeight: '500',
+      marginBottom: 4,
+    },
+    fieldValue: {
+      fontSize: 14,
+      paddingBottom: 6,
+    },
+    segmentBlock: {
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    avatarRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      gap: 14,
+    },
+    avatar: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    refreshBtn: {
+      padding: 4,
+    },
+    clearCard: {
+      marginTop: 4,
+      marginBottom: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      minHeight: 52,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    clearText: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    accentRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+    },
+    accentItem: {
+      alignItems: 'center',
+      gap: 4,
+    },
+    accentSwatch: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    accentSwatchActive: {
+      borderColor: colors.textPrimary,
+    },
+    accentLabel: {
+      fontSize: 11,
+    },
+    mcpRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      minHeight: 48,
+      gap: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    mcpName: {
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    mcpPath: {
+      fontSize: 12,
+      marginTop: 2,
+    },
+    mcpDelete: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.7)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: spacing.xl,
+    },
+    modalContent: {
+      width: '100%',
+      maxWidth: 400,
+      backgroundColor: colors.bgCard,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.xl,
+    },
+    modalTitle: {
+      fontSize: fontSize.lg,
+      fontWeight: '700',
+      color: colors.textPrimary,
+      marginBottom: spacing.lg,
+    },
+    modalInput: {
+      backgroundColor: colors.bgElevated,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+      fontSize: fontSize.md,
+      color: colors.textPrimary,
+      marginBottom: spacing.lg,
+    },
+    modalButtons: {
+      flexDirection: 'row',
+      gap: spacing.md,
+      justifyContent: 'flex-end',
+    },
+    modalBtn: {
+      paddingHorizontal: spacing.xl,
+      paddingVertical: spacing.sm + 2,
+      borderRadius: radius.md,
+    },
+    modalBtnCancel: {
+      backgroundColor: colors.bgElevated,
+    },
+    modalBtnSave: {
+      backgroundColor: colors.primary,
+    },
+    modalBtnText: {
+      fontSize: fontSize.md,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    modalBtnTextSave: {
+      color: '#FFFFFF',
+    },
+    modalHint: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      marginBottom: spacing.lg,
+      lineHeight: 18,
+    },
+    modalEmptyText: {
+      fontSize: fontSize.sm,
+      color: colors.textMuted,
+      textAlign: 'center',
+      paddingVertical: spacing.xl,
+    },
+    modalBtnFull: {
+      alignSelf: 'stretch',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    modalBtnDisabled: {
+      opacity: 0.5,
+    },
+    trustItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.separator,
+      gap: spacing.md,
+    },
+    trustItemName: {
+      fontSize: fontSize.md,
+      color: colors.textPrimary,
+      fontWeight: '600',
+    },
+    trustItemPath: {
+      fontSize: fontSize.xs,
+      color: colors.textMuted,
+      marginTop: 2,
+    },
+    auditItem: {
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.separator,
+    },
+    auditHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.xs,
+    },
+    auditAction: {
+      fontSize: fontSize.sm,
+      color: colors.textPrimary,
+      fontWeight: '600',
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    },
+    auditBadge: {
+      fontSize: 10,
+      fontWeight: '700',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      borderRadius: radius.sm,
+      overflow: 'hidden',
+    },
+    auditBadgeMedium: {
+      color: colors.warning,
+      backgroundColor: 'rgba(251,191,36,0.12)',
+    },
+    auditBadgeHigh: {
+      color: colors.error,
+      backgroundColor: 'rgba(239,68,68,0.12)',
+    },
+    auditBadgeCritical: {
+      color: '#FFFFFF',
+      backgroundColor: colors.error,
+    },
+    auditDetail: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+    },
+    auditMeta: {
+      fontSize: 10,
+      color: colors.textMuted,
+      marginTop: 4,
+    },
+    transportRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginBottom: spacing.lg,
+    },
+    transportBtn: {
+      flex: 1,
+      height: 40,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bgElevated,
+    },
+    transportBtnActive: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primaryGlow,
+    },
+    transportBtnText: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+    transportBtnTextActive: {
+      color: colors.primary,
+    },
+    diagItem: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: spacing.md,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.separator,
+    },
+    diagStatus: {
+      width: 20,
+      fontSize: fontSize.md,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    diagOk: {
+      color: colors.success,
+    },
+    diagBad: {
+      color: colors.error,
+    },
+    diagLabel: {
+      fontSize: fontSize.sm,
+      color: colors.textPrimary,
+      fontWeight: '600',
+    },
+    diagDetail: {
+      fontSize: fontSize.xs,
+      color: colors.textMuted,
+      marginTop: 2,
+      lineHeight: 15,
+    },
+    guideSection: {
+      fontSize: fontSize.sm,
+      color: colors.primary,
+      fontWeight: '700',
+      marginTop: spacing.md,
+      marginBottom: spacing.xs,
+    },
+    guideText: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      lineHeight: 19,
+      marginBottom: 4,
+    },
+  });
