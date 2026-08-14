@@ -96,7 +96,7 @@ class DeviceAccessibilityService : AccessibilityService() {
             onResult(null, 0, 0, -1)
             return
         }
-        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : ScreenshotResultCallback {
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
             override fun onSuccess(screenshot: ScreenshotResult) {
                 val buffer = screenshot.hardwareBuffer
                 try {

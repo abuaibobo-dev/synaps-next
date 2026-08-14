@@ -17,6 +17,8 @@ import {
   deviceStatusSummary,
   type DeviceActionType,
 } from '../device.js';
+import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
+import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -1727,6 +1729,27 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       saveChatMessage(sessionId, 'user', lastUserMessage.content);
     }
 
+    // 跨 Agent 共享上下文命令：更新上下文 / 查看上下文
+    let contextCommandReply: string | null = null;
+    const lastUserContent = lastUserMessage?.content ?? '';
+    if (/^(更新上下文|记住[：:])/m.test(lastUserContent) || lastUserContent.includes('更新上下文：')) {
+      const content = lastUserContent
+        .replace(/^.*?(更新上下文|记住)[：:]?/m, '')
+        .trim();
+      if (content) {
+        const ctx = mergeSharedContext(content);
+        contextCommandReply = `[系统] 已更新共享上下文，记住以下信息（跨会话/跨 Agent 生效）：\n${sharedContextToText(ctx)}\n后续对话将自动遵循。`;
+      } else {
+        contextCommandReply = '[系统] 更新上下文命令缺少内容，示例：更新上下文：技术栈 TypeScript + React Native，偏好 4 空格缩进';
+      }
+    } else if (/查看上下文/.test(lastUserContent)) {
+      const ctx = getSharedContext();
+      const text = sharedContextToText(ctx);
+      contextCommandReply = text
+        ? `[系统] 当前共享上下文：\n${text}`
+        : '[系统] 当前没有共享上下文。可用“更新上下文：xxx”记录项目背景、技术栈与偏好。';
+    }
+
     const customHeaders = HeaderUtils.extractForwardHeaders(
       req.headers as unknown as Record<string, string>
     );
@@ -1756,9 +1779,24 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
+    // 上下文命令：直接返回结果，不进入 agent 循环
+    if (contextCommandReply) {
+      res.write(`data: ${JSON.stringify({ content: contextCommandReply })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+      return;
+    }
+
     // Build system message with project context
     let systemPrompt = AGENT_SYSTEM_PROMPT;
-    
+
+    // 注入跨会话共享上下文
+    const sharedCtx = getSharedContext();
+    const sharedCtxText = sharedContextToText(sharedCtx);
+    if (sharedCtxText) {
+      systemPrompt += `\n\n## Shared Context (跨会话记忆)\n用户之前告知的上下文，默认遵循，无需重复询问：\n${sharedCtxText}\n当用户说“更新上下文：xxx”时，记住新信息；说“查看上下文”时展示当前记忆。`;
+    }
+
     if (projectId) {
       const project = queryOne(`SELECT name, path FROM projects WHERE id = ?`, [projectId]) as Record<string, string> | null;
       if (project) {
@@ -1902,7 +1940,15 @@ All file operations should use paths relative to the project root.`;
       }
 
       // Execute tool
-      const toolResult = await executeTool(projectId, toolCall);
+      let toolResult = await executeTool(projectId, toolCall);
+
+      // 失败智能分析：工具失败时自动调用 DeepSeek 诊断（未配置 Key 时静默跳过）
+      if (isFailureResult(toolCall.tool, toolResult)) {
+        const analysis = await analyzeFailure(toolCall.tool, toolResult);
+        if (analysis) {
+          toolResult += `\n\n${analysis}`;
+        }
+      }
 
       // Send tool execution info to client
       res.write(`data: ${JSON.stringify({

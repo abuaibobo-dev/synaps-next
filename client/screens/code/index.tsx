@@ -15,6 +15,7 @@ import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
 import { spacing, radius, fontSize } from '@/utils/theme';
+import { getLanguageForPath, highlightLine } from '@/utils/syntaxHighlight';
 import type { ThemeColors } from '@/utils/theme';
 import { useThemeColors } from '@/components/ThemeProvider';
 
@@ -55,6 +56,9 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [fileLanguage, setFileLanguage] = useState('plaintext');
+  const [editing, setEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState('');
+  const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved');
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -107,8 +111,11 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
       const data = await response.json();
       if (data.content !== undefined) {
         setFileContent(data.content);
+        setDraftContent(data.content);
         setSelectedFile(filePath);
-        setFileLanguage(data.language || 'plaintext');
+        setFileLanguage(getLanguageForPath(filePath));
+        setEditing(false);
+        setSaveState('saved');
       }
     } catch (err) {
       console.error('Failed to read file:', err);
@@ -116,6 +123,31 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
       setLoading(false);
     }
   }, [projectId]);
+
+  const saveFile = useCallback(async () => {
+    if (!projectId || !selectedFile) return;
+    setSaveState('saving');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/files/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, path: selectedFile, content: draftContent }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setFileContent(draftContent);
+        setSaveState('saved');
+        setEditing(false);
+        fetchFiles(currentPath);
+      } else {
+        setSaveState('dirty');
+        alert(data.error || '保存失败');
+      }
+    } catch (err) {
+      setSaveState('dirty');
+      alert('保存失败：' + String(err));
+    }
+  }, [projectId, selectedFile, draftContent, currentPath, fetchFiles]);
 
   const searchFiles = useCallback(async () => {
     if (!projectId || !searchQuery.trim()) return;
@@ -358,7 +390,8 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
               <ScrollView style={styles.fileList}>
                 {files.length === 0 ? (
                   <View style={styles.emptyDir}>
-                    <Text style={styles.emptyDirText}>空目录</Text>
+                    <FontAwesome6 name="file-circle-plus" size={22} color={colors.textMuted} />
+                    <Text style={styles.emptyDirText}>当前项目为空，请创建文件</Text>
                   </View>
                 ) : (
                   files.map((file) => (
@@ -565,30 +598,102 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
               <View style={styles.fileBadge}>
                 <Text style={styles.fileBadgeText}>{fileLanguage}</Text>
               </View>
+              <View style={styles.fileSaveArea}>
+                <Text style={[
+                  styles.saveStateText,
+                  saveState === 'dirty' && styles.saveStateDirty,
+                  saveState === 'saving' && styles.saveStateSaving,
+                ]}>
+                  {saveState === 'saved' ? '已保存' : saveState === 'saving' ? '保存中...' : '未保存'}
+                </Text>
+                {editing ? (
+                  <Pressable
+                    style={styles.saveBtn}
+                    onPress={() => {
+                      if (saveState === 'dirty' || saveState === 'saving') saveFile();
+                      else setEditing(false);
+                    }}
+                  >
+                    <FontAwesome6 name={saveState === 'saved' ? 'xmark' : 'floppy-disk'} size={11} color="#FFFFFF" />
+                    <Text style={styles.saveBtnText}>{saveState === 'saved' ? '退出编辑' : '保存'}</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable style={styles.editBtn} onPress={() => { setEditing(true); setDraftContent(fileContent); }}>
+                    <FontAwesome6 name="pen" size={11} color={colors.primary} />
+                    <Text style={styles.editBtnText}>编辑</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
 
-            {/* Code content */}
-            <View style={styles.codeViewer}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={true}
-              >
-                <View style={styles.codeContent}>
-                  {fileContent.split('\n').map((line, i) => (
-                    <View key={i} style={styles.codeLine}>
-                      <Text style={styles.lineNumber}>{i + 1}</Text>
-                      <Text style={styles.lineContent} selectable>
-                        {line || ' '}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
+            {/* Code content: 编辑模式 */}
+            {editing ? (
+              <TextInput
+                style={[styles.codeEditor, { color: colors.textPrimary }]}
+                value={draftContent}
+                onChangeText={(t) => {
+                  setDraftContent(t);
+                  setSaveState('dirty');
+                }}
+                multiline
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                textAlignVertical="top"
+              />
+            ) : (
+              <View style={styles.codeViewer}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                  <View style={styles.codeContent}>
+                    {fileContent.split('\n').map((line, i) => (
+                      <View key={i} style={styles.codeLine}>
+                        <Text style={styles.lineNumber}>{i + 1}</Text>
+                        <HighlightedLine line={line} lang={fileLanguage} colors={colors} isDark={isDark} />
+                      </View>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            )}
           </View>
         )}
       </View>
     </Screen>
+  );
+}
+
+function HighlightedLine({ line, lang, colors, isDark }: {
+  line: string;
+  lang: string;
+  colors: ThemeColors;
+  isDark: boolean;
+}) {
+  const segments = useMemo(() => highlightLine(line, lang), [line, lang]);
+  const tokenColors: Record<string, string> = {
+    plain: '#E4E4E7',
+    comment: '#6B7280',
+    string: '#86EFAC',
+    keyword: colors.primary,
+    number: '#FDBA74',
+    type: '#67E8F9',
+    function: '#93C5FD',
+  };
+  return (
+    <Text
+      style={{
+        flex: 1,
+        color: '#E4E4E7',
+        fontSize: fontSize.xs,
+        fontFamily: 'JetBrainsMono',
+      }}
+      selectable
+    >
+      {segments.map((seg, i) => (
+        <Text key={i} style={{ color: tokenColors[seg.token] || colors.textPrimary }}>
+          {seg.text || ' '}
+        </Text>
+      ))}
+    </Text>
   );
 }
 
@@ -950,7 +1055,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   lineNumber: {
     width: 40,
-    color: colors.textMuted,
+    color: '#6B7280',
     fontSize: fontSize.xs,
     fontFamily: 'JetBrainsMono',
     textAlign: 'right',
@@ -958,8 +1063,65 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   lineContent: {
     flex: 1,
-    color: colors.textPrimary,
+    color: '#E4E4E7',
     fontSize: fontSize.xs,
     fontFamily: 'JetBrainsMono',
+  },
+  codeEditor: {
+    flex: 1,
+    backgroundColor: '#0D0D14',
+    color: '#E4E4E7',
+    fontSize: fontSize.xs,
+    fontFamily: 'JetBrainsMono',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 300,
+  },
+  fileSaveArea: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginLeft: 'auto',
+  },
+  saveStateText: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  saveStateDirty: {
+    color: '#F59E0B',
+  },
+  saveStateSaving: {
+    color: colors.primary,
+  },
+  saveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+  },
+  editBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.primaryGlow,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+  },
+  editBtnText: {
+    color: colors.primary,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
   },
 });

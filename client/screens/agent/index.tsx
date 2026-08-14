@@ -67,7 +67,7 @@ interface AgentScreenProps {
 
 export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const { colors, isDark } = useThemeColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -554,10 +554,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 const exitMatch = tc.result?.match(/exit (\d+)/);
                 const exitCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
                 const failed = exitCode !== null && exitCode !== 0;
+                const rawResult = tc.result || '';
+                const analysisIdx = rawResult.indexOf('[失败分析]');
+                const hasAnalysis = analysisIdx >= 0;
                 const resultText =
-                  tc.result && tc.result.length > 300
-                    ? `${tc.result.slice(0, 300)}…`
-                    : tc.result;
+                  (hasAnalysis ? rawResult.slice(0, analysisIdx) : rawResult).length > 300
+                    ? `${(hasAnalysis ? rawResult.slice(0, analysisIdx) : rawResult).slice(0, 300)}…`
+                    : hasAnalysis ? rawResult.slice(0, analysisIdx) : rawResult;
+                const analysisText = hasAnalysis
+                  ? rawResult.slice(analysisIdx + '[失败分析]'.length).trim()
+                  : '';
                 return (
                   <View key={idx} style={styles.toolCallItem}>
                     <View style={styles.toolCallHeader}>
@@ -594,6 +600,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                         {resultText}
                       </Text>
                     ) : null}
+                    {hasAnalysis && (
+                      <View style={styles.failCard}>
+                        <View style={styles.failCardHeader}>
+                          <FontAwesome6 name="wand-magic-sparkles" size={10} color={colors.warning} />
+                          <Text style={styles.failCardTitle}>失败智能分析</Text>
+                        </View>
+                        <Text style={styles.failCardBody}>{analysisText}</Text>
+                      </View>
+                    )}
                   </View>
                 );
               })}
@@ -690,7 +705,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               </View>
               <Text style={styles.emptyTitle}>SYNAPS AGENT</Text>
               <Text style={styles.emptyDesc}>
-                Describe your development task{'\n'}I will help you build it
+                开始你的第一次对话{''}
+                {'\n'}告诉我你想开发或修复什么
               </Text>
             </View>
           }
@@ -991,7 +1007,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   );
 }
 
-const createStyles = (colors: ThemeColors) => StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -1256,6 +1272,30 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
+  },
+  failCard: {
+    marginTop: spacing.xs,
+    backgroundColor: isDark ? 'rgba(251,191,36,0.10)' : 'rgba(217,119,6,0.08)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(251,191,36,0.25)' : 'rgba(217,119,6,0.25)',
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    gap: 4,
+  },
+  failCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  failCardTitle: {
+    fontSize: fontSize.xs,
+    color: colors.warning,
+    fontWeight: '700',
+  },
+  failCardBody: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    lineHeight: 17,
   },
   toolCallResultError: {
     color: '#fca5a5',
