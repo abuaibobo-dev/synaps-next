@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
+import * as crypto from 'crypto';
 import { getDb, saveDb, queryAll, queryOne, runSql } from '../db.js';
 
 const execAsync = promisify(exec);

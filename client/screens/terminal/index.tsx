@@ -81,6 +81,10 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
       const data = await response.json();
       const duration = Date.now() - startTime;
 
+      if (!response.ok) {
+        throw new Error(data.error || `请求失败 (HTTP ${response.status})`);
+      }
+
       const result: CommandResult = {
         id: Date.now().toString(),
         command: cmd,
