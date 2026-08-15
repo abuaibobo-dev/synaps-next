@@ -318,15 +318,40 @@ interface TeamPlan {
   tasks: TeamTask[];
 }
 
-function parseToolCall(response: string): ToolCall | null {
-  const match = response.match(/```tool\s*\n?([\s\S]*?)\n?```/);
-  if (!match) return null;
-
-  try {
-    return JSON.parse(match[1].trim());
-  } catch {
-    return null;
+function parseToolCalls(response: string): ToolCall[] {
+  const results: ToolCall[] = [];
+  const seen = new Set<string>();
+  const push = (raw: string) => {
+    try {
+      const parsed = JSON.parse(raw.trim());
+      if (
+        parsed &&
+        typeof parsed.tool === 'string' &&
+        /^[a-z_]+$/.test(parsed.tool) &&
+        !seen.has(parsed.tool + JSON.stringify(parsed))
+      ) {
+        seen.add(parsed.tool + JSON.stringify(parsed));
+        results.push(parsed as ToolCall);
+      }
+    } catch {
+      // 忽略无法解析的块
+    }
+  };
+  // 支持一条回复里多个 ```tool / ```json 块
+  const blockRe = /```(?:tool|json)\s*\n?([\s\S]*?)\n?```/g;
+  let m: RegExpExecArray | null;
+  while ((m = blockRe.exec(response)) !== null) {
+    push(m[1]);
   }
+  // 没有代码块时，兜底扫描裸 JSON 对象（要求 tool 是合法小写标识符）
+  if (results.length === 0) {
+    const bareRe = /\{[\s\S]*?\}/g;
+    let b: RegExpExecArray | null;
+    while ((b = bareRe.exec(response)) !== null) {
+      push(b[0]);
+    }
+  }
+  return results;
 }
 
 function resolveProjectPath(projectId: string, relativePath: string): string {
@@ -2332,10 +2357,10 @@ All file operations should use paths relative to the project root.`;
 
       lastFullResponse = fullResponse;
 
-      // Check for tool call
-      const toolCall = parseToolCall(fullResponse);
+      // Check for tool call（支持一条回复里多个工具调用，逐个执行）
+      const toolCalls = parseToolCalls(fullResponse);
 
-      if (!toolCall || !projectId) {
+      if (toolCalls.length === 0 || !projectId) {
         // No tool call or no project context - stream final response to client
         // 逐块转发，前端实现打字机效果
         let finalText = '';
@@ -2374,6 +2399,8 @@ All file operations should use paths relative to the project root.`;
         res.write(`data: ${JSON.stringify({ thinking_end: true })}\n\n`);
       }
 
+      // 逐个执行本轮的全部工具调用
+      for (const toolCall of toolCalls) {
       // 工具白名单检查（独立 Agent 只允许模板内工具；调度员临时执行权限除外）
       let tempGrant = agentInstance ? hasTempPermission(agentInstance.sessionId, toolCall.tool) : null;
       if (
@@ -2577,6 +2604,7 @@ All file operations should use paths relative to the project root.`;
         role: 'user',
         content: `[Tool Result for ${toolCall.tool}]:\n${toolResult}\n\nContinue with your task or provide a summary.`,
       });
+      } // end for: 本轮全部工具调用执行完毕
     }
 
     // Max iterations reached（或用户取消）
