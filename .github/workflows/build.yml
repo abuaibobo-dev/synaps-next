@@ -50,10 +50,6 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('client/android/gradle/wrapper/gradle-wrapper.properties', 'client/pnpm-lock.yaml') }}
           restore-keys: gradle-${{ runner.os }}
 
-      - name: Build Debug APK
-        working-directory: client/android
-        run: ./gradlew assembleRelease --no-daemon
-
       - name: Compute version
         id: ver
         run: |
@@ -62,6 +58,18 @@ jobs:
           else
             echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Build Debug APK
+        working-directory: client/android
+        run: |
+          VERSION="${{ steps.ver.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+          [ -z "$PATCH" ] && PATCH=0
+          CODE=$((MAJOR*10000 + MINOR*100 + PATCH))
+          APP_VERSION_NAME="$VERSION" APP_VERSION_CODE="$CODE" ./gradlew assembleRelease --no-daemon
 
       - name: Copy APK
         run: |

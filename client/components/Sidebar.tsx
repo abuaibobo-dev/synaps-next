@@ -243,16 +243,15 @@ export function Sidebar({ visible, activeModule, onModuleChange, onClose }: Side
           <View style={styles.brandBlock}>
             <View style={styles.brandRow}>
               <View style={styles.logoIcon}>
-                <AppIcon name="bolt" size={16} color="#FFFFFF" />
+                <AppIcon name="bolt" size={18} color="#FFFFFF" />
               </View>
-              <Text style={styles.brandTitle}>Synaps</Text>
+              <Text style={styles.brandTitle}>CORE</Text>
             </View>
-            <Text style={styles.brandSubtitle}>手机开发工作台</Text>
           </View>
         ) : (
           <View style={[styles.brandBlock, styles.brandBlockCollapsed]}>
             <View style={styles.logoIcon}>
-              <AppIcon name="bolt" size={16} color="#FFFFFF" />
+              <AppIcon name="bolt" size={18} color="#FFFFFF" />
             </View>
           </View>
         )}
@@ -384,26 +383,21 @@ const createStyles = (c: SidebarColors) =>
     brandRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: spacing.sm,
+      gap: 8,
     },
     logoIcon: {
-      width: 30,
-      height: 30,
-      borderRadius: radius.sm + 2,
+      width: 28,
+      height: 28,
+      borderRadius: 8,
       backgroundColor: c.brand,
       alignItems: 'center',
       justifyContent: 'center',
     },
     brandTitle: {
-      fontSize: 20,
+      fontSize: 18,
       fontWeight: '700',
-      color: c.brand,
+      color: '#FFFFFF',
       letterSpacing: 1,
-    },
-    brandSubtitle: {
-      fontSize: 11,
-      color: c.brandSub,
-      marginLeft: 38,
     },
     divider: {
       height: 1,
