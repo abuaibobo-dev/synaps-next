@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
 import Toast from 'react-native-toast-message';
@@ -140,6 +140,31 @@ const CONTEXT_LIMITS: Record<string, string> = {
   'claude-3-7-sonnet': '200K',
 };
 
+// 子页面字段清单（用于「保存全部」按钮）
+const SECTION_KEYS: Record<SectionKey, Array<keyof Settings>> = {
+  account: ['account_name', 'ai_api_key'],
+  ai: [
+    'ai_api_key',
+    'ai_base_url',
+    'ai_model',
+    'ai_model_base_url',
+    'stt_api_key',
+    'stt_base_url',
+    'stt_model',
+    'harness_node_path',
+    'harness_dsh_path',
+    'harness_model',
+    'harness_api_key',
+    'harness_base_url',
+  ],
+  dev: ['project_root', 'termux_path', 'github_token'],
+  appearance: [],
+  security: [],
+  skills: [],
+  storage: [],
+  about: [],
+};
+
 function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; label: string; detail: string }> {
   if (!d) return [];
   const rows: Array<{ ok: boolean; label: string; detail: string }> = [];
@@ -228,12 +253,14 @@ function SubPageHeader({
   bar,
   colors,
   styles,
+  right,
 }: {
   title: string;
   onBack: () => void;
   bar: string;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
+  right?: React.ReactNode;
 }) {
   return (
     <View style={styles.subHeader}>
@@ -241,6 +268,7 @@ function SubPageHeader({
         <AppIcon name="chevron-left" size={22} color={bar} />
       </Pressable>
       <Text style={[styles.subHeaderTitle, { color: colors.textPrimary }]}>{title}</Text>
+      {right}
     </View>
   );
 }
@@ -249,6 +277,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const { colors, isDark, mode, setMode, accent, setAccent } = useThemeColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const sc = useMemo(() => settingsColors(colors, isDark), [colors, isDark]);
+  const draftsRef = useRef<Record<string, string>>({});
   const [section, setSection] = useState<SectionKey | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
@@ -407,6 +436,32 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     async (key: keyof Settings, value: string) => {
       const ok = await updateSetting(key, value);
       if (ok) Toast.show({ type: 'success', text1: '已保存' });
+    },
+    [updateSetting]
+  );
+
+  // 输入草稿：保存按钮兜底，未失焦也能保存
+  const trackDraft = useCallback(
+    (key: keyof Settings) => (text: string) => {
+      draftsRef.current[key] = text;
+    },
+    []
+  );
+
+  const saveAll = useCallback(
+    async (keys: Array<keyof Settings>) => {
+      let saved = 0;
+      for (const key of keys) {
+        const draft = draftsRef.current[key];
+        if (draft !== undefined) {
+          const ok = await updateSetting(key, draft);
+          if (ok) {
+            saved += 1;
+            delete draftsRef.current[key];
+          }
+        }
+      }
+      if (saved > 0) Toast.show({ type: 'success', text1: `已保存 ${saved} 项设置` });
     },
     [updateSetting]
   );
@@ -857,6 +912,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               placeholder="Synaps 用户"
               sc={sc}
               focusColor={INTERACTIVE}
+              onChangeText={trackDraft('account_name')}
               onCommit={(v) => saveSetting('account_name', v)}
             />
           </View>
@@ -870,6 +926,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             secure
             sc={sc}
             focusColor={INTERACTIVE}
+            onChangeText={trackDraft('ai_api_key')}
             onCommit={(v) => saveSetting('ai_api_key', v)}
           />
         </FieldRow>
@@ -899,6 +956,17 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           <Text style={[styles.fieldLabel, { color: sc.label }]}>提供商</Text>
           <SegmentControl options={PROVIDER_OPTIONS} value={provider} onChange={setProvider} activeColor={ACCENT} inactiveBg={sc.underline} textColor={sc.value} />
         </View>
+        <FieldRow styles={styles} label="API Key" sc={sc}>
+          <UnderlineInput
+            value={settings.ai_api_key}
+            placeholder="sk-..."
+            secure
+            sc={sc}
+            focusColor={INTERACTIVE}
+            onChangeText={trackDraft('ai_api_key')}
+            onCommit={(v) => saveSetting('ai_api_key', v)}
+          />
+        </FieldRow>
         <FieldRow styles={styles} label="服务地址" sc={sc}>
           <UnderlineInput
             value={settings.ai_base_url}
@@ -907,6 +975,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
+            onChangeText={trackDraft('ai_base_url')}
             onCommit={(v) => saveSetting('ai_base_url', v)}
           />
         </FieldRow>
@@ -917,6 +986,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('ai_model')}
             onCommit={(v) => saveSetting('ai_model', v)}
           />
         </FieldRow>
@@ -928,6 +998,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
+            onChangeText={trackDraft('ai_model_base_url')}
             onCommit={(v) => saveSetting('ai_model_base_url', v)}
           />
         </FieldRow>
@@ -943,6 +1014,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             secure
             sc={sc}
             focusColor={INTERACTIVE}
+            onChangeText={trackDraft('stt_api_key')}
             onCommit={(v) => saveSetting('stt_api_key', v)}
           />
         </FieldRow>
@@ -954,6 +1026,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
+            onChangeText={trackDraft('stt_base_url')}
             onCommit={(v) => saveSetting('stt_base_url', v)}
           />
         </FieldRow>
@@ -964,6 +1037,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('stt_model')}
             onCommit={(v) => saveSetting('stt_model', v)}
           />
         </FieldRow>
@@ -983,6 +1057,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('harness_node_path')}
             onCommit={(v) => saveSetting('harness_node_path', v)}
           />
         </FieldRow>
@@ -993,6 +1068,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('harness_dsh_path')}
             onCommit={(v) => saveSetting('harness_dsh_path', v)}
           />
         </FieldRow>
@@ -1003,6 +1079,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('harness_model')}
             onCommit={(v) => saveSetting('harness_model', v)}
           />
         </FieldRow>
@@ -1013,6 +1090,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             secure
             sc={sc}
             focusColor={INTERACTIVE}
+            onChangeText={trackDraft('harness_api_key')}
             onCommit={(v) => saveSetting('harness_api_key', v)}
           />
         </FieldRow>
@@ -1024,6 +1102,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             focusColor={INTERACTIVE}
             keyboardType="url"
             autoCapitalize="none"
+            onChangeText={trackDraft('harness_base_url')}
             onCommit={(v) => saveSetting('harness_base_url', v)}
           />
         </FieldRow>
@@ -1041,6 +1120,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('project_root')}
             onCommit={(v) => saveSetting('project_root', v)}
           />
         </FieldRow>
@@ -1051,6 +1131,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
+            onChangeText={trackDraft('termux_path')}
             onCommit={(v) => saveSetting('termux_path', v)}
           />
         </FieldRow>
@@ -1063,6 +1144,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             secure
             sc={sc}
             focusColor={INTERACTIVE}
+            onChangeText={trackDraft('github_token')}
             onCommit={(v) => saveSetting('github_token', v)}
           />
         </FieldRow>
@@ -1341,7 +1423,24 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               entering={SlideInRight.duration(300).easing(Easing.out(Easing.ease))}
               exiting={FadeOutLeft.duration(200)}
             >
-              <SubPageHeader title={sectionTitle[section]} onBack={() => setSection(null)} bar={ACCENT} colors={colors} styles={styles} />
+              <SubPageHeader
+                title={sectionTitle[section]}
+                onBack={() => setSection(null)}
+                bar={ACCENT}
+                colors={colors}
+                styles={styles}
+                right={
+                  SECTION_KEYS[section].length > 0 ? (
+                    <Pressable
+                      style={[styles.saveBtn, { backgroundColor: ACCENT }]}
+                      onPress={() => saveAll(SECTION_KEYS[section])}
+                    >
+                      <AppIcon name="check-circle" size={14} color="#FFFFFF" />
+                      <Text style={styles.saveBtnText}>保存</Text>
+                    </Pressable>
+                  ) : undefined
+                }
+              />
               {section === 'account' && accountPage}
               {section === 'ai' && aiPage}
               {section === 'dev' && devPage}
@@ -1651,6 +1750,19 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: fontSize.lg,
       fontWeight: '700',
       marginLeft: spacing.xs,
+    },
+    saveBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 6,
+      borderRadius: radius.md,
+    },
+    saveBtnText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#FFFFFF',
     },
     fieldRow: {
       paddingHorizontal: 16,

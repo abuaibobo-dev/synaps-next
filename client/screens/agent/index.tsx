@@ -13,6 +13,7 @@ import {
   Modal,
   Share,
   useWindowDimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import EventSource from 'react-native-sse';
 import * as Clipboard from 'expo-clipboard';
@@ -158,8 +159,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const isSideBySide = windowWidth >= 600 && windowWidth > windowHeight * 0.8;
   const insets = useSafeAreaInsets();
   const [keyboardShown, setKeyboardShown] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [inputAreaHeight, setInputAreaHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const esRef = useRef<EventSource | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -317,13 +316,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const s1 = Keyboard.addListener(showEvent, (e) => {
+    const s1 = Keyboard.addListener(showEvent, () => {
       setKeyboardShown(true);
-      setKeyboardHeight(e.endCoordinates?.height ?? 0);
     });
     const s2 = Keyboard.addListener(hideEvent, () => {
       setKeyboardShown(false);
-      setKeyboardHeight(0);
     });
     return () => {
       s1.remove();
@@ -883,13 +880,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     ? projectOptions.find((p) => p.id === currentProjectId)?.name
     : null;
 
-  const bottomOffset = keyboardShown
-    ? (Platform.OS === 'ios' ? keyboardHeight : 0)
-    : insets.bottom;
-
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable={false}>
-      <View style={styles.container}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
         <View style={styles.panes}>
         <View style={[styles.leftPane, isSideBySide && styles.leftPaneWide]}>
         {/* Header */}
@@ -1002,7 +999,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           style={styles.messageList}
           contentContainerStyle={[
             styles.messageContentArea,
-            { paddingBottom: inputAreaHeight + bottomOffset + spacing.md },
+            { paddingBottom: spacing.lg },
           ]}
           onContentSizeChange={() => {
             flatListRef.current?.scrollToEnd({ animated: true });
@@ -1072,8 +1069,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
         {/* Input */}
         <View
-          style={[styles.inputContainer, { bottom: bottomOffset }]}
-          onLayout={(e) => setInputAreaHeight(e.nativeEvent.layout.height)}
+          style={[styles.inputContainer, { paddingBottom: keyboardShown ? spacing.md : insets.bottom + spacing.md }]}
         >
           {replyingTo && (
             <View style={styles.replyBar}>
@@ -1103,6 +1099,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               value={inputText}
               onChangeText={setInputText}
               multiline
+              numberOfLines={1}
+              scrollEnabled
               maxLength={2000}
               editable={!isStreaming && !isRecording}
               returnKeyType="default"
@@ -1368,7 +1366,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </View>
           </View>
         </Modal>
-      </View>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
@@ -1494,6 +1492,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   container: {
     flex: 1,
+    height: '100%',
   },
   header: {
     flexDirection: 'row',
@@ -1853,9 +1852,6 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     lineHeight: 20,
   },
   inputContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.lg,
     paddingTop: spacing.sm,
@@ -1920,9 +1916,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flex: 1,
     color: colors.textPrimary,
     fontSize: fontSize.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     maxHeight: 120,
-    minHeight: 44,
+    minHeight: 36,
   },
   sendButton: {
     width: 36,
