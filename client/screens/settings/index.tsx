@@ -111,7 +111,6 @@ const MODE_OPTIONS: Array<{ key: ThemeMode; label: string }> = [
   { key: 'dark', label: '深色' },
 ];
 
-const MODE_LABEL: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' };
 
 const PROVIDER_OPTIONS: Array<{ key: ProviderKey; label: string }> = [
   { key: 'deepseek', label: 'DeepSeek' },
@@ -854,27 +853,26 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const mainPage = (
     <>
       <SettingsGroup title="账户与安全" sc={sc} bar={ACCENT}>
-        <SettingRow label="账户与安全" value={balanceText} icon="user" iconColor={ACCENT} sc={sc} onPress={() => setSection('account')} last />
+        <SettingRow label="账户与安全" icon="user" iconColor={ACCENT} sc={sc} onPress={() => setSection('account')} last />
       </SettingsGroup>
       <SettingsGroup title="AI 模型" sc={sc} bar={ACCENT}>
-        <SettingRow label="AI 模型" value={settings.ai_model} icon="bot" iconColor={ACCENT} sc={sc} onPress={() => setSection('ai')} last />
+        <SettingRow label="AI 模型" icon="bot" iconColor={ACCENT} sc={sc} onPress={() => setSection('ai')} last />
       </SettingsGroup>
       <SettingsGroup title="开发环境" sc={sc} bar={ACCENT}>
-        <SettingRow label="开发环境" value="Termux · GitHub · 构建" icon="terminal" iconColor={ACCENT} sc={sc} onPress={() => setSection('dev')} last />
+        <SettingRow label="开发环境" icon="terminal" iconColor={ACCENT} sc={sc} onPress={() => setSection('dev')} last />
       </SettingsGroup>
       <SettingsGroup title="外观" sc={sc} bar={ACCENT}>
-        <SettingRow label="外观" value={MODE_LABEL[mode]} icon="palette" iconColor={ACCENT} sc={sc} onPress={() => setSection('appearance')} last />
+        <SettingRow label="外观" icon="palette" iconColor={ACCENT} sc={sc} onPress={() => setSection('appearance')} last />
       </SettingsGroup>
       <SettingsGroup title="安全" sc={sc} bar={ACCENT}>
-        <SettingRow label="安全" value={`${trustedProjects.length} 个可信项目`} icon="shield" iconColor={ACCENT} sc={sc} onPress={() => setSection('security')} last />
+        <SettingRow label="安全" icon="shield" iconColor={ACCENT} sc={sc} onPress={() => setSection('security')} last />
       </SettingsGroup>
       <SettingsGroup title="技能与 MCP" sc={sc} bar={ACCENT}>
-        <SettingRow label="技能与 MCP" value={`${mcpServers.length} MCP · ${skills.length} 技能`} icon="plug" iconColor={ACCENT} sc={sc} onPress={() => setSection('skills')} last />
+        <SettingRow label="技能与 MCP" icon="plug" iconColor={ACCENT} sc={sc} onPress={() => setSection('skills')} last />
       </SettingsGroup>
       <SettingsGroup title="存储与日志" sc={sc} bar={ACCENT}>
         <SettingRow
           label="存储与日志"
-          value={storageSize}
           icon="database"
           iconColor={ACCENT}
           sc={sc}
@@ -886,7 +884,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         />
       </SettingsGroup>
       <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
-        <SettingRow label="关于" value="v1.1.0" icon="info" iconColor={ACCENT} sc={sc} onPress={() => setSection('about')} last />
+        <SettingRow label="关于" icon="info" iconColor={ACCENT} sc={sc} onPress={() => setSection('about')} last />
       </SettingsGroup>
       <Pressable
         style={[styles.clearCard, { backgroundColor: sc.cardBg, borderColor: sc.cardBorder }]}

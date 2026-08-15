@@ -1,14 +1,30 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, ActivityIndicator, Keyboard, Platform } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  ScrollView,
+  TouchableOpacity,
+  Animated,
+  Keyboard,
+  Platform,
+} from 'react-native';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
 const API_BASE = getApiBase();
 import { FontAwesome6 } from '@expo/vector-icons';
-import { spacing, radius, fontSize } from '@/utils/theme';
-import type { ThemeColors } from '@/utils/theme';
-import { useThemeColors } from '@/components/ThemeProvider';
+import { spacing } from '@/utils/theme';
+
+// 黑客风（矩阵绿 / 纯黑）
+const BG = '#000000';
+const GREEN = '#00FF41';
+const OUTPUT = '#C0C0C0';
+const DIM = '#4A4A4A';
+const FAIL = '#FF0044';
+const MONO = 'monospace';
 
 interface TerminalScreenProps {
   onOpenSidebar: () => void;
@@ -24,10 +40,7 @@ interface CommandResult {
   timestamp: Date;
 }
 
-
 export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
-  const { colors, isDark } = useThemeColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
   const [command, setCommand] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [history, setHistory] = useState<CommandResult[]>([]);
@@ -37,6 +50,19 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
   const [keyboardShown, setKeyboardShown] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [bottomBarHeight, setBottomBarHeight] = useState(0);
+
+  // 绿色闪烁动画（执行中 / 光标方块）
+  const blink = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(blink, { toValue: 0.15, duration: 500, useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [blink]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -61,17 +87,12 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
     const cmd = command.trim();
     setCommand('');
     setIsExecuting(true);
-    setCommandHistory(prev => [cmd, ...prev.slice(0, 49)]);
+    setCommandHistory((prev) => [cmd, ...prev.slice(0, 49)]);
     setHistoryIndex(-1);
 
     const startTime = Date.now();
 
     try {
-      /**
-       * 服务端文件：server/src/routes/terminal.ts
-       * 接口：POST /api/v1/terminal/exec
-       * Body 参数：command: string, cwd?: string
-       */
       const response = await fetch(`${API_BASE}/api/v1/terminal/exec`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,7 +116,7 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
         timestamp: new Date(),
       };
 
-      setHistory(prev => [...prev, result]);
+      setHistory((prev) => [...prev, result]);
     } catch (error) {
       const duration = Date.now() - startTime;
       const result: CommandResult = {
@@ -107,7 +128,7 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
         duration,
         timestamp: new Date(),
       };
-      setHistory(prev => [...prev, result]);
+      setHistory((prev) => [...prev, result]);
     } finally {
       setIsExecuting(false);
       setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
@@ -136,128 +157,98 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
     setHistory([]);
   };
 
-  const bottomOffset = keyboardShown
-    ? (Platform.OS === 'ios' ? keyboardHeight : 0)
-    : 0;
+  const lastFailed = history.length > 0 && history[history.length - 1].exitCode !== 0;
+  const bottomOffset = keyboardShown ? (Platform.OS === 'ios' ? keyboardHeight : 0) : 0;
 
   return (
-    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
+    <Screen backgroundColor={BG} statusBarStyle="light" scrollable>
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
-          <Text style={styles.headerTitle}>终端</Text>
-          <TouchableOpacity onPress={clearHistory} style={styles.clearButton}>
-            <FontAwesome6 name="trash" size={14} color={colors.textMuted} />
+          <Text style={styles.headerTitle}>⚡ TERMINAL</Text>
+          <View style={styles.headerSpacer} />
+          <TouchableOpacity onPress={clearHistory} style={styles.clearButton} hitSlop={8}>
+            <FontAwesome6 name="trash" size={13} color={DIM} />
           </TouchableOpacity>
-          <View style={styles.terminalBadge}>
-            <View style={[styles.badgeDot, { backgroundColor: colors.success }]} />
-            <Text style={styles.badgeText}>CONNECTED</Text>
-          </View>
         </View>
 
-        {/* Terminal Area */}
-        <View style={styles.terminalWindow}>
-          <View style={styles.terminalBar}>
-            <View style={styles.terminalDots}>
-              <View style={[styles.dot, { backgroundColor: colors.error }]} />
-              <View style={[styles.dot, { backgroundColor: colors.warning }]} />
-              <View style={[styles.dot, { backgroundColor: colors.success }]} />
+        {/* Terminal Output */}
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.terminalBody}
+          contentContainerStyle={[
+            styles.terminalContent,
+            { paddingBottom: bottomBarHeight + bottomOffset + spacing.md },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {history.length === 0 && !isExecuting && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>SYNAPS TERMINAL</Text>
+              <Text style={styles.emptySubtext}>输入命令开始执行</Text>
             </View>
-            <Text style={styles.terminalTitle}>synaps-terminal</Text>
-          </View>
+          )}
 
-          <ScrollView
-            ref={scrollViewRef}
-            style={styles.terminalBody}
-            contentContainerStyle={[
-              styles.terminalContent,
-              { paddingBottom: bottomBarHeight + bottomOffset + spacing.md },
-            ]}
-            showsVerticalScrollIndicator={false}
-          >
-            {history.length === 0 && (
-              <View style={styles.emptyState}>
-                <FontAwesome6 name="terminal" size={32} color={colors.textMuted} />
-                <Text style={styles.emptyText}>Synaps Terminal</Text>
-                <Text style={styles.emptySubtext}>输入命令开始执行</Text>
-              </View>
-            )}
-
-            {history.map((item) => (
+          {history.map((item) => {
+            const ok = item.exitCode === 0;
+            return (
               <View key={item.id} style={styles.commandBlock}>
-                <View style={styles.commandLine}>
-                  <Text style={styles.prompt}>synaps@device</Text>
-                  <Text style={styles.at}>:</Text>
-                  <Text style={styles.path}>~</Text>
-                  <Text style={styles.dollar}>$ </Text>
+                <Text style={styles.commandLine}>
+                  <Text style={styles.prompt}>synaps@device:~$ </Text>
                   <Text style={styles.commandText}>{item.command}</Text>
-                </View>
-                {item.output ? (
-                  <Text style={styles.outputText}>{item.output}</Text>
-                ) : null}
-                {item.error ? (
-                  <Text style={styles.errorText}>{item.error}</Text>
-                ) : null}
-                <View style={styles.resultInfo}>
-                  <Text style={[
-                    styles.exitCode,
-                    { color: item.exitCode === 0 ? colors.success : colors.error }
-                  ]}>
-                    [{item.exitCode}]
-                  </Text>
-                  <Text style={styles.duration}>{item.duration}ms</Text>
-                </View>
+                </Text>
+                {item.output ? <Text style={styles.outputText}>{item.output}</Text> : null}
+                {item.error ? <Text style={styles.errorText}>{item.error}</Text> : null}
+                <Text style={[styles.resultLine, { color: ok ? GREEN : FAIL }]}>
+                  {ok ? '✓ 完成' : '✗ 失败'} ({(item.duration / 1000).toFixed(2)}s)
+                </Text>
               </View>
-            ))}
+            );
+          })}
 
-            {isExecuting && (
-              <View style={styles.executingLine}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                <Text style={styles.executingText}> 执行中...</Text>
-              </View>
-            )}
-          </ScrollView>
-        </View>
+          {isExecuting && (
+            <Animated.View style={[styles.executingLine, { opacity: blink }]}>
+              <Text style={styles.executingText}>⏳ 执行中...</Text>
+            </Animated.View>
+          )}
+        </ScrollView>
 
-        {/* Bottom Bar (fixed) */}
+        {/* Bottom Input */}
         <View
           style={[styles.bottomBar, { bottom: bottomOffset }]}
           onLayout={(e) => setBottomBarHeight(e.nativeEvent.layout.height)}
         >
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputPrompt}>$</Text>
+          <View style={[styles.inputRow, lastFailed && styles.inputRowFailed]}>
+            <Text style={styles.inputPrompt}>synaps@device:~$ </Text>
             <TextInput
               style={styles.input}
               value={command}
               onChangeText={setCommand}
               placeholder="输入命令..."
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor={DIM}
               autoCapitalize="none"
               autoCorrect={false}
               editable={!isExecuting}
               onSubmitEditing={executeCommand}
+              cursorColor={GREEN}
+              selectionColor={GREEN}
             />
             <TouchableOpacity
-              style={[styles.executeButton, isExecuting && styles.executeButtonDisabled]}
+              style={styles.executeButton}
               onPress={executeCommand}
               disabled={isExecuting || !command.trim()}
+              hitSlop={8}
             >
-              {isExecuting ? (
-                <ActivityIndicator size="small" color={colors.textPrimary} />
-              ) : (
-                <FontAwesome6 name="play" size={14} color={colors.textPrimary} />
-              )}
+              <Text style={[styles.executeIcon, (isExecuting || !command.trim()) && styles.executeDisabled]}>
+                {isExecuting ? '⏳' : '>'}
+              </Text>
             </TouchableOpacity>
           </View>
-
-          {/* Status Bar */}
           <View style={styles.statusBar}>
-            <View style={styles.statusItem}>
-              <View style={[styles.statusIndicator, { backgroundColor: colors.success }]} />
-              <Text style={styles.statusLabel}>READY</Text>
-            </View>
-            <Text style={styles.statusInfo}>{history.length} commands executed</Text>
+            <Text style={styles.statusLabel}>{isExecuting ? 'RUNNING' : 'READY'}</Text>
+            <Text style={styles.statusInfo}>{history.length} commands</Text>
           </View>
         </View>
       </View>
@@ -265,85 +256,37 @@ export default function TerminalScreen({ onOpenSidebar }: TerminalScreenProps) {
   );
 }
 
-const createStyles = (colors: ThemeColors) => StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
+    backgroundColor: BG,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
-    gap: spacing.md,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: fontSize.xl,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  clearButton: {
-    padding: spacing.xs,
-  },
-  terminalBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  badgeDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-  },
-  badgeText: {
-    fontSize: fontSize.xs,
-    color: colors.success,
-    fontWeight: '600',
-  },
-  terminalWindow: {
-    flex: 1,
-    backgroundColor: '#0A0A0F',
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    overflow: 'hidden',
-  },
-  terminalBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#1A1A1A',
   },
-  terminalDots: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  terminalTitle: {
+  headerSpacer: {
     flex: 1,
-    textAlign: 'center',
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    fontWeight: '500',
+  },
+  headerTitle: {
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
+    letterSpacing: 2,
+    fontWeight: '700',
+  },
+  clearButton: {
+    padding: 4,
   },
   terminalBody: {
     flex: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   terminalContent: {
     flexGrow: 1,
@@ -352,154 +295,124 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.xl * 2,
+    gap: 6,
+    paddingVertical: 80,
   },
-  emptyText: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-    fontWeight: '600',
+  emptyTitle: {
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
+    letterSpacing: 2,
   },
   emptySubtext: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
+    color: DIM,
+    fontSize: 13,
+    fontFamily: MONO,
   },
   commandBlock: {
-    marginBottom: spacing.md,
+    marginBottom: 12,
   },
   commandLine: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 4,
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
+    lineHeight: 19,
   },
   prompt: {
-    color: colors.primary,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  at: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  path: {
-    color: colors.info,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  dollar: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    color: GREEN,
   },
   commandText: {
-    color: colors.textPrimary,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    color: GREEN,
   },
   outputText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-    lineHeight: 20,
+    color: OUTPUT,
+    fontSize: 13,
+    fontFamily: MONO,
+    lineHeight: 19,
+    marginTop: 2,
   },
   errorText: {
-    color: colors.error,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-    lineHeight: 20,
+    color: FAIL,
+    fontSize: 13,
+    fontFamily: MONO,
+    lineHeight: 19,
+    marginTop: 2,
   },
-  resultInfo: {
-    flexDirection: 'row',
-    gap: spacing.md,
+  resultLine: {
+    fontSize: 13,
+    fontFamily: MONO,
+    lineHeight: 19,
     marginTop: 4,
-  },
-  exitCode: {
-    fontSize: fontSize.xs,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
-  },
-  duration: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
   executingLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
+    paddingVertical: 8,
   },
   executingText: {
-    color: colors.textMuted,
-    fontSize: fontSize.sm,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
   },
   bottomBar: {
     position: 'absolute',
     left: 0,
     right: 0,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: spacing.md,
-    backgroundColor: colors.bgRoot,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    backgroundColor: BG,
   },
-  inputContainer: {
+  inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
+    paddingBottom: 4,
+  },
+  inputRowFailed: {
+    borderBottomColor: FAIL,
   },
   inputPrompt: {
-    color: colors.primary,
-    fontSize: fontSize.md,
-    fontWeight: '700',
-    marginRight: spacing.sm,
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
   },
   input: {
     flex: 1,
-    color: colors.textPrimary,
-    fontSize: fontSize.sm,
-    paddingVertical: spacing.md,
-    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
+    paddingVertical: 8,
+    paddingLeft: 0,
   },
   executeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
-  executeButtonDisabled: {
-    opacity: 0.5,
+  executeIcon: {
+    color: GREEN,
+    fontSize: 13,
+    fontFamily: MONO,
+    fontWeight: '700',
+  },
+  executeDisabled: {
+    color: DIM,
   },
   statusBar: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.md,
-  },
-  statusItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  statusIndicator: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    paddingTop: 6,
   },
   statusLabel: {
-    fontSize: fontSize.xs,
-    color: colors.success,
-    fontWeight: '600',
+    color: DIM,
+    fontSize: 11,
+    fontFamily: MONO,
+    letterSpacing: 1,
   },
   statusInfo: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
+    color: DIM,
+    fontSize: 11,
+    fontFamily: MONO,
   },
 });
