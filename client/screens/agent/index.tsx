@@ -147,6 +147,14 @@ function formatRelativeTime(ts: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function formatBalance(n: number): string {
+  if (!Number.isFinite(n)) return '0.00';
+  const v = Math.round(n * 100) / 100;
+  if (v >= 100000000) return `${(v / 100000000).toFixed(2)}亿`;
+  if (v >= 10000) return `${(v / 10000).toFixed(2)}万`;
+  return v.toFixed(2);
+}
+
 interface ToolCall {
   name: string;
   args: Record<string, unknown>;
@@ -1179,9 +1187,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               {item.status === 'cancelled' && <Text style={styles.messageStatusPending}>已取消</Text>}
             </View>
           )}
-          <Text style={styles.messageTime}>{formatRelativeTime(item.timestamp)}</Text>
         </View>
       </Pressable>
+      <Text style={styles.messageTime}>{formatRelativeTime(item.timestamp)}</Text>
       </Animated.View>
     );
   }, [openMessageMenu, styles, messageEntry]);
@@ -1200,7 +1208,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.panes}>
@@ -1229,7 +1237,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             {balance !== null && (
               <Pressable style={styles.balanceBadge} onPress={openTopUp} hitSlop={6}>
                 <FontAwesome6 name="coins" size={10} color={colors.primary} />
-                <Text style={styles.balanceText}>{balanceCurrency}{balance.toFixed(2)}</Text>
+                <Text style={styles.balanceText} numberOfLines={1}>{balanceCurrency}{formatBalance(balance)}</Text>
               </Pressable>
             )}
             <Pressable style={styles.rechargeBtn} onPress={openTopUp} hitSlop={6}>
@@ -1516,10 +1524,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               disabled={!inputText.trim()}
             >
               <FontAwesome6
-                name={isStreaming ? 'spinner' : 'paper-plane'}
-                size={14}
-                color={(!inputText.trim() || isStreaming) ? colors.textMuted : colors.primary}
+                name={isStreaming ? 'spinner' : 'arrow-up'}
+                size={16}
+                color={(!inputText.trim() || isStreaming) ? colors.textMuted : '#FFFFFF'}
                 spin={isStreaming}
+                weight={400}
               />
             </Pressable>
           </View>
@@ -1992,11 +2001,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: colors.border,
+    flexShrink: 1,
   },
   balanceText: {
     fontSize: fontSize.xs,
     color: colors.textSecondary,
     fontWeight: '600',
+    flexShrink: 1,
   },
   rechargeBtn: {
     flexDirection: 'row',
@@ -2357,19 +2368,19 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   textInput: {
     flex: 1,
     color: colors.textPrimary,
-    fontSize: fontSize.md,
-    paddingVertical: spacing.sm,
-    maxHeight: 132,
-    minHeight: 46,
+    fontSize: 16,
+    paddingVertical: 10,
+    maxHeight: 140,
+    minHeight: 54,
   },
   sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primaryGlow,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    marginBottom: 5,
     marginLeft: spacing.sm,
     borderWidth: 1,
     borderColor: colors.primaryBorder,
@@ -2578,10 +2589,11 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '600',
   },
   messageTime: {
-    marginTop: 4,
     fontSize: 9,
     color: colors.textMuted,
     alignSelf: 'flex-end',
+    marginLeft: spacing.sm,
+    marginRight: 2,
   },
   streamCursor: {
     color: colors.primary,

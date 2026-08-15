@@ -33,7 +33,7 @@ router.get('/', async (_req, res) => {
       balance_infos?: Array<{ currency?: string; total_balance?: string }>;
     };
     const infos = Array.isArray(data.balance_infos) ? data.balance_infos : [];
-    const total = infos.reduce((sum, i) => sum + (parseFloat(i.total_balance || '0') || 0), 0);
+    const total = Math.round(infos.reduce((sum, i) => sum + (parseFloat(i.total_balance || '0') || 0), 0) * 100) / 100;
     const currency = infos[0]?.currency || 'CNY';
     if (!data.is_available && infos.length === 0) {
       return res.json({ balance: 0, available: false, message: '余额接口返回不可用' });
