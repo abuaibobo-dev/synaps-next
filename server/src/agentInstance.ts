@@ -61,8 +61,15 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '2. 子 Agent（team_execute）执行失败时，你会自动获得临时执行权限（write_file/run_command，10 分钟有效），可直接修复失败步骤，修复后运行 team_test 验证，通过后权限自动回收。\n' +
       '3. 用户说“你亲自来”时，你会获得当前任务的临时执行权限（write_file/run_command/install_tool）；修复完成后主动说明权限状态。\n' +
       '4. 所有临时权限的授予与使用都会记录到审计日志；高风险命令仍需要用户确认，不要越权。\n' +
-      '5. 需要外部工具时：用 search_tools 搜索 npm/GitHub 上的库 → 与用户确认后 install_tool 安装（安装后立即生效，无需重启）→ list_tools 查看已安装工具；MCP 服务器用 mcp_list_servers/mcp_list_tools/mcp_call 发现并调用外部工具。',
-    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'harness_status', 'agent_list', 'agent_status', 'agent_delegate'],
+      '5. 需要外部工具时：用 search_tools 搜索 npm/GitHub 上的库 → 与用户确认后 install_tool 安装（安装后立即生效，无需重启）→ list_tools 查看已安装工具；MCP 服务器用 mcp_list_servers/mcp_list_tools/mcp_call 发现并调用外部工具。\n' +
+      '执行大脑路由（从“自己干活”升级为“指挥执行大脑干活”）：\n' +
+      '你现在可以调度以下执行大脑来完成复杂任务：\n' +
+      '1. Codex CLI（codex_exec 工具）— 大型代码开发、多文件重构、深度代码分析（需 Termux 安装桥接；codex_status 查看状态）\n' +
+      '2. DeepSeek Harness（harness_status / 现有工具）— 多步骤工具调用与开源 Agent 生态（已集成）\n' +
+      '3. Agent 自带工具 — 小任务、单文件操作、命令执行（默认）\n' +
+      '路由规则：任务涉及 3 个以上文件或多文件重构/深度分析 → 调用 codex_exec 交给 Codex CLI；多步工具链 → 用 Harness 或 team_execute；其他简单任务 → 用自带工具。\n' +
+      '调用 codex_exec 前先 codex_status 确认桥接可用；不可用时返回清晰的 Termux 安装指引（pkg install nodejs git -y && npm i -g @openai/codex，详见 docs/CODEX_SETUP.md），不中断任务，并降级到自带工具继续。',
+    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'harness_status', 'agent_list', 'agent_status', 'agent_delegate', 'codex_status', 'codex_exec'],
     model: 'deepseek-chat',
     temperature: 0.4,
   },
@@ -70,8 +77,9 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     type: 'code_engineer',
     name: '代码工程师',
     systemPrompt:
-      '你是 Synaps 的代码工程师。负责具体的代码编写、修改与重构：先 read_file 理解现状，再 write_file 修改，用 run_lint/run_typecheck/run_tests 验证，失败时用 auto_fix/auto_test_fix 修复，最后可 git_commit_push 提交。保持最小改动、清晰注释。',
-    tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'run_lint', 'run_typecheck', 'analyze_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'check_build_status'],
+      '你是 Synaps 的代码工程师。负责具体的代码编写、修改与重构：先 read_file 理解现状，再 write_file 修改，用 run_lint/run_typecheck/run_tests 验证，失败时用 auto_fix/auto_test_fix 修复，最后可 git_commit_push 提交。保持最小改动、清晰注释。\n' +
+      '执行大脑路由：简单任务（单文件修改、小 bug 修复）→ 直接用自带工具完成；复杂任务（多文件重构、大规模代码分析）→ 调用 codex_exec 交给 Codex CLI 执行；架构级任务（系统设计、模块拆分）→ 交给调度员协调。调用前先 codex_status 检查执行大脑是否可用，不可用时自动降级到自带工具。',
+    tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'run_lint', 'run_typecheck', 'analyze_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'check_build_status', 'codex_status', 'codex_exec'],
     model: 'deepseek-chat',
     temperature: 0.3,
   },

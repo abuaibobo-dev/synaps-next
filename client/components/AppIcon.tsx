@@ -79,18 +79,19 @@ interface AppIconProps {
   size?: number;
   color?: string;
   spin?: boolean;
+  style?: React.ComponentProps<typeof Feather>['style'];
 }
 
-export function AppIcon({ name, size = 20, color = '#000', spin = false }: AppIconProps) {
+export function AppIcon({ name, size = 20, color = '#000', spin = false, style }: AppIconProps) {
   const featherName = FEATHER_NAMES[name];
   if (featherName) {
-    return <Feather name={featherName} size={size} color={color} />;
+    return <Feather name={featherName} size={size} color={color} style={style} />;
   }
   const faName = FA6_FALLBACK[name];
   if (faName) {
-    return <FontAwesome6 name={faName} size={size} color={color} spin={spin} />;
+    return <FontAwesome6 name={faName} size={size} color={color} spin={spin} style={style} />;
   }
-  return <Feather name="circle" size={size} color={color} />;
+  return <Feather name="circle" size={size} color={color} style={style} />;
 }
 
 // 工具名 → 图标语义名

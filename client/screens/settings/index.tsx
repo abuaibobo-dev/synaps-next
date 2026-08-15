@@ -55,6 +55,14 @@ interface Settings {
   harness_model: string;
   harness_api_key: string;
   harness_base_url: string;
+  codex_enabled: string;
+  codex_api_key: string;
+  codex_bridge_url: string;
+  codex_token: string;
+  codex_model: string;
+  codex_base_url: string;
+  codex_wire_api: string;
+  default_exec_brain: string;
   account_name: string;
   project_root: string;
   font_scale: string;
@@ -80,10 +88,25 @@ const DEFAULT_SETTINGS: Settings = {
   harness_model: 'deepseek-v4-flash',
   harness_api_key: '',
   harness_base_url: '',
+  codex_enabled: 'false',
+  codex_api_key: '',
+  codex_bridge_url: 'http://127.0.0.1:19290',
+  codex_token: '',
+  codex_model: 'deepseek-v4-flash',
+  codex_base_url: '',
+  codex_wire_api: 'responses',
+  default_exec_brain: 'auto',
   account_name: 'Synaps 用户',
   project_root: '/storage/emulated/0/Synaps',
   font_scale: 'medium',
 };
+
+interface BrainStatus {
+  codex: { enabled: boolean; bridgeUrl: string; reachable: boolean; version: string | null; note: string };
+  claude: { installed: boolean; version: string | null; note: string };
+  harness: { enabled: boolean; ready: boolean; note: string };
+  defaultBrain: string;
+}
 
 interface McpServer {
   name: string;
@@ -126,6 +149,13 @@ const FONT_OPTIONS: Array<{ key: FontKey; label: string }> = [
 const BUILD_OPTIONS: Array<{ key: 'github_actions' | 'local'; label: string }> = [
   { key: 'github_actions', label: 'GitHub Actions' },
   { key: 'local', label: '本地构建' },
+];
+
+const BRAIN_OPTIONS: Array<{ key: 'auto' | 'codex' | 'claude' | 'harness'; label: string }> = [
+  { key: 'auto', label: '自动' },
+  { key: 'codex', label: 'Codex' },
+  { key: 'claude', label: 'Claude' },
+  { key: 'harness', label: 'Harness' },
 ];
 
 const CONTEXT_LIMITS: Record<string, string> = {
@@ -309,6 +339,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [diagnosticsData, setDiagnosticsData] = useState<Record<string, any> | null>(null);
   const [guideVisible, setGuideVisible] = useState(false);
   const [balance, setBalance] = useState<{ balance: number; available: boolean; message?: string } | null>(null);
+  const [balanceRefreshing, setBalanceRefreshing] = useState(false);
   const [storageSize, setStorageSize] = useState('计算中...');
 
   const fetchSettings = useCallback(async () => {
@@ -388,17 +419,42 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }, [fetchMcpAndSkills]);
 
   const fetchBalance = useCallback(async () => {
+    setBalanceRefreshing(true);
     try {
       const res = await fetch(`${API_BASE}/api/v1/balance`);
-      if (res.ok) setBalance(await res.json());
+      if (res.ok) {
+        setBalance(await res.json());
+      } else {
+        setBalance({ balance: 0, available: false, message: `刷新失败（${res.status}），请检查后端服务` });
+      }
     } catch {
-      // Ignore
+      setBalance({ balance: 0, available: false, message: '刷新失败：后端服务未运行，请检查通知栏「本地后端服务运行中」' });
+    } finally {
+      setBalanceRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     fetchBalance();
   }, [fetchBalance]);
+
+  const [brains, setBrains] = useState<BrainStatus | null>(null);
+  const [brainsRefreshing, setBrainsRefreshing] = useState(false);
+  const fetchBrains = useCallback(async () => {
+    setBrainsRefreshing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/brains/status`);
+      if (res.ok) setBrains((await res.json()) as BrainStatus);
+    } catch {
+      // 后端未运行时保持上次状态
+    } finally {
+      setBrainsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBrains();
+  }, [fetchBrains]);
 
   // 自动检查最新版本（GitHub Releases）
   useEffect(() => {
@@ -943,6 +999,19 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     }
   }, []);
 
+  const codexBrainText = useMemo(() => {
+    if (!brains) return '检测中...';
+    if (!brains.codex.enabled) return '未启用';
+    if (brains.codex.reachable) return `✅ 已连接 ${brains.codex.version || ''}`.trim();
+    return '⚠️ 未连接';
+  }, [brains]);
+
+  const claudeBrainText = useMemo(() => {
+    if (!brains) return '检测中...';
+    if (brains.claude.installed) return `✅ 已安装 ${brains.claude.version || ''}`.trim();
+    return '⚠️ 未安装';
+  }, [brains]);
+
   const mainPage = (
     <>
       <SettingsGroup title="账户与安全" sc={sc} bar={ACCENT}>
@@ -1028,8 +1097,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           iconColor={ACCENT}
           sc={sc}
           right={
-            <Pressable onPress={fetchBalance} hitSlop={8} style={styles.refreshBtn}>
-              <AppIcon name="refresh-cw" size={16} color={sc.arrow} />
+            <Pressable onPress={fetchBalance} hitSlop={8} disabled={balanceRefreshing} style={styles.refreshBtn}>
+              <AppIcon
+                name="refresh-cw"
+                size={16}
+                color={sc.arrow}
+                style={balanceRefreshing ? { opacity: 0.5 } : undefined}
+              />
             </Pressable>
           }
           last
@@ -1093,42 +1167,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         </FieldRow>
         <FieldRow styles={styles} label="上下文限制" sc={sc} last>
           <Text style={[styles.fieldValue, { color: sc.value }]}>{contextLimit}</Text>
-        </FieldRow>
-      </SettingsGroup>
-      <SettingsGroup title="语音识别" sc={sc} bar={ACCENT}>
-        <FieldRow styles={styles} label="STT API Key" sc={sc}>
-          <UnderlineInput
-            value={settings.stt_api_key}
-            placeholder="sk-..."
-            secure
-            sc={sc}
-            focusColor={INTERACTIVE}
-            onChangeText={trackDraft('stt_api_key')}
-            onCommit={(v) => saveSetting('stt_api_key', v)}
-          />
-        </FieldRow>
-        <FieldRow styles={styles} label="STT 服务地址" sc={sc}>
-          <UnderlineInput
-            value={settings.stt_base_url}
-            placeholder="OpenAI 官方"
-            sc={sc}
-            focusColor={INTERACTIVE}
-            keyboardType="url"
-            autoCapitalize="none"
-            onChangeText={trackDraft('stt_base_url')}
-            onCommit={(v) => saveSetting('stt_base_url', v)}
-          />
-        </FieldRow>
-        <FieldRow styles={styles} label="STT 模型" sc={sc} last>
-          <UnderlineInput
-            value={settings.stt_model}
-            placeholder="whisper-1"
-            sc={sc}
-            focusColor={INTERACTIVE}
-            autoCapitalize="none"
-            onChangeText={trackDraft('stt_model')}
-            onCommit={(v) => saveSetting('stt_model', v)}
-          />
         </FieldRow>
       </SettingsGroup>
       <SettingsGroup title="DeepSeek Harness" sc={sc} bar={ACCENT}>
@@ -1195,6 +1233,133 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             onCommit={(v) => saveSetting('harness_base_url', v)}
           />
         </FieldRow>
+      </SettingsGroup>
+
+      <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT}>
+        <SettingRow
+          label="Codex CLI"
+          value={codexBrainText}
+          icon="terminal"
+          iconColor={ACCENT}
+          sc={sc}
+          right={
+            <Pressable onPress={fetchBrains} hitSlop={8} disabled={brainsRefreshing} style={styles.refreshBtn}>
+              <AppIcon
+                name="refresh-cw"
+                size={16}
+                color={sc.arrow}
+                style={brainsRefreshing ? { opacity: 0.5 } : undefined}
+              />
+            </Pressable>
+          }
+        />
+        <SettingRow label="Claude Code" value={claudeBrainText} icon="bot" iconColor={ACCENT} sc={sc} />
+        <SettingRow
+          label="DeepSeek Harness"
+          value={brains && brains.harness.ready ? '✅ 已就绪（内置）' : '检测中...'}
+          icon="database"
+          iconColor={ACCENT}
+          sc={sc}
+        />
+        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+          <Text style={[styles.fieldLabel, { color: sc.label }]}>默认执行大脑</Text>
+          <SegmentControl
+            options={BRAIN_OPTIONS}
+            value={settings.default_exec_brain || 'auto'}
+            onChange={(k) => saveSetting('default_exec_brain', k)}
+            activeColor={ACCENT}
+            inactiveBg={sc.underline}
+            textColor={sc.value}
+          />
+        </View>
+      </SettingsGroup>
+      <SettingsGroup title="Codex CLI" sc={sc} bar={ACCENT}>
+        <SettingRow
+          label="启用 Codex CLI"
+          icon="terminal"
+          iconColor={ACCENT}
+          sc={sc}
+          right={<AnimatedToggle value={settings.codex_enabled === 'true'} onValueChange={() => handleToggle('codex_enabled')} sc={sc} trackOn={INTERACTIVE} />}
+        />
+        <FieldRow styles={styles} label="桥接服务地址" sc={sc}>
+          <UnderlineInput
+            value={settings.codex_bridge_url}
+            placeholder="http://127.0.0.1:19290"
+            sc={sc}
+            focusColor={INTERACTIVE}
+            keyboardType="url"
+            autoCapitalize="none"
+            onChangeText={trackDraft('codex_bridge_url')}
+            onCommit={(v) => saveSetting('codex_bridge_url', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="访问令牌（可选）" sc={sc}>
+          <UnderlineInput
+            value={settings.codex_token}
+            placeholder="Termux 桥接脚本里设置的 x-codex-token"
+            secure
+            sc={sc}
+            focusColor={INTERACTIVE}
+            autoCapitalize="none"
+            onChangeText={trackDraft('codex_token')}
+            onCommit={(v) => saveSetting('codex_token', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="API Key（可选）" sc={sc}>
+          <UnderlineInput
+            value={settings.codex_api_key}
+            placeholder="留空使用 AI 模型 Key"
+            secure
+            sc={sc}
+            focusColor={INTERACTIVE}
+            autoCapitalize="none"
+            onChangeText={trackDraft('codex_api_key')}
+            onCommit={(v) => saveSetting('codex_api_key', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="模型" sc={sc}>
+          <UnderlineInput
+            value={settings.codex_model}
+            placeholder="deepseek-v4-flash"
+            sc={sc}
+            focusColor={INTERACTIVE}
+            autoCapitalize="none"
+            onChangeText={trackDraft('codex_model')}
+            onCommit={(v) => saveSetting('codex_model', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="API 地址" sc={sc}>
+          <UnderlineInput
+            value={settings.codex_base_url}
+            placeholder="https://api.deepseek.com（留空用 AI 模型的地址）"
+            sc={sc}
+            focusColor={INTERACTIVE}
+            keyboardType="url"
+            autoCapitalize="none"
+            onChangeText={trackDraft('codex_base_url')}
+            onCommit={(v) => saveSetting('codex_base_url', v)}
+          />
+        </FieldRow>
+        <FieldRow styles={styles} label="接口协议" sc={sc}>
+          <UnderlineInput
+            value={settings.codex_wire_api}
+            placeholder="responses"
+            sc={sc}
+            focusColor={INTERACTIVE}
+            autoCapitalize="none"
+            onChangeText={trackDraft('codex_wire_api')}
+            onCommit={(v) => saveSetting('codex_wire_api', v)}
+          />
+        </FieldRow>
+        <SettingRow
+          label="Termux 安装说明"
+          icon="info"
+          iconColor={ACCENT}
+          sc={sc}
+          onPress={() => Linking.openURL('https://github.com/abuaibobo-dev/synaps-next/blob/master/docs/CODEX_SETUP.md').catch(() => {})}
+          right={<Text style={[styles.fieldValue, { color: sc.value }]}>查看</Text>}
+          last
+        />
       </SettingsGroup>
     </>
   );

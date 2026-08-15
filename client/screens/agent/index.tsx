@@ -187,6 +187,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [displayedText, setDisplayedText] = useState('');
+  const typewriterRef = useRef('');
   const [thinking, setThinking] = useState('');
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCall[]>([]);
@@ -348,17 +350,17 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         clearTimeout(t);
         if (cancelled) return;
         setBackendOnline(res.ok);
-        if (!res.ok) retryTimer = setTimeout(check, 5000);
       } catch {
         clearTimeout(t);
         if (cancelled) return;
         setBackendOnline(false);
-        retryTimer = setTimeout(check, 5000);
       }
     };
     check();
+    const timer = setInterval(check, 10000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
       if (retryTimer) clearTimeout(retryTimer);
     };
   }, []);
@@ -512,6 +514,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
     setIsStreaming(true);
     setStreamingContent('');
+    setDisplayedText('');
+    typewriterRef.current = '';
     setThinking('');
     setCurrentToolCalls([]);
 
@@ -543,6 +547,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     const watchdog = setInterval(() => {
       if (Date.now() - lastEventAt > 120_000) {
         clearInterval(watchdog);
+        clearInterval(typeTimer);
+        setDisplayedText(typewriterRef.current);
         try {
           fetch(`${API_BASE}/api/v1/chat/cancel`, {
             method: 'POST',
@@ -573,6 +579,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       }
     }, 10_000);
 
+    // 打字机：AI 内容逐字显示
+    const typeTimer = setInterval(() => {
+      setDisplayedText((prev) => {
+        const full = typewriterRef.current;
+        const next = Math.min(full.length, (prev ? prev.length : 0) + 3);
+        return full.slice(0, next);
+      });
+    }, 25);
+
     let accumulated = '';
     const executedToolCalls: ToolCall[] = [];
 
@@ -583,6 +598,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     // 收尾：更新消息状态、关闭流、处理队列下一个
     const finish = (userStatus: Message['status']) => {
       clearInterval(watchdog);
+      clearInterval(typeTimer);
+      setDisplayedText(typewriterRef.current);
       setMessages((prev) =>
         prev.map((m) => (m.id === item.userMsgId ? { ...m, status: userStatus } : m))
       );
@@ -609,6 +626,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         };
         setMessages((prev) => [...prev, assistantMessage]);
         patchTask((t) => ({ ...t, status: t.status === 'running' ? 'done' : t.status, endedAt: Date.now() }));
+        setDisplayedText(accumulated);
         finish('sent');
         if (autoSpeakRef.current) {
           const clean = accumulated.replace(/[#>*`\[\]]/g, '').slice(0, 500);
@@ -677,7 +695,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         if (parsed.content) {
           setNetworkError(false);
           accumulated += parsed.content;
-          setStreamingContent(accumulated);
+          typewriterRef.current = accumulated;
         }
         if (parsed.thinking) {
           setThinking((prev) => (prev ? prev + '\n\n' : '') + String(parsed.thinking));
@@ -699,7 +717,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         }
         if (parsed.error) {
           accumulated += `\n\nError: ${parsed.error}`;
-          setStreamingContent(accumulated);
+          typewriterRef.current = accumulated;
+          setDisplayedText(accumulated);
         }
       } catch {
         // Ignore parse errors for non-JSON data
@@ -714,11 +733,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           body: JSON.stringify({ requestId }),
         }).catch(() => {});
       } catch {}
+      setDisplayedText(accumulated);
       if (accumulated) {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: accumulated + '\n\n[Connection interrupted]',
+          content: accumulated + '\n\n[连接中断]',
           timestamp: Date.now(),
           status: 'error',
         };
@@ -727,7 +747,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: 'Connection failed. Please check if the backend service is running.',
+          content: '无法连接到后端服务。请确认：1) 通知栏出现「本地后端服务运行中」；2) 已绑定项目；3) 稍后自动重试。',
           timestamp: Date.now(),
           status: 'error',
         };
@@ -1373,15 +1393,35 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
         </Pressable>
 
-        {/* 后端未启动横幅 */}
-        {backendOnline === false && (
-          <View style={styles.backendBanner}>
-            <FontAwesome6 name="server" size={11} color="#FFFFFF" />
-            <Text style={styles.backendBannerText} numberOfLines={2}>
-              后端服务未启动，正在自动重试…（对话和工具暂不可用）
-            </Text>
-          </View>
-        )}
+        {/* 后端状态条（常驻） */}
+        <View
+          style={[
+            styles.backendStatusBar,
+            backendOnline === null
+              ? styles.backendStatusBarConnecting
+              : backendOnline
+                ? styles.backendStatusBarOnline
+                : styles.backendStatusBarOffline,
+          ]}
+        >
+          <View
+            style={[
+              styles.backendStatusDot,
+              backendOnline === null
+                ? styles.backendStatusDotConnecting
+                : backendOnline
+                  ? styles.backendStatusDotOnline
+                  : styles.backendStatusDotOffline,
+            ]}
+          />
+          <Text style={styles.backendStatusText} numberOfLines={1}>
+            {backendOnline === null
+              ? '后端 · 连接中…'
+              : backendOnline
+                ? '后端 · 已连接'
+                : '后端 · 离线，自动重试中（对话和工具暂不可用）'}
+          </Text>
+        </View>
 
         {/* Agent 类型选择器（独立上下文/角色） */}
         <View style={styles.agentSelector}>
@@ -1512,7 +1552,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.streamBubble]}>
                     <Text style={styles.messageContent}>
-                      {streamingContent}
+                      {displayedText}
                       <Animated.Text style={[styles.streamCursor, cursorStyle]}>▍</Animated.Text>
                     </Text>
                     {currentToolCalls.length > 0 && (
@@ -1673,15 +1713,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               <Pressable onPress={pickFile} style={styles.footerIconBtn} hitSlop={6}>
                 <FontAwesome6 name="paperclip" size={13} color={colors.textSecondary} />
               </Pressable>
-              <Pressable onPress={toggleAutoSpeak} style={styles.autoSpeakToggle}>
+              <Pressable onPress={toggleAutoSpeak} style={styles.footerIconBtn} hitSlop={6}>
                 <FontAwesome6
                   name={autoSpeak ? 'volume-high' : 'volume-xmark'}
-                  size={12}
+                  size={13}
                   color={autoSpeak ? colors.primary : colors.textMuted}
                 />
-                <Text style={[styles.autoSpeakText, autoSpeak && styles.autoSpeakTextActive]}>
-                  {autoSpeak ? 'Auto-speak ON' : 'Auto-speak OFF'}
-                </Text>
               </Pressable>
             </View>
             {isRecording && (
@@ -2261,12 +2298,12 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   messageContentArea: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.md,
   },
   messageRow: {
     flexDirection: 'column',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   messageRowUser: {
     alignItems: 'flex-end',
@@ -2287,7 +2324,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   messageBubble: {
     borderRadius: 16,
     paddingHorizontal: spacing.md,
-    paddingVertical: 8,
+    paddingVertical: 7,
   },
   userBubble: {
     backgroundColor: colors.primaryDark,
@@ -2831,21 +2868,47 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textSecondary,
     marginBottom: spacing.sm,
   },
-  backendBanner: {
+  backendStatusBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
-    backgroundColor: colors.warning,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
+    borderWidth: 1,
   },
-  backendBannerText: {
+  backendStatusBarOnline: {
+    backgroundColor: colors.bgCard,
+    borderColor: colors.border,
+  },
+  backendStatusBarConnecting: {
+    backgroundColor: colors.bgCard,
+    borderColor: colors.border,
+  },
+  backendStatusBarOffline: {
+    backgroundColor: 'rgba(244,67,54,0.10)',
+    borderColor: 'rgba(244,67,54,0.35)',
+  },
+  backendStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  backendStatusDotOnline: {
+    backgroundColor: colors.success,
+  },
+  backendStatusDotConnecting: {
+    backgroundColor: colors.warning,
+  },
+  backendStatusDotOffline: {
+    backgroundColor: colors.error,
+  },
+  backendStatusText: {
     flex: 1,
     fontSize: fontSize.xs,
-    color: '#FFFFFF',
+    color: colors.textSecondary,
     fontWeight: '600',
   },
   networkBanner: {

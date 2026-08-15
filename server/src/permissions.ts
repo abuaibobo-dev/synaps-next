@@ -91,6 +91,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'skill_deps':
     case 'project_export':
     case 'harness_status':
+    case 'codex_status':
     case 'device_status':
     case 'agent_list':
     case 'agent_status':
@@ -148,6 +149,8 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
       return { level: 'medium', impact: `操作手机屏幕：${(toolCall as any).type || '?'}（需无障碍服务，可信项目可自动批准）` };
     case 'harness_run':
       return { level: 'high', impact: '将任务交给 DeepSeek Harness 官方 Agent 在项目目录自主执行（可能修改代码/运行命令/推送）' };
+    case 'codex_exec':
+      return { level: 'high', impact: '将任务交给 Codex CLI Agent 在项目目录自主执行（可能修改代码/运行命令/推送）' };
     case 'run_command': {
       const cmd = toolCall.command || '';
       if (CRITICAL_PATTERNS.some((p) => p.test(cmd))) {
@@ -186,8 +189,8 @@ export function getTrustedProjects(): string[] {
   }
 }
 
-export function isProjectTrusted(projectId: string): boolean {
-  return getTrustedProjects().includes(projectId);
+export function isProjectTrusted(projectId: string | null): boolean {
+  return getTrustedProjects().includes(projectId || '');
 }
 
 export function setTrustedProjects(ids: string[]): void {

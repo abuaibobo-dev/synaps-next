@@ -10,6 +10,7 @@ import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } fro
 import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
 import { runHarnessTask, harnessStatus } from '../harness.js';
+import { runCodexTask, codexStatus, checkCodexBridge } from '../codex.js';
 import {
   deviceControlEnabled,
   enqueueDeviceAction,
@@ -114,7 +115,7 @@ function hasTempPermission(sessionId: string, tool: string): TempGrant | null {
 }
 
 function grantSchedulerTempPerms(
-  projectId: string,
+  projectId: string | null,
   sessionId: string,
   tools: string[],
   reason: string,
@@ -127,7 +128,7 @@ function grantSchedulerTempPerms(
   logAudit(projectId, 'temp_permission_grant', `${reason}（tools: ${tools.join(', ')}，有效期 10 分钟）`, 'medium', source);
 }
 
-function revokeSchedulerTempPerms(projectId: string, sessionId: string, reason: string): void {
+function revokeSchedulerTempPerms(projectId: string | null, sessionId: string, reason: string): void {
   const revoked = getTempGrants(sessionId);
   if (revoked.length === 0) return;
   tempPermissionRegistry.delete(sessionId);
@@ -192,6 +193,8 @@ You have access to tools that let you interact with the project files:
 - project_import: Import an AgentPack JSON to restore/migrate a project config (args: params.config with the JSON string). Medium risk, requires confirmation
 - harness_status: Check whether DeepSeek Harness is available (returns Node version, config status). Read-only.
 - harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
+- codex_status: Check whether the Codex CLI bridge is reachable (returns bridge status, Codex version, model config). Read-only.
+- codex_exec: Delegate a complex task to the official Codex CLI agent (args: task). Use for repo-level autonomous workflows, deep refactoring, "implement X then verify" jobs, or tasks needing Codex's own agent loop. Runs in the current project directory. High risk, requires confirmation.
 - device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
 - system_diagnostics: Run a full self-check of the Synaps environment (Node version, AI API key, Termux path, device control, MCP servers, Harness, DB stats). Read-only, returns a summary with recommended fixes.
 - agent_list: List agent instances for the current session (id/type/name/status/context length). Read-only.
@@ -225,6 +228,7 @@ You have access to tools that let you interact with the project files:
 - Explain what you're doing at each step
 - If you encounter an error, try to understand and fix it
 - All paths are relative to the project root
+- 未绑定项目时，只能执行不依赖项目的工具（system_diagnostics、list_skills、read_skill、harness_status、codex_status、device_status、mcp_*、search_tools、install_tool、memory_*、goal_*、rag_search、rag_remember）；文件/命令/团队/构建类工具需要先绑定项目，未绑定时工具会返回明确错误，请据此引导用户先选择项目。
 - Use run_command to verify changes: run tests, builds, git diff, git status, git log
 - Git operations (add/commit/push/branch/log/diff) are done through run_command
 - Never run destructive commands (rm -rf /, mkfs, dd) or commands that modify files outside the project
@@ -388,7 +392,8 @@ function parseToolCalls(response: string): ToolCall[] {
   return results;
 }
 
-function resolveProjectPath(projectId: string, relativePath: string): string {
+function resolveProjectPath(projectId: string | null, relativePath: string): string {
+  if (!projectId) throw new Error('Project not found');
   const project = queryOne(`SELECT path FROM projects WHERE id = ?`, [projectId]) as Record<string, string> | null;
   if (!project) throw new Error('Project not found');
 
@@ -402,7 +407,7 @@ function resolveProjectPath(projectId: string, relativePath: string): string {
   return resolved;
 }
 
-function ensureSession(projectId?: string): string {
+function ensureSession(projectId?: string | null): string {
   let existing: Record<string, unknown> | null = null;
   if (projectId) {
     existing = queryOne(
@@ -491,7 +496,7 @@ function getGithubTokenFromSettings(): string | null {
 }
 
 function createSnapshot(
-  projectId: string,
+  projectId: string | null,
   label: string,
   files: Array<{ path: string; content: string }>
 ): void {
@@ -793,7 +798,7 @@ function parseEngineerOutput(text: string): { files: Array<{ path: string; conte
   }
 }
 
-function saveTeamPlan(projectId: string, title: string, tasks: TeamTask[]): string {
+function saveTeamPlan(projectId: string | null, title: string, tasks: TeamTask[]): string {
   const id = crypto.randomUUID();
   runSql(
     'INSERT INTO team_tasks (id, project_id, title, tasks_json) VALUES (?, ?, ?, ?)',
@@ -803,7 +808,7 @@ function saveTeamPlan(projectId: string, title: string, tasks: TeamTask[]): stri
   return id;
 }
 
-function loadTeamPlan(projectId: string): TeamPlan | null {
+function loadTeamPlan(projectId: string | null): TeamPlan | null {
   const rows = queryAll('SELECT * FROM team_tasks WHERE project_id = ? ORDER BY created_at DESC LIMIT 1', [
     projectId,
   ]) as Record<string, string>[];
@@ -903,7 +908,7 @@ function formatGoalStatus(goal: Record<string, unknown>, paused = false): string
   return lines.join('\n');
 }
 
-async function executeTool(projectId: string, toolCall: ToolCall, sessionId: string): Promise<string> {
+async function executeTool(projectId: string | null, toolCall: ToolCall, sessionId: string): Promise<string> {
   await getDb();
 
   switch (toolCall.tool) {
@@ -1858,6 +1863,7 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
     }
 
     case 'team_plan': {
+      if (!projectId) return 'Error: 制定团队计划需要先绑定项目（请在聊天页顶部选择或创建一个项目后再试）';
       const { apiKey, baseUrl, model } = getAiConfig();
       if (!apiKey) return 'Error: DeepSeek API Key not configured (Settings → AI 模型)';
       const task = toolCall.query || '未指定任务';
@@ -2182,6 +2188,27 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
       return JSON.stringify(harnessStatus(), null, 2);
     }
 
+    case 'codex_status': {
+      return JSON.stringify({ ...codexStatus(), bridge: await checkCodexBridge() }, null, 2);
+    }
+
+    case 'codex_exec': {
+      const task = toolCall.task || toolCall.query;
+      if (!task) return 'Error: codex_exec requires a task argument (use task field)';
+      let projectPath: string | undefined;
+      try {
+        projectPath = resolveProjectPath(projectId, '');
+      } catch {
+        projectPath = undefined;
+      }
+      try {
+        const result = await runCodexTask(task, projectPath);
+        return `[Codex result]\n${result}`;
+      } catch (err) {
+        return `Error: ${(err as Error).message}`;
+      }
+    }
+
     case 'harness_run': {
       const task = toolCall.task || toolCall.query;
       if (!task) return 'Error: harness_run requires a task argument (use task field)';
@@ -2335,13 +2362,14 @@ router.post('/', async (req: express.Request, res: express.Response) => {
   try {
     await getDb();
     
-    const { messages, projectId, requestId, agentType, agentInstanceId } = req.body as {
+    const { messages, projectId: projectIdRaw, requestId, agentType, agentInstanceId } = req.body as {
       messages: Array<{ role: string; content: string }>;
       projectId?: string;
       requestId?: string;
       agentType?: string;
       agentInstanceId?: string;
     };
+    const projectId: string | null = typeof projectIdRaw === 'string' && projectIdRaw ? projectIdRaw : null;
     taskId = requestId || `task-${Date.now()}`;
     abortRegistry.set(taskId, false);
 
@@ -2471,6 +2499,11 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       }
     }
 
+    // 注入用户设置的默认执行大脑
+    const defaultBrainRow = queryOne('SELECT value FROM settings WHERE key = ?', ['default_exec_brain']);
+    const defaultBrain = String((defaultBrainRow?.value as string | null) || 'auto');
+    systemPrompt += `\n\n## 执行大脑\n默认执行大脑（用户设置）：${defaultBrain}（auto=自动路由；codex=优先 Codex CLI；claude=优先 Claude Code；harness=优先 DeepSeek Harness）。涉及复杂任务的执行时优先遵循该设置路由到对应执行大脑。`;
+
     // 调度员临时权限系统通知（写入对话流，不结束请求）
     if (tempPermReply) {
       systemPrompt += `\n\n[系统通知] ${tempPermReply}`;
@@ -2575,8 +2608,8 @@ All file operations should use paths relative to the project root.`;
       // Check for tool call（支持一条回复里多个工具调用，逐个执行）
       const toolCalls = parseToolCalls(fullResponse);
 
-      if (toolCalls.length === 0 || !projectId) {
-        // No tool call or no project context - stream final response to client
+      if (toolCalls.length === 0) {
+        // No tool call - stream final response to client
         // 思考草稿已在面板实时显示，这里清掉，避免与最终回答重复
         res.write(`data: ${JSON.stringify({ thinking_clear: true })}\n\n`);
         // 逐块转发，前端实现打字机效果
@@ -2746,7 +2779,15 @@ All file operations should use paths relative to the project root.`;
           },
         },
       })}\n\n`);
-      let toolResult = await withToolHeartbeat(res, taskId, () => executeTool(projectId, toolCall, sessionId));
+      let toolResult = '';
+      try {
+        toolResult = await withToolHeartbeat(res, taskId, () => executeTool(projectId, toolCall, sessionId));
+      } catch (err: any) {
+        toolResult =
+          err?.message === 'Project not found'
+            ? 'Error: 当前未绑定项目，无法执行该工具。请在聊天页顶部选择或创建一个项目后再试。'
+            : `Error: 工具执行失败：${err?.message || String(err)}`;
+      }
       const toolDurationMs = Date.now() - toolStartedAt;
 
       // 失败智能分析：工具失败时自动调用 DeepSeek 诊断（未配置 Key 时静默跳过）
