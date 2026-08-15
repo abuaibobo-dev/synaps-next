@@ -1131,11 +1131,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     const isUser = item.role === 'user';
     return (
       <Animated.View {...messageEntry} style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
-      <Pressable
-        onLongPress={() => openMessageMenu(item)}
-        delayLongPress={350}
-        style={[styles.messageRowInner, isUser && styles.messageRowInnerUser]}
-      >
+        <Pressable
+          onLongPress={() => openMessageMenu(item)}
+          delayLongPress={350}
+          style={[
+            styles.messageBubblePressable,
+            isUser ? styles.messageBubblePressableUser : styles.messageBubblePressableAssistant,
+          ]}
+        >
         <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
           {item.replyingTo && (
             <View style={[styles.replyPreview, isUser && styles.replyPreviewUser]}>
@@ -1246,9 +1249,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               {item.status === 'cancelled' && <Text style={styles.messageStatusPending}>已取消</Text>}
             </View>
           )}
-        </View>
-      </Pressable>
-      <Text style={styles.messageTime}>{formatRelativeTime(item.timestamp)}</Text>
+          </View>
+        </Pressable>
+        <Text style={styles.messageTime}>{formatRelativeTime(item.timestamp)}</Text>
       </Animated.View>
     );
   }, [openMessageMenu, styles, messageEntry]);
@@ -1457,7 +1460,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             isStreaming ? (
               streamingContent ? (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
-                  <View style={[styles.messageBubble, styles.assistantBubble]}>
+                  <View style={[styles.messageBubble, styles.assistantBubble, styles.streamBubble]}>
                     <Text style={styles.messageContent}>
                       {streamingContent}
                       <Animated.Text style={[styles.streamCursor, cursorStyle]}>▍</Animated.Text>
@@ -1483,7 +1486,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 </View>
               ) : (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
-                  <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble]}>
+                  <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble, styles.streamBubble]}>
                     <ThinkingDots color={colors.primary} size={6} />
                     <Text style={styles.thinkingText}>Agent 思考中...</Text>
                   </View>
@@ -2200,29 +2203,27 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     paddingBottom: spacing.lg,
   },
   messageRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
-  messageRowInner: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
-    flexShrink: 1,
-    maxWidth: '100%',
-  },
   messageRowUser: {
-    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
   },
   messageRowAssistant: {
-    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
   },
-  messageRowInnerUser: {
+  messageBubblePressable: {
+    maxWidth: '90%',
+  },
+  messageBubblePressableUser: {
     alignSelf: 'flex-end',
+    maxWidth: '80%',
+  },
+  messageBubblePressableAssistant: {
+    alignSelf: 'flex-start',
   },
   messageBubble: {
-    maxWidth: '90%',
     borderRadius: 16,
     paddingHorizontal: spacing.md,
     paddingVertical: 8,
@@ -2230,7 +2231,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   userBubble: {
     backgroundColor: colors.primaryDark,
     borderBottomRightRadius: 4,
-    maxWidth: '80%',
+  },
+  streamBubble: {
+    maxWidth: '90%',
   },
   assistantBubble: {
     backgroundColor: colors.bgElevated,
@@ -2817,9 +2820,8 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   messageTime: {
     fontSize: 9,
     color: colors.textMuted,
-    alignSelf: 'flex-end',
-    marginLeft: spacing.sm,
-    marginRight: 2,
+    marginTop: 3,
+    paddingHorizontal: 4,
   },
   streamCursor: {
     color: colors.primary,
