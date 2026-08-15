@@ -78,7 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   harness_enabled: 'false',
   harness_node_path: '',
   harness_dsh_path: '',
-  harness_model: 'deepseek-chat',
+  harness_model: 'deepseek-v4-flash',
   harness_api_key: '',
   harness_base_url: '',
   account_name: 'Synaps 用户',
@@ -1073,7 +1073,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <FieldRow styles={styles} label="模型" sc={sc}>
           <UnderlineInput
             value={settings.harness_model}
-            placeholder="deepseek-chat"
+            placeholder="deepseek-v4-flash"
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"

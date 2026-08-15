@@ -23,7 +23,7 @@ export function getHarnessConfig(projectPath?: string): HarnessConfig {
     enabled: getSetting('harness_enabled') === 'true',
     nodePath: getSetting('harness_node_path') || null,
     dshPath: getSetting('harness_dsh_path') || null,
-    model: getSetting('harness_model') || 'deepseek-chat',
+    model: getSetting('harness_model') || 'deepseek-v4-flash',
     apiKey: getSetting('harness_api_key') || getSetting('ai_api_key') || '',
     baseUrl: getSetting('harness_base_url') || getSetting('ai_base_url') || 'https://api.deepseek.com',
     workDir: projectPath || process.cwd(),
