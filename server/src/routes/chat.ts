@@ -221,11 +221,21 @@ When the user asks to develop a feature (e.g. "开发一个登录模块" or "实
 5. Only when the review passes, run git_commit_push
 Track progress with team_status.
 
+## UI 与设计质量（视觉审判）
+- 生成或修改任何界面（Web 页面、React Native、App 界面）前，先 read_skill "impeccable-ui" 并按其质量底线执行。
+- 界面修改完成后，对照 impeccable-ui 的检查清单自检：对比度、间距、层级、触摸目标、深色模式、空/错/加载态、文本溢出。
+- 禁止默认模板化模式（图标+标题+正文卡片铺屏、标题上方 kicker 小标签、渐变文字、emoji 当图标、紫→蓝渐变、彩色侧边条等），详见技能 Refuse 清单。
+
+## 代码审查标准（逻辑审判）
+- 执行 team_review，或用户要求「审查 / 检查代码 / 界面审计」时，read_skill "impeccable-review" 并按 5 维度打分（0-4，每项必须附证据）。
+- 输出结构化报告：总分 /20 + 评级 + P0-P3 问题分级 + 修复建议；审查只记录不直接修复，问题交由执行流程处理。
+
 ## Quality Gate
 Before calling git_commit_push, ensure all of the following pass:
 1. run_lint and run_typecheck report no errors
 2. security_scan reports no issues (use security_fix if it does)
 3. run_tests passes (use generate_tests first if the project has no tests, and auto_test_fix if tests fail)
+4. UI 改动时：对照 impeccable-ui 检查清单完成界面自检（对比度/间距/层级/触控目标/深色模式/状态齐全）
 Only push when the full gate is green.
 
 ## Security Workflow

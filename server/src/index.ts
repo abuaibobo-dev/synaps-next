@@ -18,6 +18,7 @@ import deviceRouter from "./routes/device.js";
 import backupRouter from "./routes/backup.js";
 import diagnosticsRouter from "./routes/diagnostics.js";
 import tasksRouter from "./routes/tasks.js";
+import { seedImpeccableSkills } from "./impeccable.js";
 
 const app = express();
 const port = process.env.PORT || 19091;
@@ -53,5 +54,6 @@ app.use('/api/v1/tasks', tasksRouter);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);
+  seedImpeccableSkills().catch(() => {});
   startProactiveMonitor();
 });
