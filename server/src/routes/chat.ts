@@ -58,6 +58,33 @@ function guardSseErrors(res: express.Response): void {
   res.on('error', () => {});
 }
 
+// 工具执行期间（executeTool / 失败诊断，可能阻塞 30-180s）持续发送心跳，
+// 保证前端看门狗不会误判超时；同时响应取消请求。
+async function withToolHeartbeat<T>(
+  res: express.Response,
+  taskId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  guardSseErrors(res);
+  let heartbeat: NodeJS.Timeout | null = null;
+  heartbeat = setInterval(() => {
+    try {
+      if (abortRegistry.get(taskId)) {
+        if (heartbeat) clearInterval(heartbeat);
+      } else if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+      }
+    } catch {
+      // SSE 已关闭，忽略
+    }
+  }, 15_000);
+  try {
+    return await fn();
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
+}
+
 // ---- 调度员临时执行权限（内存态，重启即清；到期/修复完成自动回收） ----
 interface TempGrant {
   tools: string[];
@@ -2470,14 +2497,25 @@ All file operations should use paths relative to the project root.`;
         saveTaskProgress(taskId, taskSteps, taskTools, taskFiles);
       }
 
-      // Execute tool
+      // Execute tool（先发 tool_start，前端立即显示「正在执行」，执行期间持续心跳）
       const toolStartedAt = Date.now();
-      let toolResult = await executeTool(projectId, toolCall, sessionId);
+      res.write(`data: ${JSON.stringify({
+        tool_start: {
+          name: toolCall.tool,
+          args: {
+            path: toolCall.path,
+            query: toolCall.query,
+            command: toolCall.command,
+            message: toolCall.message,
+          },
+        },
+      })}\n\n`);
+      let toolResult = await withToolHeartbeat(res, taskId, () => executeTool(projectId, toolCall, sessionId));
       const toolDurationMs = Date.now() - toolStartedAt;
 
       // 失败智能分析：工具失败时自动调用 DeepSeek 诊断（未配置 Key 时静默跳过）
       if (isFailureResult(toolCall.tool, toolResult)) {
-        const analysis = await analyzeFailure(toolCall.tool, toolResult);
+        const analysis = await withToolHeartbeat(res, taskId, () => analyzeFailure(toolCall.tool, toolResult));
         if (analysis) {
           toolResult += `\n\n${analysis}`;
         }

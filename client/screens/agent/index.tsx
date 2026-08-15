@@ -190,6 +190,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [thinking, setThinking] = useState('');
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCall[]>([]);
+  const [runningTool, setRunningTool] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -562,6 +563,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         setMessages((prev) => [...prev, timeoutMsg]);
         patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
         setStreamingContent('');
+        setRunningTool(null);
         setIsStreaming(false);
         isStreamingRef.current = false;
         setCurrentToolCalls([]);
@@ -585,6 +587,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         prev.map((m) => (m.id === item.userMsgId ? { ...m, status: userStatus } : m))
       );
       setStreamingContent('');
+      setRunningTool(null);
       setIsStreaming(false);
       isStreamingRef.current = false;
       setCurrentToolCalls([]);
@@ -642,9 +645,21 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             return { ...t, steps };
           });
         }
+        if (parsed.tool_start) {
+          // 工具开始执行：立即显示「正在执行」状态
+          const t = parsed.tool_start as { name?: string; args?: Record<string, unknown> };
+          const args = t.args || {};
+          const detail =
+            (typeof args.command === 'string' && args.command) ||
+            (typeof args.path === 'string' && args.path) ||
+            (typeof args.query === 'string' && args.query) ||
+            '';
+          setRunningTool(detail ? `${t.name}: ${detail}` : (t.name || ''));
+        }
         if (parsed.tool_call) {
           const rec = parsed.tool_call as TaskToolRecord;
           executedToolCalls.push(rec as unknown as ToolCall);
+          setRunningTool(null);
           setCurrentToolCalls((prev) => [...prev, rec as unknown as ToolCall]);
           patchTask((t) => {
             const tools = [...t.tools, { ...rec, ts: Date.now() }];
@@ -1518,8 +1533,19 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               ) : (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble, styles.streamBubble]}>
-                    <ThinkingDots color={colors.primary} size={6} />
-                    <Text style={styles.thinkingText}>Agent 思考中...</Text>
+                    {runningTool ? (
+                      <>
+                        <ToolSpinner size={12} color={colors.primary} />
+                        <Text style={styles.thinkingText} numberOfLines={1}>
+                          正在执行：{runningTool}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <ThinkingDots color={colors.primary} size={6} />
+                        <Text style={styles.thinkingText}>Agent 思考中...</Text>
+                      </>
+                    )}
                   </View>
                 </View>
               )
