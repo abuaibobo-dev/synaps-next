@@ -200,6 +200,10 @@ You have access to tools that let you interact with the project files:
 - agent_clear: Clear an agent instance's independent context (args: id). Medium risk.
 - agent_delete: Delete an agent instance and its context (args: id). Medium risk.
 
+- goal_set: Create a long-term autonomous goal (args: title, description optional, steps optional array of strings). Persisted per project; use for multi-turn/long-horizon tasks.
+- goal_status: Show the current active goal's progress (args: goalId optional; defaults to latest active goal for the project). Read-only.
+- goal_loop: Advance the current goal (args: note optional, milestone true at key checkpoints, done true to finish, nextStep optional). Medium risk: milestone checkpoints pause and require user approval.
+
 - device_action: Control this phone's screen. Args: type one of "tap" (params x,y), "swipe" (params x1,y1,x2,y2,duration), "screenshot" (no params, returns saved PNG path + size), "ui_dump" (no params, returns the visible UI tree with bounds), "back", "home", "launch_app" (params package). Requires the accessibility service enabled in Settings → 设备控制. Medium risk, requires confirmation.
 
 ## Working Style
@@ -247,6 +251,12 @@ When the user asks to develop a feature (e.g. "开发一个登录模块" or "实
 4. team_review: the REVIEWER reviews changes (lint/typecheck/security/diff) and gates delivery
 5. Only when the review passes, run git_commit_push
 Track progress with team_status.
+
+## Autonomous Loop（长期目标自主执行）
+- 用户提出长期/多轮任务（"持续跟踪"、"每周…"、"把项目做到…"）时：先 goal_set 建立目标并拆解步骤，然后逐轮 goal_loop 推进。
+- 每个关键节点（大改动、发布、切换方向）用 goal_loop 的 milestone=true 暂停，等待用户确认后再继续。
+- 每轮推进后用 goal_status 汇报进度；目标完成时 goal_loop done=true 收尾。
+- 目标跨会话持久化：下次对话用 goal_status 恢复进度，继续 goal_loop。
 
 ## UI 与设计质量（视觉审判）
 - 生成或修改任何界面（Web 页面、React Native、App 界面）前，先 read_skill "impeccable-ui" 并按其质量底线执行。
@@ -301,6 +311,13 @@ interface ToolCall {
   params?: Record<string, unknown>;
   type?: string;
   task?: string;
+  title?: string;
+  description?: string;
+  steps?: string[];
+  note?: string;
+  milestone?: boolean;
+  done?: boolean;
+  goalId?: string;
 }
 
 interface TeamTask {
@@ -842,6 +859,33 @@ function detectTestCommand(cwd: string): string | null {
   return null;
 }
 
+function formatGoalStatus(goal: Record<string, unknown>, paused = false): string {
+  let steps: string[] = [];
+  try { steps = JSON.parse(String(goal.steps_json || '[]')); } catch { steps = []; }
+  let notes: string[] = [];
+  try { notes = JSON.parse(String(goal.notes_json || '[]')); } catch { notes = []; }
+  const currentStep = Number(goal.current_step || 0);
+  const statusIcon = goal.status === 'done' ? '✅' : paused ? '⏸️' : '🔄';
+  const lines = [
+    `${statusIcon} Goal: ${goal.title}`,
+    `状态：${goal.status === 'done' ? '已完成' : paused ? '已暂停（等待确认）' : '进行中'}`,
+    `进度：${Math.min(currentStep, steps.length)} / ${steps.length || '∞'} 步`,
+  ];
+  if (steps.length > 0) {
+    lines.push('步骤：');
+    steps.forEach((st, i) => {
+      if (i < currentStep) lines.push(`  ✅ ${st}`);
+      else if (i === currentStep) lines.push(`  ⏳ ${st}`);
+      else lines.push(`  ⬜ ${st}`);
+    });
+  }
+  if (notes.length > 0) {
+    lines.push('进度记录：');
+    notes.slice(-6).forEach((n) => lines.push(`  - ${n}`));
+  }
+  return lines.join('\n');
+}
+
 async function executeTool(projectId: string, toolCall: ToolCall, sessionId: string): Promise<string> {
   await getDb();
 
@@ -973,6 +1017,86 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
       const skill = queryOne('SELECT name, description, content FROM skills WHERE name = ? AND enabled = 1', [toolCall.query]) as Record<string, string> | null;
       if (!skill) return `Skill "${toolCall.query}" not found. Use list_skills to see available skills.`;
       return `## ${skill.name}\n\n${skill.description}\n\n---\n\n${skill.content}`;
+    }
+
+    case 'goal_set': {
+      if (!toolCall.title) return 'Error: title is required';
+      const steps = Array.isArray(toolCall.steps) ? toolCall.steps.filter((x) => typeof x === 'string') : [];
+      const goalId = crypto.randomUUID();
+      const now = Date.now();
+      runSql(
+        `INSERT INTO goals (id, project_id, title, description, status, current_step, total_steps, steps_json, notes_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?)`,
+        [
+          goalId,
+          projectId || null,
+          toolCall.title,
+          toolCall.description || '',
+          steps.length,
+          JSON.stringify(steps),
+          JSON.stringify([]),
+          now,
+          now,
+        ]
+      );
+      saveDb();
+      logAudit(projectId, 'goal_set', `创建长期目标：${toolCall.title}（${steps.length} 步）`, 'none', 'auto');
+      return `Goal created: ${goalId}\n标题：${toolCall.title}\n描述：${toolCall.description || '-'}\n步骤（${steps.length}）：\n${steps.map((st, i) => `${i + 1}. ${st}`).join('\n') || '(未拆分步骤，可在 goal_loop 中逐步推进)'}\n\n使用 goal_loop 推进目标，goal_status 查看进度。`;
+    }
+
+    case 'goal_status': {
+      const goal = toolCall.goalId
+        ? (queryOne('SELECT * FROM goals WHERE id = ?', [toolCall.goalId]) as Record<string, unknown> | null)
+        : (queryOne(
+            'SELECT * FROM goals WHERE project_id = ? AND status != \'done\' ORDER BY updated_at DESC LIMIT 1',
+            [projectId || null]
+          ) as Record<string, unknown> | null) ||
+          (queryOne('SELECT * FROM goals ORDER BY updated_at DESC LIMIT 1') as Record<string, unknown> | null);
+      if (!goal) return 'No active goal. Use goal_set to create one.';
+      return formatGoalStatus(goal);
+    }
+
+    case 'goal_loop': {
+      const goal = toolCall.goalId
+        ? (queryOne('SELECT * FROM goals WHERE id = ?', [toolCall.goalId]) as Record<string, unknown> | null)
+        : (queryOne(
+            'SELECT * FROM goals WHERE project_id = ? AND status != \'done\' ORDER BY updated_at DESC LIMIT 1',
+            [projectId || null]
+          ) as Record<string, unknown> | null) ||
+          (queryOne('SELECT * FROM goals ORDER BY updated_at DESC LIMIT 1') as Record<string, unknown> | null);
+      if (!goal) return 'No active goal. Use goal_set to create one first.';
+      if (goal.status === 'done') return 'Goal already done. Use goal_set to create a new one.';
+
+      let steps: string[] = [];
+      try { steps = JSON.parse(String(goal.steps_json || '[]')); } catch { steps = []; }
+      let notes: string[] = [];
+      try { notes = JSON.parse(String(goal.notes_json || '[]')); } catch { notes = []; }
+
+      let currentStep = Number(goal.current_step || 0);
+      const noteText = toolCall.note || toolCall.query || '';
+      if (noteText) {
+        notes.push(`[步骤 ${currentStep + 1}] ${noteText}`);
+      }
+      if (toolCall.done) {
+        runSql("UPDATE goals SET status = 'done', notes_json = ?, updated_at = ? WHERE id = ?", [JSON.stringify(notes), Date.now(), goal.id]);
+        saveDb();
+        logAudit(projectId, 'goal_loop', `完成长期目标：${goal.title}`, 'medium', 'auto');
+        return formatGoalStatus({ ...goal, status: 'done', notes_json: JSON.stringify(notes) });
+      }
+      if (toolCall.milestone) {
+        // 里程碑：暂停等待人工确认（权限门会在执行前弹确认）
+        runSql("UPDATE goals SET notes_json = ?, updated_at = ? WHERE id = ?", [JSON.stringify(notes), Date.now(), goal.id]);
+        saveDb();
+        logAudit(projectId, 'goal_loop', `目标里程碑暂停待确认：${goal.title}（${noteText || '关键节点'}）`, 'medium', 'approved');
+        return formatGoalStatus({ ...goal, current_step: currentStep, notes_json: JSON.stringify(notes) }, true);
+      }
+      // 普通推进：进入下一步
+      if (currentStep < steps.length) currentStep += 1;
+      else currentStep += 1;
+      runSql("UPDATE goals SET current_step = ?, notes_json = ?, updated_at = ? WHERE id = ?", [currentStep, JSON.stringify(notes), Date.now(), goal.id]);
+      saveDb();
+      logAudit(projectId, 'goal_loop', `推进目标：${goal.title} 至第 ${currentStep} 步`, 'medium', 'auto');
+      return formatGoalStatus({ ...goal, current_step: currentStep, notes_json: JSON.stringify(notes) });
     }
 
     case 'run_command': {

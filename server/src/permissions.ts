@@ -95,7 +95,15 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'agent_list':
     case 'agent_status':
     case 'system_diagnostics':
+    case 'goal_status':
       return { level: 'none', impact: '只读分析操作，无副作用' };
+    case 'goal_set':
+      return { level: 'none', impact: `创建长期目标跟踪记录：${(toolCall as any).title || '?'}` };
+    case 'goal_loop':
+      return {
+        level: 'medium',
+        impact: `推进长期目标${(toolCall as any).milestone ? '（里程碑节点，暂停等待确认）' : '（更新目标进度）'}`,
+      };
     case 'write_file':
       return {
         level: 'medium',
