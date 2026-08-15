@@ -188,6 +188,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [thinking, setThinking] = useState('');
+  const [thinkingOpen, setThinkingOpen] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCall[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceCurrency, setBalanceCurrency] = useState('¥');
@@ -209,6 +211,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [currentTask, setCurrentTask] = useState<TaskRecord | null>(null);
   const [taskPanelVisible, setTaskPanelVisible] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [agentType, setAgentType] = useState<AgentOptionKey>('scheduler');
   const [agentInstanceIds, setAgentInstanceIds] = useState<Record<string, string>>({});
   const requestIdRef = useRef<string>('');
@@ -362,6 +365,33 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, []);
 
+  // 后端健康自检：未启动时显示横幅并自动重试
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const check = async () => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/health`, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (cancelled) return;
+        setBackendOnline(res.ok);
+        if (!res.ok) retryTimer = setTimeout(check, 5000);
+      } catch {
+        clearTimeout(t);
+        if (cancelled) return;
+        setBackendOnline(false);
+        retryTimer = setTimeout(check, 5000);
+      }
+    };
+    check();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, []);
+
   useEffect(() => {
     (async () => {
       await loadAgents(currentProjectId);
@@ -502,6 +532,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
     setIsStreaming(true);
     setStreamingContent('');
+    setThinking('');
     setCurrentToolCalls([]);
 
     /**
@@ -642,6 +673,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           setNetworkError(false);
           accumulated += parsed.content;
           setStreamingContent(accumulated);
+        }
+        if (parsed.thinking) {
+          setThinking((prev) => (prev ? prev + '\n\n' : '') + String(parsed.thinking));
         }
         if (parsed.permission_request) {
           setPermissionRequest(parsed.permission_request as PermissionRequest);
@@ -1288,6 +1322,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
         </Pressable>
 
+        {/* 后端未启动横幅 */}
+        {backendOnline === false && (
+          <View style={styles.backendBanner}>
+            <FontAwesome6 name="server" size={11} color="#FFFFFF" />
+            <Text style={styles.backendBannerText} numberOfLines={2}>
+              后端服务未启动，正在自动重试…（对话和工具暂不可用）
+            </Text>
+          </View>
+        )}
+
         {/* Agent 类型选择器（独立上下文/角色） */}
         <View style={styles.agentSelector}>
           <ScrollView
@@ -1335,6 +1379,29 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </PressableScale>
           </Animated.View>
         )}
+
+        {/* 思考过程（折叠面板） */}
+        {thinking ? (
+          <View style={styles.thinkingPanel}>
+            <Pressable style={styles.thinkingHeader} onPress={() => setThinkingOpen(!thinkingOpen)}>
+              <FontAwesome6 name="brain" size={11} color={colors.primary} />
+              <Text style={styles.thinkingHeaderText}>🧠 思考过程</Text>
+              <Text style={styles.thinkingHeaderMeta} numberOfLines={1}>
+                {thinkingOpen ? '' : thinking.replace(/\n/g, ' ').slice(0, 40) + '…'}
+              </Text>
+              <FontAwesome6
+                name={thinkingOpen ? 'chevron-up' : 'chevron-down'}
+                size={10}
+                color={colors.textMuted}
+              />
+            </Pressable>
+            {thinkingOpen && (
+              <Text style={styles.thinkingBody} numberOfLines={14} selectable>
+                {thinking}
+              </Text>
+            )}
+          </View>
+        ) : null}
 
         {/* 消息队列（等待中，一行显示，点击管理） */}
         {queue.length > 0 && (
@@ -2547,6 +2614,42 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.xs,
     color: colors.textSecondary,
   },
+  thinkingPanel: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    overflow: 'hidden',
+  },
+  thinkingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  thinkingHeaderText: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  thinkingHeaderMeta: {
+    flex: 1,
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+  thinkingBody: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
+  },
   queueBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2629,6 +2732,23 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.sm,
     color: colors.textSecondary,
     marginBottom: spacing.sm,
+  },
+  backendBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    backgroundColor: colors.warning,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  backendBannerText: {
+    flex: 1,
+    fontSize: fontSize.xs,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   networkBanner: {
     flexDirection: 'row',

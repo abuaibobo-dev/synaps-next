@@ -2252,6 +2252,12 @@ All file operations should use paths relative to the project root.`;
         return;
       }
 
+      // 工具轮次：把模型的推理文本作为思考过程转发给前端（折叠面板展示）
+      const thinkingText = fullResponse.replace(/```tool\s*\n?[\s\S]*?```/g, '').trim();
+      if (thinkingText) {
+        res.write(`data: ${JSON.stringify({ thinking: thinkingText })}\n\n`);
+      }
+
       // 工具白名单检查（独立 Agent 只允许模板内工具；调度员临时执行权限除外）
       let tempGrant = agentInstance ? hasTempPermission(agentInstance.sessionId, toolCall.tool) : null;
       if (
