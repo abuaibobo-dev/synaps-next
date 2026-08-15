@@ -300,6 +300,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [backupModalVisible, setBackupModalVisible] = useState(false);
   const [backupJson, setBackupJson] = useState('');
   const [backupSummary, setBackupSummary] = useState('');
+  const [latestRelease, setLatestRelease] = useState<string | null>(null);
+  const [privacyVisible, setPrivacyVisible] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [importText, setImportText] = useState('');
   const [importing, setImporting] = useState(false);
@@ -397,6 +399,35 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchBalance();
   }, [fetchBalance]);
+
+  // 自动检查最新版本（GitHub Releases）
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('https://api.github.com/repos/abuaibobo-dev/synaps-next/releases/latest');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (typeof data.tag_name === 'string') setLatestRelease(data.tag_name);
+      } catch {
+        // 离线时静默
+      }
+    })();
+  }, []);
+
+  const isUpdateAvailable = useMemo(() => {
+    if (!latestRelease) return false;
+    const cur = appVersion.replace(/^v/i, '');
+    const latest = latestRelease.replace(/^v/i, '');
+    const curParts = cur.split('.').map(Number);
+    const latestParts = latest.split('.').map(Number);
+    for (let i = 0; i < Math.max(curParts.length, latestParts.length); i += 1) {
+      const a = curParts[i] || 0;
+      const b = latestParts[i] || 0;
+      if (b > a) return true;
+      if (b < a) return false;
+    }
+    return false;
+  }, [latestRelease, appVersion]);
 
   const calcStorage = useCallback(async () => {
     setStorageSize('计算中...');
@@ -883,9 +914,33 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }, [balance]);
 
   const checkUpdate = useCallback(() => {
-    Linking.openURL('https://github.com/abuaibobo-dev/synaps-next/releases').catch(() => {
+    const url = latestRelease
+      ? `https://github.com/abuaibobo-dev/synaps-next/releases/tag/${latestRelease}`
+      : 'https://github.com/abuaibobo-dev/synaps-next/releases';
+    Linking.openURL(url).catch(() => {
       Alert.alert('提示', '无法打开浏览器，请访问 GitHub Releases 页面');
     });
+  }, [latestRelease]);
+
+  const exportCrashLogs = useCallback(async () => {
+    const logs = await getCrashLogs();
+    try {
+      const uri =
+        FileSystem.documentDirectory + `synaps-crash-${new Date().toISOString().slice(0, 10)}.txt`;
+      const body = logs.length > 0 ? logs.join('\n\n---\n\n') : '暂无崩溃日志';
+      await FileSystem.writeAsStringAsync(uri, body);
+      Alert.alert('导出完成', `崩溃日志已保存到：\n${uri}\n\n可复制后分享给开发者排查。`, [
+        {
+          text: '复制',
+          onPress: () => {
+            Clipboard.setStringAsync(body);
+          },
+        },
+        { text: '关闭', style: 'cancel' },
+      ]);
+    } catch {
+      Alert.alert('错误', '导出失败');
+    }
   }, []);
 
   const mainPage = (
@@ -1392,6 +1447,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       <SettingsGroup title="诊断与维护" sc={sc} bar={ACCENT}>
         <SettingRow label="一键自检" value="运行" icon="shield" iconColor={ACCENT} sc={sc} onPress={runDiagnostics} />
         <SettingRow label="崩溃日志" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={handleShowCrashLogs} />
+        <SettingRow label="导出崩溃日志" icon="file-export" iconColor={ACCENT} sc={sc} onPress={exportCrashLogs} />
         <SettingRow label="清除缓存" icon="trash-2" danger sc={sc} onPress={handleClearCache} last />
       </SettingsGroup>
     </>
@@ -1401,7 +1457,22 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     <>
       <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
         <SettingRow label="版本" value={`v${appVersion}`} icon="info" iconColor={ACCENT} sc={sc} />
-        <SettingRow label="检查更新" value="GitHub Releases" icon="refresh-cw" iconColor={ACCENT} sc={sc} onPress={checkUpdate} />
+        <SettingRow
+          label="检查更新"
+          value={isUpdateAvailable ? '有新版本' : '已是最新'}
+          icon="refresh-cw"
+          iconColor={ACCENT}
+          sc={sc}
+          onPress={checkUpdate}
+          right={
+            isUpdateAvailable ? (
+              <View style={styles.updateDotWrap}>
+                <View style={styles.updateDot} />
+              </View>
+            ) : undefined
+          }
+        />
+        <SettingRow label="隐私政策" value="查看" icon="lock" iconColor={ACCENT} sc={sc} onPress={() => setPrivacyVisible(true)} />
         <SettingRow label="使用指南" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={() => setGuideVisible(true)} last />
       </SettingsGroup>
     </>
@@ -1528,7 +1599,33 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           </View>
         </Modal>
 
+
+        {/* 隐私政策 Modal */}
+        <Modal visible={privacyVisible} transparent animationType="fade" onRequestClose={() => setPrivacyVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>隐私政策</Text>
+              <ScrollView style={{ maxHeight: 380 }}>
+                <Text style={styles.modalHint}>
+                  {'Synaps 隐私说明\n\n'}
+                  {'1. 数据存储：你的 API Key、项目路径、GitHub Token 等配置仅保存在本机数据库与设置文件中，不会上传到任何第三方服务器。\n\n'}
+                  {'2. 网络请求：Agent 功能仅与你配置的模型服务（如 DeepSeek API）及 GitHub 交互，用于完成你发起的任务。\n\n'}
+                  {'3. 日志：操作审计日志与崩溃日志仅用于本地排查问题，导出需你主动操作。\n\n'}
+                  {'4. 语音：语音识别与朗读使用系统能力，音频不会离开本机。\n\n'}
+                  {'5. 删除：你可在设置页「清除所有数据」一键删除全部本地数据。'}
+                </Text>
+              </ScrollView>
+              <View style={styles.modalButtons}>
+                <Pressable style={[styles.modalBtn, styles.modalBtnSave]} onPress={() => setPrivacyVisible(false)}>
+                  <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>知道了</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         {/* 导入备份 Modal */}
+
         <Modal visible={importModalVisible} transparent animationType="fade" onRequestClose={() => setImportModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
@@ -1811,6 +1908,16 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 13,
       color: colors.textPrimary,
       flexShrink: 1,
+    },
+    updateDotWrap: {
+      paddingHorizontal: 2,
+      paddingVertical: 2,
+    },
+    updateDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: '#F44336',
     },
     subHeader: {
       flexDirection: 'row',

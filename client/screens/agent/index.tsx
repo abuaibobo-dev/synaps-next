@@ -209,6 +209,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [taskPanelVisible, setTaskPanelVisible] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [agentType, setAgentType] = useState<AgentOptionKey>('scheduler');
   const [agentInstanceIds, setAgentInstanceIds] = useState<Record<string, string>>({});
   const requestIdRef = useRef<string>('');
@@ -258,6 +259,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         }
         if (data && typeof data.current_project_id === 'string' && data.current_project_id) {
           setCurrentProjectId(data.current_project_id);
+        }
+        if (data && typeof data.ai_api_key === 'string') {
+          setHasApiKey(data.ai_api_key.trim().length > 0);
         }
       } catch {
         // Settings unavailable, keep default model
@@ -1291,6 +1295,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </View>
         </View>
 
+        {/* API Key 引导条 */}
+        {hasApiKey === false && (
+          <Pressable style={styles.onboardBar} onPress={onOpenSidebar}>
+            <FontAwesome6 name="circle-exclamation" size={12} color="#FFFFFF" />
+            <Text style={styles.onboardBarText} numberOfLines={2}>
+              尚未配置 API Key，Agent 无法工作 → 去设置填写
+            </Text>
+          </Pressable>
+        )}
+
         {/* Project bar */}
         <Pressable style={styles.projectBar} onPress={openProjectPicker}>
           <FontAwesome6
@@ -2139,6 +2153,25 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  onboardBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: 'rgba(245,158,11,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.4)',
+    borderRadius: radius.md,
+  },
+  onboardBarText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.warning,
+    fontWeight: '600',
   },
   projectBar: {
     flexDirection: 'row',
