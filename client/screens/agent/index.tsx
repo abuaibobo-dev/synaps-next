@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   Keyboard,
+  Linking,
   Modal,
   Share,
   useWindowDimensions,
@@ -139,6 +140,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [streamingContent, setStreamingContent] = useState('');
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCall[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
+  const [balanceCurrency, setBalanceCurrency] = useState('¥');
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
@@ -175,6 +177,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       const data = await response.json();
       if (data.available) {
         setBalance(data.balance);
+        setBalanceCurrency(data.currency === 'USD' ? '$' : '¥');
       }
     } catch {
       // Balance fetch failed, ignore
@@ -189,12 +192,19 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         const data = await response.json();
         if (data.available) {
           setBalance(data.balance);
+          setBalanceCurrency(data.currency === 'USD' ? '$' : '¥');
         }
       } catch {
         // Balance fetch failed, ignore
       }
     };
     loadBalance();
+  }, []);
+
+  const openTopUp = useCallback(() => {
+    Linking.openURL('https://platform.deepseek.com/top_up').catch(() => {
+      Alert.alert('无法打开充值页面', '请手动访问 https://platform.deepseek.com/top_up');
+    });
   }, []);
 
   const fetchProjectOptions = useCallback(async () => {
@@ -911,11 +921,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               </View>
             )}
             {balance !== null && (
-              <View style={styles.balanceBadge}>
+              <Pressable style={styles.balanceBadge} onPress={openTopUp} hitSlop={6}>
                 <FontAwesome6 name="coins" size={10} color={colors.primary} />
-                <Text style={styles.balanceText}>${balance.toFixed(2)}</Text>
-              </View>
+                <Text style={styles.balanceText}>{balanceCurrency}{balance.toFixed(2)}</Text>
+              </Pressable>
             )}
+            <Pressable style={styles.rechargeBtn} onPress={openTopUp} hitSlop={6}>
+              <FontAwesome6 name="plus" size={9} color="#FFFFFF" />
+              <Text style={styles.rechargeText}>充值</Text>
+            </Pressable>
             <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
               <PanelToggleIcon
                 open={taskPanelVisible}
@@ -1555,6 +1569,20 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textSecondary,
     fontWeight: '600',
   },
+  rechargeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    backgroundColor: colors.primary,
+    borderRadius: radius.sm,
+  },
+  rechargeText: {
+    fontSize: fontSize.xs,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
   deviceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1917,13 +1945,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textPrimary,
     fontSize: fontSize.md,
     paddingVertical: spacing.sm,
-    maxHeight: 120,
-    minHeight: 36,
+    maxHeight: 132,
+    minHeight: 46,
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: colors.primaryGlow,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1942,9 +1970,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     marginTop: spacing.sm,
   },
   voiceButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1960,7 +1988,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    height: 36,
+    height: 40,
     borderRadius: radius.md,
     backgroundColor: 'rgba(255,255,255,0.06)',
     paddingHorizontal: spacing.sm,
