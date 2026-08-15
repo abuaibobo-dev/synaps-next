@@ -2189,7 +2189,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     alignSelf: 'flex-end',
   },
   messageBubble: {
-    maxWidth: '78%',
+    maxWidth: '90%',
     borderRadius: 16,
     paddingHorizontal: spacing.md,
     paddingVertical: 8,
@@ -2197,6 +2197,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   userBubble: {
     backgroundColor: colors.primaryDark,
     borderBottomRightRadius: 4,
+    maxWidth: '80%',
   },
   assistantBubble: {
     backgroundColor: colors.bgElevated,
