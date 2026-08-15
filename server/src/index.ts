@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from "express";
 import cors from "cors";
-import chatRouter from "./routes/chat.js";
+import chatRouter, { startProactiveMonitor } from "./routes/chat.js";
 import projectsRouter from "./routes/projects.js";
 import filesRouter from "./routes/files.js";
 import balanceRouter from "./routes/balance.js";
@@ -51,4 +51,5 @@ app.use('/api/v1/tasks', tasksRouter);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);
+  startProactiveMonitor();
 });

@@ -50,6 +50,69 @@ const execAsync = promisify(exec);
 // 任务取消注册表：requestId -> 是否请求取消（agent 循环在步骤间检查）
 const abortRegistry = new Map<string, boolean>();
 
+// ---- 调度员临时执行权限（内存态，重启即清；到期/修复完成自动回收） ----
+interface TempGrant {
+  tools: string[];
+  reason: string;
+  source: string;
+  grantedAt: number;
+  expiresAt: number;
+}
+
+const tempPermissionRegistry = new Map<string, TempGrant[]>();
+const TEMP_PERM_TTL_MS = 10 * 60 * 1000; // 10 分钟
+const SCHEDULER_TEMP_TOOLS = ['write_file', 'run_command'];
+const SCHEDULER_TEMP_TOOLS_FULL = ['write_file', 'run_command', 'install_tool'];
+
+function getTempGrants(sessionId: string): TempGrant[] {
+  const now = Date.now();
+  const all = tempPermissionRegistry.get(sessionId) || [];
+  const fresh = all.filter((g) => g.expiresAt > now);
+  if (fresh.length === 0) tempPermissionRegistry.delete(sessionId);
+  else if (fresh.length !== all.length) tempPermissionRegistry.set(sessionId, fresh);
+  return fresh;
+}
+
+function hasTempPermission(sessionId: string, tool: string): TempGrant | null {
+  return getTempGrants(sessionId).find((g) => g.tools.includes(tool)) || null;
+}
+
+function grantSchedulerTempPerms(
+  projectId: string,
+  sessionId: string,
+  tools: string[],
+  reason: string,
+  source: 'auto' | 'user_request'
+): void {
+  const now = Date.now();
+  const grants = getTempGrants(sessionId).filter((g) => !tools.some((t) => g.tools.includes(t)));
+  grants.push({ tools, reason, source, grantedAt: now, expiresAt: now + TEMP_PERM_TTL_MS });
+  tempPermissionRegistry.set(sessionId, grants);
+  logAudit(projectId, 'temp_permission_grant', `${reason}（tools: ${tools.join(', ')}，有效期 10 分钟）`, 'medium', source);
+}
+
+function revokeSchedulerTempPerms(projectId: string, sessionId: string, reason: string): void {
+  const revoked = getTempGrants(sessionId);
+  if (revoked.length === 0) return;
+  tempPermissionRegistry.delete(sessionId);
+  const tools = [...new Set(revoked.flatMap((g) => g.tools))];
+  logAudit(projectId, 'temp_permission_revoke', `${reason}（tools: ${tools.join(', ')}）`, 'medium', 'auto');
+}
+
+const URGENT_FIX_PATTERNS: RegExp[] = [
+  /(你|请|帮我)?直接(改|修|删|加|执行|处理)/,
+  /(你|帮我|请)改/,
+  /改(一下|一行|成|为|一个|这个|那个|颜色|文案|名字|标题|内容)/,
+  /(修|修复)(一下|这个|好|bug|Bug|BUG|问题|错误|报错)/,
+  /删(掉|除|了|一行|个)/,
+  /加(一行|个|一个|上|一条|个按钮)/,
+  /把.+改成/,
+];
+
+function isUrgentFixRequest(content: string): boolean {
+  return URGENT_FIX_PATTERNS.some((p) => p.test(content));
+}
+
 // Enhanced Agent system prompt with better intelligence
 const AGENT_SYSTEM_PROMPT = `You are Synaps, an AI software development agent running on a mobile phone.
 You help users develop, debug, build, and publish software through natural language.
@@ -1422,14 +1485,16 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
       try {
         raw = await aiComplete(apiKey, baseUrl, model, system, user);
       } catch (err: any) {
-        return `Execute failed for step ${task.step}: ${err?.message || String(err)}`;
+        grantSchedulerTempPerms(projectId, sessionId, SCHEDULER_TEMP_TOOLS, `子 Agent 执行步骤 ${task.step} 失败（LLM 错误）`, 'auto');
+        return `Execute failed for step ${task.step}: ${err?.message || String(err)}\n\n[调度员] 已自动获得临时执行权限（write_file / run_command，10 分钟有效）。请直接修复该步骤，修复后运行 team_test 验证，通过后权限自动回收。`;
       }
       const result = parseEngineerOutput(raw);
       if (result.files.length === 0) {
         task.status = 'failed';
         task.detail = result.note || 'No file changes produced';
         updateTeamPlan(plan);
-        return `Step ${task.step} produced no files.\n\n${result.note || raw.slice(0, 500)}`;
+        grantSchedulerTempPerms(projectId, sessionId, SCHEDULER_TEMP_TOOLS, `子 Agent 执行步骤 ${task.step} 未产出文件`, 'auto');
+        return `Step ${task.step} produced no files.\n\n${result.note || raw.slice(0, 500)}\n\n[调度员] 已自动获得临时执行权限（write_file / run_command，10 分钟有效）。请直接修复该步骤，修复后运行 team_test 验证，通过后权限自动回收。`;
       }
 
       const written: string[] = [];
@@ -1460,6 +1525,7 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
       const r = await execInProject(cwd, cmd, 300000);
       const output = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join('\n');
       if (r.exitCode === 0) {
+        revokeSchedulerTempPerms(projectId, sessionId, 'team_test 通过，调度员修复完成，回收临时权限');
         return `Tests PASSED (exit 0, ${r.duration}ms)\n\n${truncateText(output, 3000)}`;
       }
       const { apiKey, baseUrl, model } = getAiConfig();
@@ -1893,6 +1959,18 @@ router.post('/', async (req: express.Request, res: express.Response) => {
         : '[系统] 当前没有共享上下文。可用“更新上下文：xxx”记录项目背景、技术栈与偏好。';
     }
 
+    // 调度员临时执行权限：用户要求亲自执行 / 主动回收
+    let tempPermReply: string | null = null;
+    if (agentInstance && agentInstance.type === 'scheduler' && projectId) {
+      if (/你亲自来|亲自来|你直接改|你自己改|你亲手/.test(lastUserContent)) {
+        grantSchedulerTempPerms(projectId, sessionId, SCHEDULER_TEMP_TOOLS_FULL, '用户要求调度员亲自执行当前任务', 'user_request');
+        tempPermReply = '[系统] 已授予调度员临时执行权限（write_file / run_command / install_tool），10 分钟内或任务修复完成后自动回收，所有操作记录到审计日志。';
+      } else if (/回收权限|撤销权限|收回权限|取消权限/.test(lastUserContent)) {
+        revokeSchedulerTempPerms(projectId, sessionId, '用户主动回收');
+        tempPermReply = '[系统] 已回收调度员的全部临时执行权限。';
+      }
+    }
+
     const customHeaders = HeaderUtils.extractForwardHeaders(
       req.headers as unknown as Record<string, string>
     );
@@ -1950,6 +2028,16 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       if (agentInstance.tools.length > 0) {
         systemPrompt += `\n本 Agent 仅允许使用以下工具：${agentInstance.tools.join(', ')}（白名单之外的工具会被拒绝）。`;
       }
+      if (agentInstance.type === 'scheduler') {
+        systemPrompt +=
+          '\n临时执行权限说明：子 Agent 执行失败、用户说“你亲自来”或遇到紧急小问题时，你会获得 write_file / run_command（必要时含 install_tool）的临时权限，可直接修复；临时权限会自动回收（10 分钟或修复完成），其授予与使用均记录审计日志。';
+      }
+    }
+
+    // 调度员临时权限系统通知（写入对话流，不结束请求）
+    if (tempPermReply) {
+      systemPrompt += `\n\n[系统通知] ${tempPermReply}`;
+      res.write(`data: ${JSON.stringify({ content: `${tempPermReply}\n\n` })}\n\n`);
     }
 
     // 注入跨会话共享上下文
@@ -2053,8 +2141,20 @@ All file operations should use paths relative to the project root.`;
         return;
       }
 
-      // 工具白名单检查（独立 Agent 只允许模板内工具）
-      if (agentInstance && agentInstance.tools.length > 0 && !agentInstance.tools.includes(toolCall.tool)) {
+      // 工具白名单检查（独立 Agent 只允许模板内工具；调度员临时执行权限除外）
+      let tempGrant = agentInstance ? hasTempPermission(agentInstance.sessionId, toolCall.tool) : null;
+      if (
+        agentInstance &&
+        agentInstance.type === 'scheduler' &&
+        !tempGrant &&
+        SCHEDULER_TEMP_TOOLS.includes(toolCall.tool) &&
+        isUrgentFixRequest(lastUserContent)
+      ) {
+        // 紧急小问题（如改一行代码）：调度员直接执行，不走 team_execute
+        grantSchedulerTempPerms(projectId, sessionId, SCHEDULER_TEMP_TOOLS, '用户提出紧急小问题，调度员直接修复', 'auto');
+        tempGrant = hasTempPermission(sessionId, toolCall.tool);
+      }
+      if (agentInstance && agentInstance.tools.length > 0 && !agentInstance.tools.includes(toolCall.tool) && !tempGrant) {
         const whitelistMsg = `[Permission denied] 当前 Agent（${agentInstance.name}）未授权使用工具 ${toolCall.tool}。可用工具：${agentInstance.tools.join(', ')}`;
         res.write(`data: ${JSON.stringify({
           tool_call: {
@@ -2075,6 +2175,9 @@ All file operations should use paths relative to the project root.`;
           content: `[Tool blocked by agent whitelist]: ${whitelistMsg}\n\n向用户说明，或建议切换到合适的 Agent。`,
         });
         continue;
+      }
+      if (tempGrant && agentInstance) {
+        logAudit(projectId, 'temp_permission_use', `${agentInstance.name}（${agentInstance.type}）使用临时权限执行 ${toolCall.tool}（${tempGrant.reason}）`, 'medium', 'auto');
       }
 
       // Permission gate
@@ -2482,5 +2585,82 @@ router.post('/approval', (req: express.Request, res: express.Response) => {
   pending.resolve(approved === true);
   res.json({ success: true });
 });
+
+/**
+ * 调度员主动巡检：每 5 分钟检查一次各项目的状态（git 改动/构建/设备），
+ * 发现问题写入审计日志，减少信息滞后。仅在有调度员 Agent 的项目上执行。
+ */
+export function startProactiveMonitor(): void {
+  const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+  const timer = setInterval(async () => {
+    try {
+      await getDb();
+      const sessions = queryAll(
+        'SELECT id, project_id FROM chat_sessions WHERE project_id IS NOT NULL ORDER BY updated_at DESC'
+      ) as Array<{ id: string; project_id: string }>;
+      for (const s of sessions) {
+        const scheduler = listAgentInstances(s.id).find((i) => i.type === 'scheduler');
+        if (!scheduler || scheduler.status !== 'idle') continue;
+        const project = queryOne('SELECT name, path FROM projects WHERE id = ?', [s.project_id]) as Record<string, string> | null;
+        if (!project || !fs.existsSync(project.path)) continue;
+
+        const findings: string[] = [];
+
+        // 1) 项目状态：未提交改动 / 最近提交（日志）
+        try {
+          const st = await execInProject(project.path, 'git status --short', 15000);
+          const lines = st.stdout.trim().split('\n').filter(Boolean);
+          if (lines.length > 0) findings.push(`工作区有 ${lines.length} 处未提交改动`);
+          const lg = await execInProject(project.path, 'git log -1 --format="%h %s"', 15000);
+          if (lg.stdout.trim()) findings.push(`最近提交：${lg.stdout.trim()}`);
+        } catch {
+          // 非 git 项目，跳过
+        }
+
+        // 2) 构建状态：GitHub Actions 最近运行
+        try {
+          const token = getGithubTokenFromSettings();
+          if (token) {
+            const repo = await inferRepo(project.path);
+            if (repo) {
+              const res = await fetch(`https://api.github.com/repos/${repo}/actions/runs?per_page=3`, {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  Accept: 'application/vnd.github.v3+json',
+                  'User-Agent': 'Synaps-App',
+                },
+              });
+              if (res.ok) {
+                const data = (await res.json()) as {
+                  workflow_runs?: Array<{ status?: string; conclusion?: string | null; name?: string; run_number?: number }>;
+                };
+                const failed = (data.workflow_runs || []).find((r) => r.status === 'completed' && r.conclusion === 'failure');
+                const running = (data.workflow_runs || []).find((r) => r.status !== 'completed');
+                if (failed) findings.push(`最近构建失败：${failed.name || 'workflow'} #${failed.run_number}`);
+                else if (running) findings.push(`有构建进行中：${running.name || 'workflow'} #${running.run_number}`);
+              }
+            }
+          }
+        } catch {
+          // 构建检查失败，跳过
+        }
+
+        // 3) 设备控制状态
+        try {
+          if (/未启用/.test(deviceStatusSummary())) findings.push('设备控制未启用');
+        } catch {
+          // ignore
+        }
+
+        if (findings.length > 0) {
+          logAudit(s.project_id, 'proactive_status_check', `调度员主动巡检（${project.name}）：${findings.join('；')}`, 'medium', 'auto');
+        }
+      }
+    } catch (err) {
+      console.error('Proactive monitor error:', err);
+    }
+  }, CHECK_INTERVAL_MS);
+  timer.unref?.();
+}
 
 export default router;
