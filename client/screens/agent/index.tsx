@@ -147,6 +147,13 @@ function formatRelativeTime(ts: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+
+const TEMPLATES: Array<{ label: string; prompt: string }> = [
+  { label: '检查代码并修复', prompt: '请检查当前项目的代码质量，运行 lint 和类型检查，发现问题后直接修复。' },
+  { label: '构建 APK', prompt: '请为当前项目构建 APK：打 tag、触发 GitHub Actions 构建并等待完成，完成后告诉我下载链接。' },
+  { label: '看看项目', prompt: '请查看当前项目的整体结构和最近改动，给我一个简洁的项目概览。' },
+];
+
 interface ToolCall {
   name: string;
   args: Record<string, unknown>;
@@ -864,6 +871,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, [inputText, replyingTo, attachments, currentProjectId, startTask]);
 
+  // 一键对话模板：直接发起任务
+  const sendTemplate = useCallback(
+    (prompt: string) => {
+      if (isStreamingRef.current) return;
+      startTask(prompt);
+    },
+    [startTask]
+  );
+
   // 取消当前任务
   const cancelTask = useCallback(() => {
     const requestId = requestIdRef.current;
@@ -1413,6 +1429,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                   开始你的第一次对话{''}
                   {'\n'}告诉我你想开发或修复什么
                 </Text>
+                <View style={styles.templateRow}>
+                  {TEMPLATES.map((t) => (
+                    <Pressable key={t.label} style={styles.templateChip} onPress={() => sendTemplate(t.prompt)}>
+                      <Text style={styles.templateChipText}>{t.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
               </View>
             )
           }
@@ -2368,6 +2391,26 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  templateRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  templateChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+  },
+  templateChipText: {
+    fontSize: fontSize.sm,
+    color: colors.primary,
+    fontWeight: '600',
   },
   inputContainer: {
     paddingHorizontal: spacing.lg,

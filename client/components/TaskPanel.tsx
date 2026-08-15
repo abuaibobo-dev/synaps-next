@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { spacing, radius, fontSize } from '@/utils/theme';
 import type { ThemeColors } from '@/utils/theme';
@@ -83,10 +83,11 @@ interface TaskPanelProps {
 }
 
 export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onRollback }: TaskPanelProps) {
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const panelEntry = useEntry('panel');
   const cardEntry = useEntry('card');
   const stepEntry = useEntry('step');
+  const [expandedTool, setExpandedTool] = useState<number | null>(null);
 
   if (!task) {
     return (
@@ -104,6 +105,9 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
   const totalSteps = task.steps.length;
   const doneSteps = task.steps.filter((s) => s.status === 'done' || s.status === 'error').length;
   const progress = totalSteps > 0 ? doneSteps / totalSteps : task.tools.length > 0 ? 0.5 : 0;
+  const percent = Math.round(progress * 100);
+  const failedTools = task.tools.filter((t) => t.ok === false).length;
+  const isFinished = task.status === 'done' || task.status === 'error' || task.status === 'cancelled';
 
   return (
     <Animated.View {...panelEntry} style={styles.container}>
@@ -130,9 +134,51 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
             height={6}
           />
           <Text style={styles.progressText}>
-            {doneSteps}/{totalSteps || task.tools.length} 步
+            {percent}% · {doneSteps}/{totalSteps || task.tools.length} 步
+            {task.status === 'running' && percent >= 20 ? ` · 已执行 ${percent >= 80 ? '80%+' : percent >= 60 ? '60%+' : percent >= 40 ? '40%+' : '20%+'}` : ''}
           </Text>
         </Animated.View>
+
+        {/* 任务复盘 */}
+        {isFinished && (
+          <Animated.View {...cardEntry} style={[styles.card, styles.reviewCard]}>
+            <View style={styles.reviewHeader}>
+              <AppIcon
+                name={task.status === 'done' ? 'check-circle' : task.status === 'cancelled' ? 'x-circle' : 'x-circle'}
+                size={13}
+                color={task.status === 'done' ? '#4CAF50' : task.status === 'cancelled' ? '#9CA3AF' : '#F44336'}
+              />
+              <Text style={styles.reviewTitle}>
+                {task.status === 'done' ? '执行报告 · 完成' : task.status === 'cancelled' ? '执行报告 · 已取消' : '执行报告 · 出错'}
+              </Text>
+            </View>
+            <View style={styles.reviewGrid}>
+              <View style={styles.reviewCell}>
+                <Text style={styles.reviewNum}>{task.tools.length}</Text>
+                <Text style={styles.reviewLabel}>工具调用</Text>
+              </View>
+              <View style={styles.reviewCell}>
+                <Text style={[styles.reviewNum, failedTools > 0 && { color: '#F44336' }]}>{failedTools}</Text>
+                <Text style={styles.reviewLabel}>失败工具</Text>
+              </View>
+              <View style={styles.reviewCell}>
+                <Text style={styles.reviewNum}>{task.files.length}</Text>
+                <Text style={styles.reviewLabel}>文件改动</Text>
+              </View>
+              <View style={styles.reviewCell}>
+                <Text style={styles.reviewNum}>{formatDuration(task.endedAt ? task.endedAt - task.startedAt : 0)}</Text>
+                <Text style={styles.reviewLabel}>总耗时</Text>
+              </View>
+            </View>
+            <Text style={styles.reviewAdvice}>
+              {task.status === 'done'
+                ? '任务已完成，需要撤销改动可点「回滚」恢复最近快照。'
+                : task.status === 'cancelled'
+                  ? '任务已手动取消，可点「重跑」重新发起。'
+                  : '部分步骤失败，可点「重跑」重试，或展开下方失败工具查看原因。'}
+            </Text>
+          </Animated.View>
+        )}
 
         {/* 控制按钮 */}
         <View style={styles.actions}>
@@ -178,7 +224,10 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
           ) : (
             task.tools.map((t, i) => (
               <Animated.View key={i} {...stepEntry} style={styles.toolRow}>
-                <View style={styles.toolRowHeader}>
+                <Pressable
+                  style={styles.toolRowHeader}
+                  onPress={() => setExpandedTool(expandedTool === i ? null : i)}
+                >
                   <AppIcon
                     name={t.ok === false ? 'x-circle' : toolIcon(t.name)}
                     size={12}
@@ -186,15 +235,19 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
                   />
                   <Text style={styles.toolName}>{t.name}</Text>
                   <Text style={styles.toolDuration}>{formatDuration(t.durationMs)}</Text>
-                </View>
+                  <AppIcon name={expandedTool === i ? 'chevron-up' : 'chevron-down'} size={10} color={colors.textMuted} />
+                </Pressable>
                 {t.args && Object.keys(t.args).length > 0 && (
                   <Text style={styles.toolArgs} numberOfLines={1}>
                     {JSON.stringify(t.args).slice(0, 120)}
                   </Text>
                 )}
                 {t.result ? (
-                  <Text style={[styles.toolResult, t.ok === false && styles.toolResultError]} numberOfLines={2}>
-                    {t.result.length > 200 ? `${t.result.slice(0, 200)}…` : t.result}
+                  <Text
+                    style={[styles.toolResult, t.ok === false && styles.toolResultError]}
+                    numberOfLines={expandedTool === i ? undefined : 2}
+                  >
+                    {expandedTool === i ? t.result : t.result.length > 200 ? `${t.result.slice(0, 200)}…` : t.result}
                   </Text>
                 ) : null}
               </Animated.View>
@@ -224,7 +277,7 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
   );
 }
 
-const createStyles = (colors: ThemeColors) => StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bgRoot,
@@ -343,6 +396,44 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  reviewCard: {
+    borderColor: isDark ? 'rgba(85,85,85,0.5)' : 'rgba(58,58,58,0.25)',
+  },
+  reviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  reviewTitle: {
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  reviewGrid: {
+    flexDirection: 'row',
+    marginVertical: 4,
+  },
+  reviewCell: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  reviewNum: {
+    fontSize: fontSize.md,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  reviewLabel: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
+  reviewAdvice: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    lineHeight: 16,
+    marginTop: 4,
   },
   toolName: {
     flex: 1,
