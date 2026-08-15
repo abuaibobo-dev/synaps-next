@@ -17,6 +17,23 @@ export interface DeviceStatus {
 
 const native = Platform.OS === 'android' ? NativeModules.DeviceControl : null;
 
+export interface AppInfo {
+  versionName: string;
+  versionCode: number;
+}
+
+/**
+ * 读取 App 原生版本信息（versionName/versionCode）。
+ */
+export async function getAppInfo(): Promise<AppInfo | null> {
+  if (!native) return null;
+  try {
+    return (await native.getAppInfo()) as AppInfo;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 查询原生无障碍服务是否已连接（仅 Android）。
  */

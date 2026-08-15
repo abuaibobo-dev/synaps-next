@@ -147,14 +147,6 @@ function formatRelativeTime(ts: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function formatBalance(n: number): string {
-  if (!Number.isFinite(n)) return '0.00';
-  const v = Math.round(n * 100) / 100;
-  if (v >= 100000000) return `${(v / 100000000).toFixed(2)}亿`;
-  if (v >= 10000) return `${(v / 10000).toFixed(2)}万`;
-  return v.toFixed(2);
-}
-
 interface ToolCall {
   name: string;
   args: Record<string, unknown>;
@@ -191,8 +183,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [thinking, setThinking] = useState('');
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCall[]>([]);
-  const [balance, setBalance] = useState<number | null>(null);
-  const [balanceCurrency, setBalanceCurrency] = useState('¥');
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -227,49 +217,18 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const flatListRef = useRef<FlatList>(null);
   const esRef = useRef<EventSource | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
+  const autoSpeakRef = useRef(false);
+  const speakMessageRef = useRef<((text: string) => void) | null>(null);
 
-  // Fetch balance function
+  // 网络健康探测（余额展示已移至设置页）
   const fetchBalance = async () => {
     try {
-      /**
-       * Server file: server/src/routes/balance.ts
-       * API: GET /api/v1/balance
-       * Response: { balance: number, available: boolean }
-       */
-      const response = await fetch(`${API_BASE}/api/v1/balance`);
-      const data = await response.json();
-      if (data.available) {
-        setBalance(data.balance);
-        setBalanceCurrency(data.currency === 'USD' ? '$' : '¥');
-      }
+      await fetch(`${API_BASE}/api/v1/balance`);
       setNetworkError(false);
     } catch {
       setNetworkError(true);
     }
   };
-
-  // Fetch balance on mount
-  useEffect(() => {
-    const loadBalance = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/v1/balance`);
-        const data = await response.json();
-        if (data.available) {
-          setBalance(data.balance);
-          setBalanceCurrency(data.currency === 'USD' ? '$' : '¥');
-        }
-      } catch {
-        // Balance fetch failed, ignore
-      }
-    };
-    loadBalance();
-  }, []);
-
-  const openTopUp = useCallback(() => {
-    Linking.openURL('https://platform.deepseek.com/top_up').catch(() => {
-      Alert.alert('无法打开充值页面', '请手动访问 https://platform.deepseek.com/top_up');
-    });
-  }, []);
 
   const fetchProjectOptions = useCallback(async () => {
     try {
@@ -621,6 +580,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         setMessages((prev) => [...prev, assistantMessage]);
         patchTask((t) => ({ ...t, status: t.status === 'running' ? 'done' : t.status, endedAt: Date.now() }));
         finish('sent');
+        if (autoSpeakRef.current) {
+          const clean = accumulated.replace(/[#>*`\[\]]/g, '').slice(0, 500);
+          if (clean.trim()) speakMessageRef.current?.(clean);
+        }
         return;
       }
 
@@ -1043,12 +1006,24 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       Speech.stop();
       return;
     }
+    if (!text.trim()) return;
     Speech.speak(text, {
       language: 'zh-CN',
       pitch: 1.0,
       rate: 1.0,
     });
   }, []);
+
+  const toggleAutoSpeak = useCallback(() => {
+    setAutoSpeak((prev) => {
+      const next = !prev;
+      autoSpeakRef.current = next;
+      if (!next) Speech.stop();
+      return next;
+    });
+  }, []);
+
+  speakMessageRef.current = speakMessage;
 
   const closeMessageMenu = useCallback(() => {
     setMenuMessage(null);
@@ -1139,7 +1114,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       <Pressable
         onLongPress={() => openMessageMenu(item)}
         delayLongPress={350}
-        style={styles.messageRowInner}
+        style={[styles.messageRowInner, isUser && styles.messageRowInnerUser]}
       >
         <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
           {item.replyingTo && (
@@ -1290,13 +1265,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </View>
           </View>
           <View style={styles.headerRight}>
-            {balance !== null && (
-              <Pressable style={styles.balanceBadge} onPress={openTopUp} hitSlop={6}>
-                <FontAwesome6 name="coins" size={10} color={colors.primary} />
-                <Text style={styles.balanceText} numberOfLines={1}>{balanceCurrency}{formatBalance(balance)}</Text>
-                <FontAwesome6 name="plus" size={8} color={colors.textMuted} />
-              </Pressable>
-            )}
             <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
               <PanelToggleIcon
                 open={taskPanelVisible}
@@ -1436,9 +1404,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               </View>
             ) : (
               <View style={styles.emptyState}>
-                <View style={styles.emptyLogo}>
-                  <AppIcon name="bolt" size={28} color={colors.primary} />
-                </View>
+                <Image
+                  source={require('@/assets/images/avatar.png')}
+                  style={styles.emptyLogoImage}
+                />
                 <Text style={styles.emptyTitle}>SYNAPS AGENT</Text>
                 <Text style={styles.emptyDesc}>
                   开始你的第一次对话{''}
@@ -1577,8 +1546,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             >
               <FontAwesome6
                 name={isStreaming ? 'spinner' : 'arrow-up'}
-                size={16}
-                color={(!inputText.trim() || isStreaming) ? colors.textMuted : '#FFFFFF'}
+                size={14}
+                color={(!inputText.trim() || isStreaming) ? colors.textMuted : (isDark ? '#0D0D0D' : '#FFFFFF')}
                 spin={isStreaming}
                 weight={400}
               />
@@ -1603,7 +1572,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               <Pressable onPress={pickFile} style={styles.footerIconBtn} hitSlop={6}>
                 <FontAwesome6 name="paperclip" size={13} color={colors.textSecondary} />
               </Pressable>
-              <Pressable onPress={() => setAutoSpeak(!autoSpeak)} style={styles.autoSpeakToggle}>
+              <Pressable onPress={toggleAutoSpeak} style={styles.autoSpeakToggle}>
                 <FontAwesome6
                   name={autoSpeak ? 'volume-high' : 'volume-xmark'}
                   size={12}
@@ -1669,42 +1638,49 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         >
           <Pressable style={styles.modalOverlay} onPress={closeMessageMenu}>
             <Pressable
-              style={[styles.modalContainer, { paddingBottom: spacing.xl + insets.bottom }]}
+              style={[styles.modalContainer, styles.messageMenuContainer, { paddingBottom: spacing.lg }]}
               onPress={() => {}}
             >
-              <Text style={styles.modalTitle}>Message actions</Text>
+              <Text style={[styles.modalTitle, styles.messageMenuTitle]}>消息操作</Text>
               <Pressable
-                style={styles.modalItem}
+                style={styles.messageMenuItem}
                 onPress={() => menuMessage && copyMessage(menuMessage)}
               >
-                <FontAwesome6 name="copy" size={14} color={colors.primary} />
-                <Text style={styles.modalItemText}>复制</Text>
+                <FontAwesome6 name="copy" size={13} color={colors.primary} />
+                <Text style={styles.messageMenuItemText}>复制</Text>
               </Pressable>
               <Pressable
-                style={styles.modalItem}
+                style={styles.messageMenuItem}
                 onPress={() => menuMessage && quoteMessage(menuMessage)}
               >
-                <FontAwesome6 name="quote-left" size={14} color={colors.primary} />
-                <Text style={styles.modalItemText}>引用回复</Text>
+                <FontAwesome6 name="quote-left" size={13} color={colors.primary} />
+                <Text style={styles.messageMenuItemText}>引用回复</Text>
               </Pressable>
               <Pressable
-                style={styles.modalItem}
+                style={styles.messageMenuItem}
+                onPress={() => menuMessage && speakMessage(menuMessage.content)}
+              >
+                <FontAwesome6 name="volume-high" size={13} color={colors.primary} />
+                <Text style={styles.messageMenuItemText}>朗读</Text>
+              </Pressable>
+              <Pressable
+                style={styles.messageMenuItem}
                 onPress={() => menuMessage && shareMessage(menuMessage)}
               >
-                <FontAwesome6 name="share-nodes" size={14} color={colors.primary} />
-                <Text style={styles.modalItemText}>分享</Text>
+                <FontAwesome6 name="share-nodes" size={13} color={colors.primary} />
+                <Text style={styles.messageMenuItemText}>分享</Text>
               </Pressable>
               {menuMessage?.status === 'error' && (
                 <Pressable
-                  style={styles.modalItem}
+                  style={styles.messageMenuItem}
                   onPress={() => menuMessage && retryMessage(menuMessage)}
                 >
-                  <FontAwesome6 name="rotate-right" size={14} color={colors.warning} />
-                  <Text style={styles.modalItemText}>重试</Text>
+                  <FontAwesome6 name="rotate-right" size={13} color={colors.warning} />
+                  <Text style={styles.messageMenuItemText}>重试</Text>
                 </Pressable>
               )}
-              <Pressable style={[styles.modalItem, styles.modalItemCancel]} onPress={closeMessageMenu}>
-                <Text style={styles.modalItemCancelText}>取消</Text>
+              <Pressable style={[styles.messageMenuItem, styles.messageMenuItemCancel]} onPress={closeMessageMenu}>
+                <Text style={styles.messageMenuItemCancelText}>取消</Text>
               </Pressable>
             </Pressable>
           </Pressable>
@@ -2097,24 +2073,6 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   statusTextStreaming: {
     color: colors.primary,
   },
-  balanceBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexShrink: 1,
-  },
-  balanceText: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    fontWeight: '600',
-    flexShrink: 1,
-  },
   rechargeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2204,6 +2162,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   messageRowAssistant: {
     justifyContent: 'flex-start',
   },
+  messageRowInnerUser: {
+    alignSelf: 'flex-end',
+  },
   messageBubble: {
     maxWidth: '78%',
     borderRadius: 16,
@@ -2234,6 +2195,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.md,
     color: colors.textPrimary,
     lineHeight: 22,
+    flexShrink: 1,
   },
   messageContentUser: {
     color: '#FFFFFF',
@@ -2386,15 +2348,12 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
   },
-  emptyLogo: {
+  emptyLogoImage: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.primaryGlow,
     borderWidth: 1,
     borderColor: colors.primaryBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: spacing.lg,
   },
   emptyTitle: {
@@ -2474,25 +2433,23 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   textInput: {
     flex: 1,
     color: colors.textPrimary,
-    fontSize: 16,
-    paddingVertical: 10,
-    maxHeight: 140,
-    minHeight: 54,
+    fontSize: 17,
+    paddingVertical: 12,
+    maxHeight: 160,
+    minHeight: 68,
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.primary,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: isDark ? '#FFFFFF' : '#1A1A1A',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 5,
+    marginBottom: 3,
     marginLeft: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.primaryBorder,
   },
   sendButtonDisabled: {
-    opacity: 0.4,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
   },
   inputHint: {
     fontSize: fontSize.xs,
@@ -2501,13 +2458,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     marginTop: spacing.sm,
   },
   voiceButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    marginBottom: 3,
     marginLeft: spacing.sm,
   },
   voiceButtonActive: {
@@ -2877,6 +2834,44 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.md,
     color: colors.textSecondary,
     fontWeight: '600',
+  },
+  messageMenuContainer: {
+    width: '86%',
+    maxWidth: 320,
+    alignSelf: 'center',
+    borderRadius: 16,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    gap: 2,
+    marginBottom: spacing.xl,
+  },
+  messageMenuTitle: {
+    fontSize: fontSize.xs,
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+  },
+  messageMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  messageMenuItemText: {
+    fontSize: fontSize.sm,
+    color: colors.textPrimary,
+    fontWeight: '500',
+  },
+  messageMenuItemCancel: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginTop: spacing.sm,
+    justifyContent: 'center',
+  },
+  messageMenuItemCancelText: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   projectOption: {
     flexDirection: 'row',

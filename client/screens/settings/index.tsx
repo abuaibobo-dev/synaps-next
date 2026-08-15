@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput, Image } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
-import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
@@ -10,7 +9,7 @@ import { useThemeColors } from '@/components/ThemeProvider';
 import type { ThemeMode } from '@/components/ThemeProvider';
 import { getApiBase } from '@/utils';
 import { getCrashLogs, clearCrashLogs } from '@/utils/crashReporter';
-import { getDeviceStatus, setDeviceControlEnabled } from '@/utils/deviceControl';
+import { getAppInfo, getDeviceStatus, setDeviceControlEnabled } from '@/utils/deviceControl';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppIcon } from '@/components/AppIcon';
@@ -277,9 +276,12 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const sc = useMemo(() => settingsColors(colors, isDark), [colors, isDark]);
   const draftsRef = useRef<Record<string, string>>({});
+  const [saveFeedback, setSaveFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
+  const [appVersion, setAppVersion] = useState('1.0.0');
   const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [trustedProjects, setTrustedProjects] = useState<string[]>([]);
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; detail: string; risk_level: string; decision: string; created_at: string }>>([]);
@@ -324,6 +326,12 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+
+  useEffect(() => {
+    getAppInfo().then((info) => {
+      if (info && info.versionName) setAppVersion(info.versionName);
+    });
+  }, []);
 
   const fetchPermissionData = useCallback(async () => {
     try {
@@ -431,12 +439,40 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     }
   }, []);
 
+  const showFeedback = useCallback((fb: { type: 'success' | 'error' | 'info'; text: string }) => {
+    setSaveFeedback(fb);
+    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = setTimeout(() => setSaveFeedback(null), 2600);
+  }, []);
+
+  const verifyApi = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/balance`);
+      const data = await res.json();
+      if (data.available) return { ok: true, message: '验证通过' };
+      return { ok: false, message: data.message || '验证失败' };
+    } catch {
+      return { ok: false, message: '无法连接后端' };
+    }
+  }, []);
+
   const saveSetting = useCallback(
     async (key: keyof Settings, value: string) => {
       const ok = await updateSetting(key, value);
-      if (ok) Toast.show({ type: 'success', text1: '已保存' });
+      if (!ok) return;
+      const aiKeys = ['ai_api_key', 'ai_base_url', 'ai_model', 'ai_model_base_url'];
+      if (aiKeys.includes(key)) {
+        showFeedback({ type: 'info', text: '已保存 · 验证中...' });
+        const v = await verifyApi();
+        showFeedback({
+          type: v.ok ? 'success' : 'error',
+          text: v.ok ? '已保存 · 验证通过' : `已保存 · 验证失败：${v.message}`,
+        });
+      } else {
+        showFeedback({ type: 'success', text: '已保存' });
+      }
     },
-    [updateSetting]
+    [updateSetting, showFeedback, verifyApi]
   );
 
   // 输入草稿：保存按钮兜底，未失焦也能保存
@@ -460,9 +496,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           }
         }
       }
-      if (saved > 0) Toast.show({ type: 'success', text1: `已保存 ${saved} 项设置` });
+      if (saved > 0) showFeedback({ type: 'success', text: `已保存 ${saved} 项设置` });
     },
-    [updateSetting]
+    [updateSetting, showFeedback]
   );
 
   const handleToggle = useCallback(
@@ -1364,7 +1400,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const aboutPage = (
     <>
       <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
-        <SettingRow label="版本" value="v1.1.0" icon="info" iconColor={ACCENT} sc={sc} />
+        <SettingRow label="版本" value={`v${appVersion}`} icon="info" iconColor={ACCENT} sc={sc} />
         <SettingRow label="检查更新" value="GitHub Releases" icon="refresh-cw" iconColor={ACCENT} sc={sc} onPress={checkUpdate} />
         <SettingRow label="使用指南" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={() => setGuideVisible(true)} last />
       </SettingsGroup>
@@ -1451,6 +1487,25 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           )}
           <View style={{ height: 40 }} />
         </ScrollView>
+
+        {saveFeedback && (
+          <Animated.View
+            key={saveFeedback.text}
+            entering={FadeIn.duration(180)}
+            exiting={FadeOutLeft.duration(180)}
+            style={styles.saveToast}
+            pointerEvents="none"
+          >
+            <AppIcon
+              name={saveFeedback.type === 'success' ? 'check-circle' : saveFeedback.type === 'error' ? 'x-circle' : 'loader'}
+              size={13}
+              color={saveFeedback.type === 'success' ? colors.success : saveFeedback.type === 'error' ? colors.error : colors.primary}
+            />
+            <Text style={styles.saveToastText} numberOfLines={2}>
+              {saveFeedback.text}
+            </Text>
+          </Animated.View>
+        )}
 
         {/* 备份导出结果 Modal */}
         <Modal visible={backupModalVisible} transparent animationType="fade" onRequestClose={() => setBackupModalVisible(false)}>
@@ -1730,6 +1785,32 @@ const createStyles = (colors: ThemeColors) =>
     loadingText: {
       color: colors.textSecondary,
       fontSize: fontSize.md,
+    },
+    saveToast: {
+      position: 'absolute',
+      top: 64,
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 20,
+      backgroundColor: colors.bgCard,
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 6,
+      elevation: 4,
+      zIndex: 999,
+      maxWidth: '86%',
+    },
+    saveToastText: {
+      fontSize: 13,
+      color: colors.textPrimary,
+      flexShrink: 1,
     },
     subHeader: {
       flexDirection: 'row',

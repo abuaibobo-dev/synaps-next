@@ -23,6 +23,22 @@ class DeviceControlModule(reactContext: ReactApplicationContext) :
     private val service get() = DeviceAccessibilityService.instance
 
     @ReactMethod
+    fun getAppInfo(promise: Promise) {
+        val map = Arguments.createMap()
+        try {
+            val info = reactApplicationContext.packageManager.getPackageInfo(
+                reactApplicationContext.packageName, 0
+            )
+            map.putString("versionName", info.versionName ?: "")
+            map.putInt("versionCode", info.versionCode)
+        } catch (e: Exception) {
+            map.putString("versionName", "")
+            map.putInt("versionCode", 0)
+        }
+        promise.resolve(map)
+    }
+
+    @ReactMethod
     fun getStatus(promise: Promise) {
         val map = Arguments.createMap()
         map.putBoolean("serviceConnected", service != null)
