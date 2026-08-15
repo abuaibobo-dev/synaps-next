@@ -79,6 +79,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'analyze_code':
     case 'check_build_status':
     case 'search_tools':
+    case 'web_search':
     case 'list_tools':
     case 'mcp_list_servers':
     case 'mcp_list_tools':
@@ -92,6 +93,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'project_export':
     case 'harness_status':
     case 'codex_status':
+    case 'brain_status':
     case 'device_status':
     case 'agent_list':
     case 'agent_status':
@@ -151,6 +153,8 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
       return { level: 'high', impact: '将任务交给 DeepSeek Harness 官方 Agent 在项目目录自主执行（可能修改代码/运行命令/推送）' };
     case 'codex_exec':
       return { level: 'high', impact: '将任务交给 Codex CLI Agent 在项目目录自主执行（可能修改代码/运行命令/推送）' };
+    case 'brain_exec':
+      return { level: 'high', impact: `将任务交给外部执行大脑：${(toolCall as any).brain || '?'}（AI 在项目目录自主执行，可能修改代码/运行命令）` };
     case 'run_command': {
       const cmd = toolCall.command || '';
       if (CRITICAL_PATTERNS.some((p) => p.test(cmd))) {

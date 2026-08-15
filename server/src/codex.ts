@@ -43,7 +43,7 @@ function truncate(s: string, n: number): string {
   return t.length > n ? `${t.slice(0, n)}…（已截断）` : t;
 }
 
-async function bridgeFetch(
+export async function bridgeFetch(
   cfg: CodexConfig,
   pathname: string,
   body?: unknown,
@@ -106,6 +106,41 @@ export async function checkCodexBridge(): Promise<string> {
     null,
     2
   );
+}
+
+export const BRAIN_IDS = ['aider', 'sage', 'lydia', 'aix', 'miii', 'myai', 'codex'];
+
+export async function runBrainTask(brainId: string, task: string, projectPath?: string): Promise<string> {
+  if (!BRAIN_IDS.includes(brainId)) {
+    throw new Error(`未知执行大脑：${brainId}。可用：${BRAIN_IDS.join(', ')}`);
+  }
+  if (!task.trim()) throw new Error('brain_exec 需要 task 参数');
+
+  const cfg = getCodexConfig();
+  if (!cfg.enabled) {
+    throw new Error('Codex CLI 桥接未启用，请到 设置 → Codex CLI 启用（Termux 安装说明见 docs/EXEC_BRAINS_SETUP.md）');
+  }
+
+  const r = await bridgeFetch(
+    cfg,
+    '/brain',
+    { tool: brainId, task, cwd: projectPath || undefined, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs },
+    cfg.timeoutMs + 10000
+  );
+
+  if (!r.ok) {
+    const msg =
+      r.data && typeof r.data === 'object' && 'error' in r.data
+        ? String((r.data as Record<string, unknown>).error)
+        : String(r.data || `桥接服务不可达（${r.status}）`);
+    return `[${brainId} 失败] ${truncate(msg, 1500)}`;
+  }
+
+  const data = (r.data || {}) as Record<string, unknown>;
+  const body = String(data.output || '(no output)').trim();
+  const exitCode = typeof data.exitCode === 'number' ? data.exitCode : '?';
+  const installHint = data.installHint ? `\n[未安装] 请在 Termux 执行：${data.installHint}` : '';
+  return `[${brainId} exit ${exitCode}]${installHint}\n${truncate(body || '(no output)', 4000)}`;
 }
 
 export async function runCodexTask(task: string, projectPath?: string): Promise<string> {

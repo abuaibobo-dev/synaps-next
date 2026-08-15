@@ -10,7 +10,7 @@ import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } fro
 import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
 import { runHarnessTask, harnessStatus } from '../harness.js';
-import { runCodexTask, codexStatus, checkCodexBridge } from '../codex.js';
+import { runCodexTask, runBrainTask, BRAIN_IDS, codexStatus, checkCodexBridge } from '../codex.js';
 import {
   deviceControlEnabled,
   enqueueDeviceAction,
@@ -172,6 +172,7 @@ You have access to tools that let you interact with the project files:
 - check_build_status: Query the latest GitHub Actions runs (args: repo "owner/name" optional, inferred from git remote)
 - download_and_install: Download an APK and install it on this phone (args: url; high risk, requires confirmation)
 - search_tools: Search for external tools/packages (npm registry and GitHub). Args: query
+- web_search: Search the web via DuckDuckGo (no API key needed). Args: query. Returns up to 6 results (title + url + snippet). Use when you need real-time or external information.
 - install_tool: Install an external tool/package (npm global or pip). Args: query (package/tool name), manager ("npm" | "pip" | "auto"). High risk, requires confirmation. The tool is available immediately after install, no restart needed.
 - list_tools: List tools previously installed through install_tool
 - mcp_list_servers: List configured MCP servers (from Settings)
@@ -195,6 +196,8 @@ You have access to tools that let you interact with the project files:
 - harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
 - codex_status: Check whether the Codex CLI bridge is reachable (returns bridge status, Codex version, model config). Read-only.
 - codex_exec: Delegate a complex task to the official Codex CLI agent (args: task). Use for repo-level autonomous workflows, deep refactoring, "implement X then verify" jobs, or tasks needing Codex's own agent loop. Runs in the current project directory. High risk, requires confirmation.
+- brain_status: Check installation/version status of all external execution brains (Aider, Sage, Lydia, aix, miii, my-ai, Codex CLI) via the Termux bridge. Read-only.
+- brain_exec: Run a task through a dedicated external execution brain (args: brain one of aider/sage/lydia/aix/miii/myai/codex + task). Use the brain matching the current agent's specialty (代码工程师→aider/sage，文件管家→lydia，自动化→aix，记忆→miii，翻译→myai). If the brain is not installed, the result returns an install hint; fall back to built-in tools. High risk, requires confirmation.
 - device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
 - system_diagnostics: Run a full self-check of the Synaps environment (Node version, AI API key, Termux path, device control, MCP servers, Harness, DB stats). Read-only, returns a summary with recommended fixes.
 - agent_list: List agent instances for the current session (id/type/name/status/context length). Read-only.
@@ -228,7 +231,7 @@ You have access to tools that let you interact with the project files:
 - Explain what you're doing at each step
 - If you encounter an error, try to understand and fix it
 - All paths are relative to the project root
-- 未绑定项目时，只能执行不依赖项目的工具（system_diagnostics、list_skills、read_skill、harness_status、codex_status、device_status、mcp_*、search_tools、install_tool、memory_*、goal_*、rag_search、rag_remember）；文件/命令/团队/构建类工具需要先绑定项目，未绑定时工具会返回明确错误，请据此引导用户先选择项目。
+- 未绑定项目时，只能执行不依赖项目的工具（system_diagnostics、list_skills、read_skill、harness_status、codex_status、brain_status、device_status、mcp_*、search_tools、web_search、install_tool、memory_*、goal_*、rag_search、rag_remember）；文件/命令/团队/构建类工具需要先绑定项目，未绑定时工具会返回明确错误，请据此引导用户先选择项目。
 - Use run_command to verify changes: run tests, builds, git diff, git status, git log
 - Git operations (add/commit/push/branch/log/diff) are done through run_command
 - Never run destructive commands (rm -rf /, mkfs, dd) or commands that modify files outside the project
@@ -327,6 +330,7 @@ interface ToolCall {
   params?: Record<string, unknown>;
   type?: string;
   task?: string;
+  brain?: string;
   title?: string;
   description?: string;
   steps?: string[];
@@ -1504,6 +1508,94 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
         : `No results found for "${query}".`;
     }
 
+    case 'web_search': {
+      const query = toolCall.query || toolCall.task;
+      if (!query) return 'Error: web_search requires a query argument';
+      const clean = (t: string) =>
+        t
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&#x27;/g, "'")
+          .replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .trim();
+      const format = (rs: Array<{ title: string; url: string; snippet: string }>) =>
+        rs.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n\n');
+      try {
+        // 1) DuckDuckGo lite（免 Key；数据中心 IP 可能触发验证码）
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 12000);
+        const res = await fetch('https://lite.duckduckgo.com/lite/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `q=${encodeURIComponent(query)}`,
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        const html = await res.text();
+        const linkRe = /<a\b[^>]*class='result-link'[^>]*>([\s\S]*?)<\/a>/g;
+        const snipRe = /<td class='result-snippet'>([\s\S]*?)<\/td>/g;
+        const links: Array<{ url: string; title: string }> = [];
+        let lm: RegExpExecArray | null;
+        while ((lm = linkRe.exec(html)) && links.length < 6) {
+          const href = lm[0].match(/href="([^"]+)"/);
+          links.push({ url: clean(href ? href[1] : ''), title: clean(lm[1] || '(无标题)') });
+        }
+        const snips: string[] = [];
+        let sm: RegExpExecArray | null;
+        while ((sm = snipRe.exec(html))) {
+          snips.push(clean(sm[1]));
+        }
+        const ddgResults = links.map((l, i) => ({ title: l.title, url: l.url, snippet: snips[i] || '' })).filter((r) => r.url);
+        if (ddgResults.length > 0) {
+          return format(ddgResults);
+        }
+
+        // 2) 回退：Bing 网页搜索（免 Key）
+        const bingRes = await fetch(
+          `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=zh-hans&mkt=zh-CN`,
+          {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+              'Accept-Language': 'zh-CN,zh;q=0.9',
+            },
+            signal: AbortSignal.timeout(12000),
+          }
+        );
+        const bingHtml = await bingRes.text();
+        const bingResults: Array<{ title: string; url: string; snippet: string }> = [];
+        let pos = 0;
+        while (bingResults.length < 6) {
+          const start = bingHtml.indexOf('<li class="b_algo"', pos);
+          if (start < 0) break;
+          let depth = 0;
+          let i = start;
+          for (; i < bingHtml.length; i++) {
+            if (bingHtml.startsWith('<li', i)) depth++;
+            if (bingHtml.startsWith('</li>', i)) depth--;
+            if (depth === 0) break;
+          }
+          const block = bingHtml.slice(start, i + 5);
+          const h = block.match(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*><h2[^>]*>([\s\S]*?)<\/h2><\/a>/);
+          const p = block.match(/<p[^>]*>([\s\S]*?)<\/p>/);
+          if (h) {
+            bingResults.push({ url: clean(h[1]), title: clean(h[2]), snippet: p ? clean(p[1]) : '' });
+          }
+          pos = i + 5;
+        }
+        if (bingResults.length > 0) {
+          return format(bingResults);
+        }
+        return `web_search「${query}」无结果（DuckDuckGo 与 Bing 均未返回内容，可能是临时限流，可稍后重试）`;
+      } catch (err) {
+        return `web_search 失败：${(err as Error).message}`;
+      }
+    }
+
     case 'install_tool': {
       const toolName = toolCall.query;
       if (!toolName) return 'Error: query (package/tool name) is required';
@@ -2204,6 +2296,29 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       try {
         const result = await runCodexTask(task, projectPath);
         return `[Codex result]\n${result}`;
+      } catch (err) {
+        return `Error: ${(err as Error).message}`;
+      }
+    }
+
+    case 'brain_status': {
+      return JSON.stringify({ ...codexStatus(), bridge: await checkCodexBridge() }, null, 2);
+    }
+
+    case 'brain_exec': {
+      const brain = String(toolCall.brain || '');
+      const task = toolCall.task || toolCall.query;
+      if (!task) return 'Error: brain_exec requires a task argument (use task field)';
+      if (!brain) return `Error: brain_exec requires a brain argument. 可用大脑：${BRAIN_IDS.join(', ')}`;
+      let projectPath: string | undefined;
+      try {
+        projectPath = resolveProjectPath(projectId, '');
+      } catch {
+        projectPath = undefined;
+      }
+      try {
+        const result = await runBrainTask(brain, task, projectPath);
+        return `[Brain ${brain} result]\n${result}`;
       } catch (err) {
         return `Error: ${(err as Error).message}`;
       }

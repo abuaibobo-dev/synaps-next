@@ -101,9 +101,22 @@ const DEFAULT_SETTINGS: Settings = {
   font_scale: 'medium',
 };
 
+interface BrainItem {
+  id: string;
+  agentType: string;
+  name: string;
+  cli: string;
+  install: string;
+  desc: string;
+  installed: boolean;
+  version: string | null;
+  note: string;
+}
+
 interface BrainStatus {
   codex: { enabled: boolean; bridgeUrl: string; reachable: boolean; version: string | null; note: string };
-  claude: { installed: boolean; version: string | null; note: string };
+  brains: BrainItem[];
+  builtins: Array<{ id: string; name: string; desc: string }>;
   harness: { enabled: boolean; ready: boolean; note: string };
   defaultBrain: string;
 }
@@ -151,11 +164,11 @@ const BUILD_OPTIONS: Array<{ key: 'github_actions' | 'local'; label: string }> =
   { key: 'local', label: '本地构建' },
 ];
 
-const BRAIN_OPTIONS: Array<{ key: 'auto' | 'codex' | 'claude' | 'harness'; label: string }> = [
+const BRAIN_OPTIONS: Array<{ key: 'auto' | 'codex' | 'aider' | 'local'; label: string }> = [
   { key: 'auto', label: '自动' },
   { key: 'codex', label: 'Codex' },
-  { key: 'claude', label: 'Claude' },
-  { key: 'harness', label: 'Harness' },
+  { key: 'aider', label: 'Aider' },
+  { key: 'local', label: '本地' },
 ];
 
 const CONTEXT_LIMITS: Record<string, string> = {
@@ -1006,12 +1019,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     return '⚠️ 未连接';
   }, [brains]);
 
-  const claudeBrainText = useMemo(() => {
-    if (!brains) return '检测中...';
-    if (brains.claude.installed) return `✅ 已安装 ${brains.claude.version || ''}`.trim();
-    return '⚠️ 未安装';
-  }, [brains]);
-
   const mainPage = (
     <>
       <SettingsGroup title="账户与安全" sc={sc} bar={ACCENT}>
@@ -1237,7 +1244,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
       <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT}>
         <SettingRow
-          label="Codex CLI"
+          label="Codex CLI 桥接"
           value={codexBrainText}
           icon="terminal"
           iconColor={ACCENT}
@@ -1253,11 +1260,21 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Pressable>
           }
         />
-        <SettingRow label="Claude Code" value={claudeBrainText} icon="bot" iconColor={ACCENT} sc={sc} />
+        {(brains?.brains || []).map((b, i) => (
+          <SettingRow
+            key={b.id}
+            label={b.name}
+            value={b.installed ? `✅ ${b.version || '已安装'}` : '⚠️ 未安装'}
+            icon={b.id === 'aider' ? 'code' : b.id === 'sage' ? 'test-tube' : 'bot'}
+            iconColor={ACCENT}
+            sc={sc}
+            last={i === (brains?.brains || []).length - 1}
+          />
+        ))}
         <SettingRow
-          label="DeepSeek Harness"
-          value={brains && brains.harness.ready ? '✅ 已就绪（内置）' : '检测中...'}
-          icon="database"
+          label="内置能力"
+          value={brains ? '✅ 搜索 / 设备控制 / 主模型' : '检测中...'}
+          icon="smartphone"
           iconColor={ACCENT}
           sc={sc}
         />

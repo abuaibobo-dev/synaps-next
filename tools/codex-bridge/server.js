@@ -32,6 +32,25 @@ const TOKEN = process.env.CODEX_BRIDGE_TOKEN || '';
 const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const MAX_BODY = 5 * 1024 * 1024;
 
+// 执行大脑注册表（与 Synaps 后端 server/src/brains.ts 保持一致）。
+// run: argv 模板，{{task}} 会被替换为用户任务；若 CLI 用法未知则用默认 [cli, task]。
+const BRAINS = [
+  { id: 'aider',   cli: 'aider',    install: 'pip install aider-installer && aider-install（或 pip install aider-chat）',
+    run: ['aider', '--message', '{{task}}', '--yes-always', '--no-show-model-warnings', '--model', 'deepseek/deepseek-chat'] },
+  { id: 'sage',    cli: 'sage',     install: 'pip install sage-ai-cli',
+    run: ['sage', '{{task}}'] },
+  { id: 'lydia',   cli: 'lydia',    install: '参考 https://github.com/levimackay/lydia-cli',
+    run: ['lydia', '{{task}}'] },
+  { id: 'aix',     cli: 'aix',      install: 'npm i -g aix-ai',
+    run: ['aix', '{{task}}'] },
+  { id: 'miii',    cli: 'miii',     install: 'npm i -g miii-agent',
+    run: ['miii', '{{task}}'] },
+  { id: 'myai',    cli: 'my-ai',    install: 'npm i -g @gh3ttoniga/my-ai',
+    run: ['my-ai', '{{task}}'] },
+  { id: 'codex',   cli: 'codex',    install: 'npm i -g @openai/codex',
+    run: null }, // codex 走专用 /run 逻辑
+];
+
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
 }
@@ -81,6 +100,14 @@ function binVersion(name) {
 
 function codexVersion() {
   return binVersion(CODEX_BIN);
+}
+
+async function detectBrains() {
+  const out = {};
+  for (const b of BRAINS) {
+    out[b.id] = await binVersion(b.cli);
+  }
+  return out;
 }
 
 function parseCodexOutput(raw) {
@@ -218,11 +245,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/status') {
     const ver = await codexVersion();
     const claudeVer = await binVersion('claude');
+    const brains = await detectBrains();
     return respond(200, {
       ok: true,
       service: 'synaps-codex-bridge',
       codexVersion: ver || '(codex 未安装)',
       claudeVersion: claudeVer || null,
+      brains,
       nodeVersion: process.version,
       pid: process.pid,
       cwd: process.cwd(),
@@ -246,7 +275,85 @@ const server = http.createServer(async (req, res) => {
     return respond(200, result);
   }
 
-  return respond(404, { error: 'not found（仅支持 GET /status 与 POST /run）' });
+  if (req.method === 'POST' && url.pathname === '/brain') {
+    let payload;
+    try {
+      payload = await readBody(req);
+    } catch (e) {
+      return respond(400, { error: e.message });
+    }
+    const tool = String(payload.tool || '').trim();
+    const brain = BRAINS.find((b) => b.id === tool);
+    if (!brain) {
+      return respond(400, { error: `未知执行大脑：${tool}。可用：${BRAINS.map((b) => b.id).join(', ')}` });
+    }
+    if (brain.id === 'codex') {
+      const result = await runTask({ ...payload, task: payload.task });
+      return respond(200, result);
+    }
+    const task = String(payload.task || '').trim();
+    if (!task) return respond(400, { error: 'task 不能为空' });
+    const cwd = String(payload.cwd || os.homedir()).trim();
+    const timeoutMs = Math.max(10000, Number(payload.timeoutMs) || 600000);
+    const workDir = fs.existsSync(cwd) ? cwd : os.homedir();
+
+    const args = (brain.run || []).map((a) => (a === '{{task}}' ? task : a));
+    const child = spawn(args[0], args.slice(1), {
+      cwd: workDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, DEEPSEEK_API_KEY: String(payload.apiKey || process.env.DEEPSEEK_API_KEY || '') },
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const resolveBrain = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      respond(200, result);
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      resolveBrain({
+        exitCode: -1,
+        timedOut: true,
+        output: `[超时] ${brain.id} 执行超过 ${Math.round(timeoutMs / 1000)}s 已被终止`,
+        lastMessage: '',
+      });
+    }, timeoutMs);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => {
+      resolveBrain({
+        exitCode: -1,
+        output: `[无法启动 ${brain.id}] ${err.message}\n安装方式：${brain.install}`,
+        lastMessage: '',
+        installHint: brain.install,
+      });
+    });
+    child.on('close', (code) => {
+      const errTail = String(stderr || '')
+        .split('\n')
+        .filter((l) => !l.includes('Reading additional input from stdin'))
+        .join('\n')
+        .trim()
+        .slice(-2000);
+      let output = (stdout || errTail || '(无输出)').trim().slice(-6000);
+      if (errTail && !output.includes(errTail)) output += `\n[stderr] ${errTail}`;
+      resolveBrain({
+        exitCode: code,
+        timedOut: false,
+        output,
+        lastMessage: output.slice(-500),
+        failed: code !== 0,
+        installHint: null,
+      });
+    });
+    log(`brain: ${brain.id} task=${task.slice(0, 60)} cwd=${cwd}`);
+    return;
+  }
+
+  return respond(404, { error: 'not found（仅支持 GET /status、POST /run、POST /brain）' });
 });
 
 server.listen(PORT, '127.0.0.1', () => {
