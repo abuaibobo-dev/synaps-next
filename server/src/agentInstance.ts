@@ -62,7 +62,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '3. 用户说“你亲自来”时，你会获得当前任务的临时执行权限（write_file/run_command/install_tool）；修复完成后主动说明权限状态。\n' +
       '4. 所有临时权限的授予与使用都会记录到审计日志；高风险命令仍需要用户确认，不要越权。\n' +
       '5. 需要外部工具时：用 search_tools 搜索 npm/GitHub 上的库 → 与用户确认后 install_tool 安装（安装后立即生效，无需重启）→ list_tools 查看已安装工具；MCP 服务器用 mcp_list_servers/mcp_list_tools/mcp_call 发现并调用外部工具。',
-    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server'],
+    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'harness_status', 'agent_list', 'agent_status', 'agent_delegate'],
     model: 'deepseek-chat',
     temperature: 0.4,
   },
@@ -213,7 +213,26 @@ export function getOrCreateInstance(sessionId: string, type: AgentType): AgentIn
     `SELECT * FROM agent_instances WHERE session_id = ? AND agent_type = ? AND status != 'stopped' ORDER BY created_at DESC LIMIT 1`,
     [sessionId, type]
   );
-  if (existing) return rowToInstance(existing);
+  if (existing) {
+    const inst = rowToInstance(existing);
+    const tpl = AGENT_TEMPLATES[type];
+    if (
+      tpl &&
+      (JSON.stringify(inst.tools) !== JSON.stringify(tpl.tools) ||
+        inst.systemPrompt !== tpl.systemPrompt ||
+        inst.model !== tpl.model ||
+        inst.temperature !== tpl.temperature)
+    ) {
+      // 模板升级后自动同步已存在实例，保证工具白名单/角色提示始终与最新模板一致
+      return updateAgentInstance(inst.id, {
+        tools: tpl.tools,
+        systemPrompt: tpl.systemPrompt,
+        model: tpl.model,
+        temperature: tpl.temperature,
+      }) || inst;
+    }
+    return inst;
+  }
   return createAgentInstance(sessionId, type);
 }
 

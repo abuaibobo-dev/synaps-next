@@ -45,9 +45,18 @@ export async function analyzeFailure(tool: string, result: string): Promise<stri
       ],
       { temperature: 0.3, model }
     );
-    for await (const chunk of stream) {
-      if (chunk.content) text += chunk.content.toString();
-    }
+    // 看门狗：60s 无数据 / 120s 总时长即放弃，避免拖慢主流程
+    await Promise.race([
+      (async () => {
+        for await (const chunk of stream) {
+          if (chunk.content) text += chunk.content.toString();
+        }
+      })(),
+      new Promise<void>((_, reject) => {
+        const timer = setTimeout(() => reject(new Error('timeout')), 120_000);
+        timer.unref?.();
+      }),
+    ]);
     if (!text.trim()) return null;
     return `[失败分析]\n${text.trim()}`;
   } catch {

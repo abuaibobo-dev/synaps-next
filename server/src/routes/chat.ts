@@ -471,24 +471,80 @@ async function aiComplete(
   system: string,
   user: string
 ): Promise<string> {
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.1,
-      max_tokens: 8000,
-    }),
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.1,
+        max_tokens: 8000,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const raw = data.choices?.[0]?.message?.content || '';
+    const m = raw.match(/```(?:\w+)?\n([\s\S]*?)```/);
+    return m ? m[1] : raw;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 流式读取 LLM 响应并带看门狗：空闲超时（长时间无数据）或总超时后中断，
+ * 避免网络/模型异常导致 Agent 循环无限等待。
+ */
+async function streamWithWatchdog(
+  client: LLMClient,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  options: { temperature?: number; model?: string },
+  idleTimeoutMs = 60_000,
+  totalTimeoutMs = 180_000
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let out = '';
+    let idleTimer: NodeJS.Timeout | null = null;
+    const totalTimer = setTimeout(() => {
+      if (idleTimer) clearTimeout(idleTimer);
+      reject(new Error('LLM 响应超时，请稍后重试'));
+    }, totalTimeoutMs);
+
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        clearTimeout(totalTimer);
+        reject(new Error('LLM 响应中断（长时间无数据），请稍后重试'));
+      }, idleTimeoutMs);
+    };
+
+    (async () => {
+      try {
+        const stream = client.stream(messages, options);
+        armIdle();
+        for await (const chunk of stream) {
+          if (chunk.content) {
+            out += chunk.content.toString();
+            armIdle();
+          }
+        }
+        if (idleTimer) clearTimeout(idleTimer);
+        clearTimeout(totalTimer);
+        resolve(out);
+      } catch (err) {
+        if (idleTimer) clearTimeout(idleTimer);
+        clearTimeout(totalTimer);
+        reject(err);
+      }
+    })();
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const raw = data.choices?.[0]?.message?.content || '';
-  const m = raw.match(/```(?:\w+)?\n([\s\S]*?)```/);
-  return m ? m[1] : raw;
 }
 
 function parseTaskList(text: string): TeamTask[] {
@@ -2094,17 +2150,23 @@ All file operations should use paths relative to the project root.`;
         break;
       }
 
-      // Collect full response
-      let fullResponse = '';
-      const stream = client.stream(conversationMessages, {
-        temperature: agentInstance?.temperature ?? 0.3,
-        ...(model ? { model: agentInstance?.model || model } : {}),
-      });
-
-      for await (const chunk of stream) {
-        if (chunk.content) {
-          fullResponse += chunk.content.toString();
-        }
+      // Collect full response（带看门狗，避免模型无响应时无限等待）
+      let fullResponse: string;
+      try {
+        fullResponse = await streamWithWatchdog(client, conversationMessages, {
+          temperature: agentInstance?.temperature ?? 0.3,
+          ...(model ? { model: agentInstance?.model || model } : {}),
+        });
+      } catch (err: any) {
+        const errMsg = `\n\n[系统提示] ${err?.message || String(err)}`;
+        res.write(`data: ${JSON.stringify({ content: errMsg })}\n\n`);
+        res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'error', durationMs: Date.now() - taskStartedAt } })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        finishTask(taskId, 'error', Date.now());
+        if (agentInstance) updateAgentInstance(agentInstance.id, { status: 'idle' });
+        abortRegistry.delete(taskId);
+        res.end();
+        return;
       }
 
       lastFullResponse = fullResponse;
@@ -2114,18 +2176,17 @@ All file operations should use paths relative to the project root.`;
 
       if (!toolCall || !projectId) {
         // No tool call or no project context - stream final response to client
-        // Re-stream the response
-        const finalStream = client.stream(conversationMessages, {
-          temperature: 0.3,
-          ...(model ? { model } : {}),
-        });
-
-        for await (const chunk of finalStream) {
-          if (chunk.content) {
-            const data = JSON.stringify({ content: chunk.content.toString() });
-            res.write(`data: ${data}\n\n`);
-          }
+        // Re-stream the response（带看门狗）
+        let finalText = '';
+        try {
+          finalText = await streamWithWatchdog(client, conversationMessages, {
+            temperature: 0.3,
+            ...(model ? { model } : {}),
+          });
+        } catch (err: any) {
+          finalText = `\n\n[系统提示] ${err?.message || String(err)}`;
         }
+        res.write(`data: ${JSON.stringify({ content: finalText })}\n\n`);
 
         saveChatMessage(sessionId, 'assistant', fullResponse);
         if (agentInstance) {
