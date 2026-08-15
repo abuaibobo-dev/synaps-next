@@ -20,6 +20,7 @@ import {
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
+import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable } from '../rag.js';
 import {
   createTask,
   saveTaskProgress,
@@ -200,6 +201,10 @@ You have access to tools that let you interact with the project files:
 - agent_clear: Clear an agent instance's independent context (args: id). Medium risk.
 - agent_delete: Delete an agent instance and its context (args: id). Medium risk.
 
+- rag_index: Rebuild the project knowledge base index (args: scope "all" | "project" | "chat"; indexes project docs + chat history into retrievable chunks). Auto-executed.
+- rag_search: Search the knowledge base with source citations (args: query, topK optional). Use before answering questions that reference project docs or history.
+- rag_remember: Store a long-term fact/note into the knowledge base (args: content or query, title optional).
+
 - goal_set: Create a long-term autonomous goal (args: title, description optional, steps optional array of strings). Persisted per project; use for multi-turn/long-horizon tasks.
 - goal_status: Show the current active goal's progress (args: goalId optional; defaults to latest active goal for the project). Read-only.
 - goal_loop: Advance the current goal (args: note optional, milestone true at key checkpoints, done true to finish, nextStep optional). Medium risk: milestone checkpoints pause and require user approval.
@@ -251,6 +256,11 @@ When the user asks to develop a feature (e.g. "开发一个登录模块" or "实
 4. team_review: the REVIEWER reviews changes (lint/typecheck/security/diff) and gates delivery
 5. Only when the review passes, run git_commit_push
 Track progress with team_status.
+
+## RAG 知识库（带出处引用）
+- 回答涉及项目文档、历史对话、之前决策的问题时，先 rag_search 检索，答案中标注出处（文件路径/历史对话时间）。
+- 知识库为空或想重新索引时用 rag_index（scope: all 索引项目文档+历史对话）。
+- 用户告知的长期事实（偏好、约束、技术选型）用 rag_remember 存入知识库，后续对话自动关联。
 
 ## Autonomous Loop（长期目标自主执行）
 - 用户提出长期/多轮任务（"持续跟踪"、"每周…"、"把项目做到…"）时：先 goal_set 建立目标并拆解步骤，然后逐轮 goal_loop 推进。
@@ -318,6 +328,8 @@ interface ToolCall {
   milestone?: boolean;
   done?: boolean;
   goalId?: string;
+  scope?: string;
+  topK?: number;
 }
 
 interface TeamTask {
@@ -1017,6 +1029,38 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
       const skill = queryOne('SELECT name, description, content FROM skills WHERE name = ? AND enabled = 1', [toolCall.query]) as Record<string, string> | null;
       if (!skill) return `Skill "${toolCall.query}" not found. Use list_skills to see available skills.`;
       return `## ${skill.name}\n\n${skill.description}\n\n---\n\n${skill.content}`;
+    }
+
+    case 'rag_index': {
+      await ensureKnowledgeTable();
+      const scope = toolCall.scope || 'all';
+      let projectCount = 0;
+      let chatCount = 0;
+      if (projectId && (scope === 'all' || scope === 'project')) {
+        const root = resolveProjectPath(projectId, '');
+        if (fs.existsSync(root)) projectCount = indexProjectFiles(projectId, root);
+      }
+      if (projectId && (scope === 'all' || scope === 'chat')) {
+        chatCount = indexChatHistory(projectId);
+      }
+      return `Knowledge index rebuilt (scope: ${scope}):\n- 项目文档：${projectCount} 块\n- 历史对话：${chatCount} 块\n\n使用 rag_search 检索知识库。`;
+    }
+
+    case 'rag_search': {
+      if (!toolCall.query) return 'Error: query is required';
+      await ensureKnowledgeTable();
+      const topK = Math.min(10, Math.max(1, Number(toolCall.topK) || 5));
+      return searchKnowledge(projectId, toolCall.query, topK);
+    }
+
+    case 'rag_remember': {
+      const content = toolCall.content || toolCall.query;
+      if (!content) return 'Error: content is required';
+      const title = toolCall.title || '用户备注';
+      await ensureKnowledgeTable();
+      const n = rememberNote(projectId, title, content);
+      logAudit(projectId, 'rag_remember', `存入知识库备注：${title}（${n} 块）`, 'none', 'auto');
+      return `Saved ${n} chunk(s) to knowledge base: ${title}`;
     }
 
     case 'goal_set': {

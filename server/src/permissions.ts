@@ -96,6 +96,9 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'agent_status':
     case 'system_diagnostics':
     case 'goal_status':
+    case 'rag_search':
+    case 'rag_index':
+    case 'rag_remember':
       return { level: 'none', impact: '只读分析操作，无副作用' };
     case 'goal_set':
       return { level: 'none', impact: `创建长期目标跟踪记录：${(toolCall as any).title || '?'}` };
