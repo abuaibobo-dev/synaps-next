@@ -14,6 +14,8 @@ import {
   Modal,
   Share,
   Image,
+  Vibration,
+  BackHandler,
   useWindowDimensions,
   KeyboardAvoidingView,
 } from 'react-native';
@@ -41,6 +43,9 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withRepeat,
+  withSequence,
+  cancelAnimation,
   Easing,
   ReduceMotion,
 } from 'react-native-reanimated';
@@ -106,6 +111,7 @@ interface Message {
   timestamp: number;
   toolCalls?: ToolCall[];
   replyingTo?: { content: string; role: string };
+  status?: 'pending' | 'sending' | 'sent' | 'error' | 'cancelled';
   attachments?: Array<{ name: string; path?: string; uri?: string; type: 'image' | 'file' }>;
 }
 
@@ -116,6 +122,29 @@ interface PendingAttachment {
   type: 'image' | 'file';
   mimeType?: string;
   size?: number;
+}
+
+interface QueueItem {
+  id: string;
+  userMsgId: string;
+  prompt: string;
+  replyingTo?: { content: string; role: string };
+  attachments?: Message['attachments'];
+  isPriority: boolean;
+  createdAt: number;
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  if (diff < 7 * 86_400_000) {
+    const days = Math.floor(diff / 86_400_000);
+    return days === 1 ? '昨天' : `${days} 天前`;
+  }
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 interface ToolCall {
@@ -157,6 +186,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queueMenu, setQueueMenu] = useState<QueueItem | null>(null);
+  const [networkError, setNetworkError] = useState(false);
   const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
@@ -171,6 +203,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [agentType, setAgentType] = useState<AgentOptionKey>('scheduler');
   const [agentInstanceIds, setAgentInstanceIds] = useState<Record<string, string>>({});
   const requestIdRef = useRef<string>('');
+  const currentUserMsgIdRef = useRef<string>('');
+  const queueRef = useRef<QueueItem[]>([]);
+  const isStreamingRef = useRef(false);
+  const cursorShared = useSharedValue(1);
+  const cursorStyle = useAnimatedStyle(() => ({ opacity: cursorShared.value }));
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isSideBySide = windowWidth >= 600 && windowWidth > windowHeight * 0.8;
   const insets = useSafeAreaInsets();
@@ -193,8 +230,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         setBalance(data.balance);
         setBalanceCurrency(data.currency === 'USD' ? '$' : '¥');
       }
+      setNetworkError(false);
     } catch {
-      // Balance fetch failed, ignore
+      setNetworkError(true);
     }
   };
 
@@ -406,8 +444,22 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, []);
 
-  const startTask = useCallback((prompt: string, msgAttachments?: Message['attachments']) => {
-    if (!prompt.trim() || isStreaming) return;
+  const runQueueItemRef = useRef<(item: QueueItem) => void>(() => {});
+
+  // 从队列取下一个任务（插队消息在队首，优先处理）
+  const dequeueNext = useCallback(() => {
+    if (isStreamingRef.current) return;
+    if (queueRef.current.length === 0) return;
+    const [next, ...rest] = queueRef.current;
+    queueRef.current = rest;
+    setQueue(queueRef.current);
+    runQueueItemRef.current(next);
+  }, []);
+
+  const runQueueItem = useCallback((item: QueueItem) => {
+    if (!item || isStreamingRef.current) return;
+    isStreamingRef.current = true;
+    currentUserMsgIdRef.current = item.userMsgId;
 
     const requestId = `task-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     requestIdRef.current = requestId;
@@ -415,8 +467,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     // 创建任务记录
     const task: TaskRecord = {
       id: requestId,
-      name: prompt.replace(/\n/g, ' ').slice(0, 60),
-      prompt,
+      name: item.prompt.replace(/\n/g, ' ').slice(0, 60),
+      prompt: item.prompt,
       startedAt: Date.now(),
       status: 'running',
       steps: [],
@@ -425,27 +477,20 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     };
     setCurrentTask(task);
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: prompt,
-      timestamp: Date.now(),
-      attachments: msgAttachments,
-      replyingTo: replyingTo
-        ? { content: replyingTo.content, role: replyingTo.role }
-        : undefined,
-    };
+    // 该消息进入发送中状态
+    setMessages((prev) =>
+      prev.map((m) => (m.id === item.userMsgId ? { ...m, status: 'sending' } : m))
+    );
 
-    // Build conversation history for the API
+    // Build conversation history for the API（排队中的消息不参与历史，当前消息由 prompt 追加）
     const conversationHistory = [
       { role: 'system' as const, content: 'You are Synaps, an AI software development agent running on a mobile phone. You help users develop, debug, build and release software through natural language. Be concise, technical, and action-oriented. When the user describes a task, break it down into steps and execute them. Respond in the same language the user uses.' },
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user' as const, content: prompt },
+      ...messages
+        .filter((m) => m.id !== item.userMsgId && m.status !== 'pending')
+        .map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: item.prompt },
     ];
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInputText('');
-    setReplyingTo(null);
     setIsStreaming(true);
     setStreamingContent('');
     setCurrentToolCalls([]);
@@ -480,6 +525,21 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       setCurrentTask((prev) => (prev && prev.id === requestId ? fn(prev) : prev));
     };
 
+    // 收尾：更新消息状态、关闭流、处理队列下一个
+    const finish = (userStatus: Message['status']) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === item.userMsgId ? { ...m, status: userStatus } : m))
+      );
+      setStreamingContent('');
+      setIsStreaming(false);
+      isStreamingRef.current = false;
+      setCurrentToolCalls([]);
+      es.close();
+      esRef.current = null;
+      fetchBalance();
+      dequeueNext();
+    };
+
     es.addEventListener('message', (event) => {
       if (event.data === '[DONE]') {
         const assistantMessage: Message = {
@@ -490,13 +550,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
-        setStreamingContent('');
-        setIsStreaming(false);
-        setCurrentToolCalls([]);
         patchTask((t) => ({ ...t, status: t.status === 'running' ? 'done' : t.status, endedAt: Date.now() }));
-        es.close();
-        esRef.current = null;
-        fetchBalance();
+        finish('sent');
         return;
       }
 
@@ -511,7 +566,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           setCurrentTask((prev) =>
             prev && prev.id === parsed.task_start.id
               ? prev
-              : { id: parsed.task_start.id, name: parsed.task_start.name, prompt, startedAt: parsed.task_start.startedAt, status: 'running', steps: [], tools: [], files: [] }
+              : { id: parsed.task_start.id, name: parsed.task_start.name, prompt: item.prompt, startedAt: parsed.task_start.startedAt, status: 'running', steps: [], tools: [], files: [] }
           );
         }
         if (parsed.task_step) {
@@ -521,7 +576,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             if (parsed.task_step.status === 'running') {
               steps.push(step);
             } else {
-              const lastIdx = [...steps].reverse().findIndex((s) => s.name === step.name && s.status === 'running');
+              const lastIdx = [...steps].reverse().findIndex((st) => st.name === step.name && st.status === 'running');
               if (lastIdx !== -1) steps[steps.length - 1 - lastIdx] = step;
               else steps.push(step);
             }
@@ -546,6 +601,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           patchTask((t) => ({ ...t, status: parsed.task_end.status || 'done', endedAt: Date.now() }));
         }
         if (parsed.content) {
+          setNetworkError(false);
           accumulated += parsed.content;
           setStreamingContent(accumulated);
         }
@@ -568,6 +624,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           role: 'assistant',
           content: accumulated + '\n\n[Connection interrupted]',
           timestamp: Date.now(),
+          status: 'error',
         };
         setMessages((prev) => [...prev, assistantMessage]);
       } else {
@@ -576,21 +633,88 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           role: 'assistant',
           content: 'Connection failed. Please check if the backend service is running.',
           timestamp: Date.now(),
+          status: 'error',
         };
         setMessages((prev) => [...prev, errorMessage]);
+        setNetworkError(true);
       }
-      setStreamingContent('');
-      setIsStreaming(false);
-      setCurrentToolCalls([]);
       patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
-      es.close();
-      esRef.current = null;
+      finish(accumulated ? 'sent' : 'error');
     });
-  }, [inputText, isStreaming, messages, replyingTo, currentProjectId, agentType, agentInstanceIds]);
+  }, [messages, currentProjectId, agentType, agentInstanceIds, dequeueNext]);
+
+  runQueueItemRef.current = runQueueItem;
+
+  // 入队或直接执行
+  const startTask = useCallback((prompt: string, msgAttachments?: Message['attachments']) => {
+    if (!prompt.trim()) return;
+
+    const userMsgId = Date.now().toString();
+    const userMessage: Message = {
+      id: userMsgId,
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now(),
+      status: isStreamingRef.current ? 'pending' : 'sending',
+      attachments: msgAttachments,
+      replyingTo: replyingTo
+        ? { content: replyingTo.content, role: replyingTo.role }
+        : undefined,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setInputText('');
+    setReplyingTo(null);
+
+    const item: QueueItem = {
+      id: `q-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+      userMsgId,
+      prompt,
+      replyingTo: userMessage.replyingTo,
+      attachments: msgAttachments,
+      isPriority: false,
+      createdAt: Date.now(),
+    };
+
+    if (isStreamingRef.current) {
+      queueRef.current = [...queueRef.current, item];
+      setQueue(queueRef.current);
+    } else {
+      runQueueItem(item);
+    }
+  }, [replyingTo, runQueueItem]);
+
+  // 插队：移动到队首并标记，后插的先处理
+  const promoteTask = useCallback((id: string) => {
+    const idx = queueRef.current.findIndex((q) => q.id === id);
+    if (idx === -1) return;
+    const item = { ...queueRef.current[idx], isPriority: true };
+    const rest = queueRef.current.filter((_, i) => i !== idx);
+    queueRef.current = [item, ...rest];
+    setQueue(queueRef.current);
+  }, []);
+
+  // 取消：移出队列
+  const removeTask = useCallback((id: string) => {
+    queueRef.current = queueRef.current.filter((q) => q.id !== id);
+    setQueue(queueRef.current);
+  }, []);
+
+  // 失败消息重试
+  const retryMessage = useCallback((message: Message) => {
+    setMenuMessage(null);
+    if (message.role === 'user') {
+      startTask(message.content, message.attachments);
+    } else {
+      const idx = messages.findIndex((m) => m.id === message.id);
+      const prevUser = [...messages.slice(0, idx)].reverse().find((m) => m.role === 'user');
+      if (prevUser) startTask(prevUser.content, prevUser.attachments);
+    }
+  }, [messages, startTask]);
+
 
   // 选择相册图片
   const pickImage = async () => {
-    if (isStreaming) return;
+    if (isRecording) return;
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
@@ -619,7 +743,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
   // 选择文件
   const pickFile = async () => {
-    if (isStreaming) return;
+    if (isRecording) return;
     try {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
@@ -676,7 +800,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   };
 
   const handleSend = useCallback(async () => {
-    if (!inputText.trim() || isStreaming) return;
+    if (!inputText.trim()) return;
     try {
       const uploaded = attachments.length ? await uploadAttachments(attachments) : [];
       const quotedText = replyingTo
@@ -703,23 +827,30 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     } catch (err) {
       Alert.alert('发送失败', err instanceof Error ? err.message : String(err));
     }
-  }, [inputText, isStreaming, replyingTo, attachments, currentProjectId, startTask]);
+  }, [inputText, replyingTo, attachments, currentProjectId, startTask]);
 
   // 取消当前任务
   const cancelTask = useCallback(() => {
     const requestId = requestIdRef.current;
-    if (!requestId) return;
-    fetch(`${API_BASE}/api/v1/chat/cancel`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId }),
-    }).catch(() => undefined);
+    if (requestId) {
+      fetch(`${API_BASE}/api/v1/chat/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      }).catch(() => undefined);
+    }
     if (esRef.current) esRef.current.close();
+    const uid = currentUserMsgIdRef.current;
+    if (uid) {
+      setMessages((prev) => prev.map((m) => (m.id === uid ? { ...m, status: 'cancelled' } : m)));
+    }
     setCurrentTask((t) => (t ? { ...t, status: 'cancelled', endedAt: Date.now() } : t));
     setIsStreaming(false);
+    isStreamingRef.current = false;
     setStreamingContent('');
     esRef.current = null;
-  }, []);
+    dequeueNext();
+  }, [dequeueNext]);
 
   // 重跑：以相同指令重新发起任务
   const rerunTask = useCallback(() => {
@@ -729,7 +860,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   }, [currentTask, startTask]);
 
   // 回滚：恢复任务开始前的最新快照，并向对话流插入回滚记录
-  const rollbackTask = useCallback(async () => {
+  const doRollback = useCallback(async () => {
     const task = currentTask;
     if (!task || !currentProjectId) return;
     try {
@@ -759,6 +890,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       alert('回滚失败');
     }
   }, [currentTask, currentProjectId]);
+
+  const rollbackTask = useCallback(async () => {
+    const task = currentTask;
+    if (!task || !currentProjectId) return;
+    Alert.alert('确认回滚', `将恢复任务「${task.name}」开始前的最新快照，确定吗？`, [
+      { text: '取消', style: 'cancel' },
+      { text: '回滚', style: 'destructive', onPress: doRollback },
+    ]);
+  }, [currentTask, currentProjectId, doRollback]);
 
   // Voice recording functions
   const startRecording = async () => {
@@ -842,7 +982,31 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     setMenuMessage(null);
   }, []);
 
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (Keyboard.isVisible()) {
+        Keyboard.dismiss();
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    cursorShared.value = withRepeat(
+      withSequence(
+        withTiming(0.15, { duration: 420, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 420, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      false
+    );
+    return () => cancelAnimation(cursorShared);
+  }, [cursorShared]);
+
   const openMessageMenu = useCallback((message: Message) => {
+    Vibration.vibrate(10);
     setMenuMessage(message);
   }, []);
 
@@ -1007,6 +1171,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               })}
             </View>
           )}
+          {(isUser && item.status && item.status !== 'sent') && (
+            <View style={styles.messageStatusRow}>
+              {item.status === 'pending' && <Text style={styles.messageStatusPending}>排队中</Text>}
+              {item.status === 'sending' && <Text style={styles.messageStatusPending}>发送中...</Text>}
+              {item.status === 'error' && <Text style={styles.messageStatusError}>发送失败 · 长按重试</Text>}
+              {item.status === 'cancelled' && <Text style={styles.messageStatusPending}>已取消</Text>}
+            </View>
+          )}
+          <Text style={styles.messageTime}>{formatRelativeTime(item.timestamp)}</Text>
         </View>
       </Pressable>
       </Animated.View>
@@ -1137,6 +1310,39 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Animated.View>
         )}
 
+        {/* 消息队列（等待中） */}
+        {queue.length > 0 && (
+          <View style={styles.queueBar}>
+            <View style={styles.queueHeader}>
+              <Text style={styles.queueHeaderText}>
+                ⏳ {queue.length} 条等待中（{queue.filter((q) => q.isPriority).length} 条插队）
+              </Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.queueChipsContent}
+            >
+              {queue.map((item) => (
+                <Pressable
+                  key={item.id}
+                  onLongPress={() => {
+                    Vibration.vibrate(10);
+                    setQueueMenu(item);
+                  }}
+                  delayLongPress={250}
+                  style={[styles.queueChip, item.isPriority && styles.queueChipPriority]}
+                >
+                  {item.isPriority && <Text style={styles.queueChipPin}>🔝</Text>}
+                  <Text style={styles.queueChipText} numberOfLines={1}>
+                    {item.prompt.replace(/\n/g, ' ')}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Messages */}
         <FlatList
           ref={flatListRef}
@@ -1176,7 +1382,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               streamingContent ? (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
                   <View style={[styles.messageBubble, styles.assistantBubble]}>
-                    <Text style={styles.messageContent}>{streamingContent}</Text>
+                    <Text style={styles.messageContent}>
+                      {streamingContent}
+                      <Animated.Text style={[styles.streamCursor, cursorStyle]}>▍</Animated.Text>
+                    </Text>
                     {currentToolCalls.length > 0 && (
                       <View style={styles.toolCallsContainer}>
                         {currentToolCalls.map((tc, idx) => {
@@ -1212,6 +1421,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         <View
           style={[styles.inputContainer, { paddingBottom: keyboardShown ? spacing.md : insets.bottom + spacing.md }]}
         >
+          {networkError && (
+            <View style={styles.networkBanner}>
+              <FontAwesome6 name="wifi" size={11} color="#FFFFFF" />
+              <Text style={styles.networkBannerText}>网络不可用，请检查连接后重试</Text>
+            </View>
+          )}
           {replyingTo && (
             <View style={styles.replyBar}>
               <View style={styles.replyBarLine} />
@@ -1270,7 +1485,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               numberOfLines={1}
               scrollEnabled
               maxLength={2000}
-              editable={!isStreaming && !isRecording}
+              editable={!isRecording}
               returnKeyType="default"
               blurOnSubmit={false}
             />
@@ -1296,9 +1511,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               />
             </Pressable>
             <Pressable
-              style={[styles.sendButton, (!inputText.trim() || isStreaming) && styles.sendButtonDisabled]}
+              style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
               onPress={handleSend}
-              disabled={!inputText.trim() || isStreaming}
+              disabled={!inputText.trim()}
             >
               <FontAwesome6
                 name={isStreaming ? 'spinner' : 'paper-plane'}
@@ -1310,11 +1525,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </View>
           <View style={styles.inputFooter}>
             <View style={styles.inputFooterLeft}>
-              <Pressable onPress={pickImage} disabled={isStreaming} style={styles.footerIconBtn} hitSlop={6}>
-                <FontAwesome6 name="image" size={13} color={isStreaming ? colors.textMuted : colors.textSecondary} />
+              <Pressable onPress={pickImage} style={styles.footerIconBtn} hitSlop={6}>
+                <FontAwesome6 name="image" size={13} color={colors.textSecondary} />
               </Pressable>
-              <Pressable onPress={pickFile} disabled={isStreaming} style={styles.footerIconBtn} hitSlop={6}>
-                <FontAwesome6 name="paperclip" size={13} color={isStreaming ? colors.textMuted : colors.textSecondary} />
+              <Pressable onPress={pickFile} style={styles.footerIconBtn} hitSlop={6}>
+                <FontAwesome6 name="paperclip" size={13} color={colors.textSecondary} />
               </Pressable>
               <Pressable onPress={() => setAutoSpeak(!autoSpeak)} style={styles.autoSpeakToggle}>
                 <FontAwesome6
@@ -1407,7 +1622,59 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <FontAwesome6 name="share-nodes" size={14} color={colors.primary} />
                 <Text style={styles.modalItemText}>分享</Text>
               </Pressable>
+              {menuMessage?.status === 'error' && (
+                <Pressable
+                  style={styles.modalItem}
+                  onPress={() => menuMessage && retryMessage(menuMessage)}
+                >
+                  <FontAwesome6 name="rotate-right" size={14} color={colors.warning} />
+                  <Text style={styles.modalItemText}>重试</Text>
+                </Pressable>
+              )}
               <Pressable style={[styles.modalItem, styles.modalItemCancel]} onPress={closeMessageMenu}>
+                <Text style={styles.modalItemCancelText}>取消</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* 队列操作菜单 */}
+        <Modal
+          visible={!!queueMenu}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setQueueMenu(null)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setQueueMenu(null)}>
+            <Pressable
+              style={[styles.modalContainer, { paddingBottom: spacing.xl + insets.bottom }]}
+              onPress={() => {}}
+            >
+              <Text style={styles.modalTitle}>队列消息</Text>
+              <Text style={styles.queueMenuPreview} numberOfLines={2}>
+                {queueMenu?.prompt}
+              </Text>
+              <Pressable
+                style={styles.modalItem}
+                onPress={() => {
+                  if (queueMenu) promoteTask(queueMenu.id);
+                  setQueueMenu(null);
+                }}
+              >
+                <FontAwesome6 name="arrow-up" size={14} color={colors.warning} />
+                <Text style={styles.modalItemText}>插队（下一条处理）</Text>
+              </Pressable>
+              <Pressable
+                style={styles.modalItem}
+                onPress={() => {
+                  if (queueMenu) removeTask(queueMenu.id);
+                  setQueueMenu(null);
+                }}
+              >
+                <FontAwesome6 name="trash" size={14} color={colors.error} />
+                <Text style={styles.modalItemText}>取消（移出队列）</Text>
+              </Pressable>
+              <Pressable style={[styles.modalItem, styles.modalItemCancel]} onPress={() => setQueueMenu(null)}>
                 <Text style={styles.modalItemCancelText}>取消</Text>
               </Pressable>
             </Pressable>
@@ -2231,6 +2498,94 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexShrink: 1,
     fontSize: fontSize.xs,
     color: colors.textSecondary,
+  },
+  queueBar: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  queueHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  queueHeaderText: {
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  queueChipsContent: {
+    gap: spacing.sm,
+    paddingRight: spacing.md,
+  },
+  queueChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    maxWidth: 220,
+  },
+  queueChipPriority: {
+    backgroundColor: isDark ? '#1A2A1A' : '#EAFFEA',
+    borderColor: isDark ? '#2E5E2E' : '#B7F0B7',
+  },
+  queueChipPin: {
+    fontSize: 10,
+  },
+  queueChipText: {
+    flexShrink: 1,
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+  },
+  queueMenuPreview: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  networkBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.error,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginBottom: spacing.sm,
+  },
+  networkBannerText: {
+    flex: 1,
+    fontSize: fontSize.xs,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  messageStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  messageStatusPending: {
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+  messageStatusError: {
+    fontSize: 10,
+    color: colors.error,
+    fontWeight: '600',
+  },
+  messageTime: {
+    marginTop: 4,
+    fontSize: 9,
+    color: colors.textMuted,
+    alignSelf: 'flex-end',
+  },
+  streamCursor: {
+    color: colors.primary,
+    fontWeight: '700',
   },
   inputFooter: {
     flexDirection: 'row',
