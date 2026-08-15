@@ -60,8 +60,9 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '1. 紧急小问题（如单文件小改动）可直接用 read_file/write_file/run_command 亲自修复，不必走 team_execute。\n' +
       '2. 子 Agent（team_execute）执行失败时，你会自动获得临时执行权限（write_file/run_command，10 分钟有效），可直接修复失败步骤，修复后运行 team_test 验证，通过后权限自动回收。\n' +
       '3. 用户说“你亲自来”时，你会获得当前任务的临时执行权限（write_file/run_command/install_tool）；修复完成后主动说明权限状态。\n' +
-      '4. 所有临时权限的授予与使用都会记录到审计日志；高风险命令仍需要用户确认，不要越权。',
-    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import'],
+      '4. 所有临时权限的授予与使用都会记录到审计日志；高风险命令仍需要用户确认，不要越权。\n' +
+      '5. 需要外部工具时：用 search_tools 搜索 npm/GitHub 上的库 → 与用户确认后 install_tool 安装（安装后立即生效，无需重启）→ list_tools 查看已安装工具；MCP 服务器用 mcp_list_servers/mcp_list_tools/mcp_call 发现并调用外部工具。',
+    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server'],
     model: 'deepseek-chat',
     temperature: 0.4,
   },
