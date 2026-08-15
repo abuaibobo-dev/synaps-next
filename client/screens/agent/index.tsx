@@ -413,6 +413,15 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     return () => {
       stop();
       clearInterval(timer);
+      if (requestIdRef.current) {
+        try {
+          fetch(`${API_BASE}/api/v1/chat/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestId: requestIdRef.current }),
+          }).catch(() => {});
+        } catch {}
+      }
       if (esRef.current) {
         esRef.current.close();
       }
@@ -533,6 +542,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     const watchdog = setInterval(() => {
       if (Date.now() - lastEventAt > 120_000) {
         clearInterval(watchdog);
+        try {
+          fetch(`${API_BASE}/api/v1/chat/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestId }),
+          }).catch(() => {});
+        } catch {}
         if (esRef.current === es) es.close();
         const timeoutMsg: Message = {
           id: (Date.now() + 1).toString(),
@@ -651,6 +667,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         if (parsed.thinking) {
           setThinking((prev) => (prev ? prev + '\n\n' : '') + String(parsed.thinking));
         }
+        if (parsed.thinking_chunk) {
+          // 工具轮次实时思考片段：直接拼接，不插入换行分隔
+          setThinking((prev) => (prev || '') + String(parsed.thinking_chunk));
+        }
+        if (parsed.thinking_end) {
+          // 思考流结束：去掉残留的工具 JSON 块
+          setThinking((prev) => (prev || '').replace(/```tool[\s\S]*?```/g, '').trim());
+        }
         if (parsed.permission_request) {
           setPermissionRequest(parsed.permission_request as PermissionRequest);
         }
@@ -664,6 +688,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     });
 
     es.addEventListener('error', () => {
+      try {
+        fetch(`${API_BASE}/api/v1/chat/cancel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId }),
+        }).catch(() => {});
+      } catch {}
       if (accumulated) {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),

@@ -50,6 +50,14 @@ const execAsync = promisify(exec);
 // 任务取消注册表：requestId -> 是否请求取消（agent 循环在步骤间检查）
 const abortRegistry = new Map<string, boolean>();
 
+// SSE 连接错误兜底：客户端断开后 write 抛错会触发 res 'error' 事件，挂一个空监听防止进程崩溃
+const sseErrorGuarded = new WeakSet<express.Response>();
+function guardSseErrors(res: express.Response): void {
+  if (sseErrorGuarded.has(res)) return;
+  sseErrorGuarded.add(res);
+  res.on('error', () => {});
+}
+
 // ---- 调度员临时执行权限（内存态，重启即清；到期/修复完成自动回收） ----
 interface TempGrant {
   tools: string[];
@@ -508,20 +516,41 @@ async function streamWithForwarding(
   options: { temperature?: number; model?: string },
   res: express.Response,
   idleTimeoutMs = 60_000,
-  totalTimeoutMs = 180_000
+  totalTimeoutMs = 180_000,
+  taskId?: string
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
+    guardSseErrors(res);
     let out = '';
     let idleTimer: NodeJS.Timeout | null = null;
+    let heartbeatTimer: NodeJS.Timeout | null = null;
     const totalTimer = setTimeout(() => {
       if (idleTimer) clearTimeout(idleTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       reject(new Error('LLM 响应超时，请稍后重试'));
     }, totalTimeoutMs);
+
+    // 心跳：任务处理中保持 SSE 活跃，前端看门狗不会误判超时；同时响应取消请求
+    heartbeatTimer = setInterval(() => {
+      try {
+        if (taskId && abortRegistry.get(taskId)) {
+          clearTimeout(totalTimer);
+          if (idleTimer) clearTimeout(idleTimer);
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+          reject(new Error('任务已取消'));
+        } else if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+        }
+      } catch {
+        // SSE 已关闭，忽略
+      }
+    }, 15_000);
 
     const armIdle = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         clearTimeout(totalTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         reject(new Error('LLM 响应中断（长时间无数据），请稍后重试'));
       }, idleTimeoutMs);
     };
@@ -542,10 +571,12 @@ async function streamWithForwarding(
         }
         if (idleTimer) clearTimeout(idleTimer);
         clearTimeout(totalTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         resolve(out);
       } catch (err) {
         if (idleTimer) clearTimeout(idleTimer);
         clearTimeout(totalTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         reject(err);
       }
     })();
@@ -556,21 +587,45 @@ async function streamWithWatchdog(
   client: LLMClient,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   options: { temperature?: number; model?: string },
+  res?: express.Response,
   idleTimeoutMs = 60_000,
-  totalTimeoutMs = 180_000
+  totalTimeoutMs = 180_000,
+  taskId?: string,
+  onChunk?: (text: string) => void
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let out = '';
     let idleTimer: NodeJS.Timeout | null = null;
+    let heartbeatTimer: NodeJS.Timeout | null = null;
     const totalTimer = setTimeout(() => {
       if (idleTimer) clearTimeout(idleTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       reject(new Error('LLM 响应超时，请稍后重试'));
     }, totalTimeoutMs);
+
+    if (res) {
+      guardSseErrors(res);
+      heartbeatTimer = setInterval(() => {
+        try {
+          if (taskId && abortRegistry.get(taskId)) {
+            clearTimeout(totalTimer);
+            if (idleTimer) clearTimeout(idleTimer);
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            reject(new Error('任务已取消'));
+          } else if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ heartbeat: true })}\n\n`);
+          }
+        } catch {
+          // SSE 已关闭，忽略
+        }
+      }, 15_000);
+    }
 
     const armIdle = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         clearTimeout(totalTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         reject(new Error('LLM 响应中断（长时间无数据），请稍后重试'));
       }, idleTimeoutMs);
     };
@@ -581,16 +636,22 @@ async function streamWithWatchdog(
         armIdle();
         for await (const chunk of stream) {
           if (chunk.content) {
-            out += chunk.content.toString();
+            const text = chunk.content.toString();
+            if (text) {
+              out += text;
+              if (onChunk) onChunk(text);
+            }
             armIdle();
           }
         }
         if (idleTimer) clearTimeout(idleTimer);
         clearTimeout(totalTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         resolve(out);
       } catch (err) {
         if (idleTimer) clearTimeout(idleTimer);
         clearTimeout(totalTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         reject(err);
       }
     })();
@@ -2203,10 +2264,23 @@ All file operations should use paths relative to the project root.`;
       // Collect full response（带看门狗，避免模型无响应时无限等待）
       let fullResponse: string;
       try {
-        fullResponse = await streamWithWatchdog(client, conversationMessages, {
-          temperature: agentInstance?.temperature ?? 0.3,
-          ...(model ? { model: agentInstance?.model || model } : {}),
-        });
+        // 工具轮次（第 2 轮起）实时转发思考片段；心跳保活，前端不会误判超时
+        const isToolRound = iteration > 1;
+        fullResponse = await streamWithWatchdog(
+          client,
+          conversationMessages,
+          {
+            temperature: agentInstance?.temperature ?? 0.3,
+            ...(model ? { model: agentInstance?.model || model } : {}),
+          },
+          res,
+          undefined,
+          undefined,
+          taskId,
+          isToolRound
+            ? (text: string) => res.write(`data: ${JSON.stringify({ thinking_chunk: text })}\n\n`)
+            : undefined
+        );
       } catch (err: any) {
         const errMsg = `\n\n[系统提示] ${err?.message || String(err)}`;
         res.write(`data: ${JSON.stringify({ content: errMsg })}\n\n`);
@@ -2232,7 +2306,7 @@ All file operations should use paths relative to the project root.`;
           finalText = await streamWithForwarding(client, conversationMessages, {
             temperature: 0.3,
             ...(model ? { model } : {}),
-          }, res);
+          }, res, undefined, undefined, taskId);
         } catch (err: any) {
           finalText = `\n\n[系统提示] ${err?.message || String(err)}`;
           res.write(`data: ${JSON.stringify({ content: finalText })}\n\n`);
@@ -2253,9 +2327,14 @@ All file operations should use paths relative to the project root.`;
       }
 
       // 工具轮次：把模型的推理文本作为思考过程转发给前端（折叠面板展示）
-      const thinkingText = fullResponse.replace(/```tool\s*\n?[\s\S]*?```/g, '').trim();
-      if (thinkingText) {
-        res.write(`data: ${JSON.stringify({ thinking: thinkingText })}\n\n`);
+      // 第 1 轮响应完成后一次性发送；后续轮次已实时转发 thinking_chunk，只发结束标记
+      if (iteration === 1) {
+        const thinkingText = fullResponse.replace(/```tool\s*\n?[\s\S]*?```/g, '').trim();
+        if (thinkingText) {
+          res.write(`data: ${JSON.stringify({ thinking: thinkingText })}\n\n`);
+        }
+      } else {
+        res.write(`data: ${JSON.stringify({ thinking_end: true })}\n\n`);
       }
 
       // 工具白名单检查（独立 Agent 只允许模板内工具；调度员临时执行权限除外）
