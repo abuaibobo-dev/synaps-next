@@ -690,6 +690,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           // 思考流结束：去掉残留的工具 JSON 块
           setThinking((prev) => (prev || '').replace(/```tool[\s\S]*?```/g, '').trim());
         }
+        if (parsed.thinking_clear) {
+          // 无工具调用：清掉思考草稿，避免与最终回答重复
+          setThinking('');
+        }
         if (parsed.permission_request) {
           setPermissionRequest(parsed.permission_request as PermissionRequest);
         }

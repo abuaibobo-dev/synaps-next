@@ -2544,8 +2544,7 @@ All file operations should use paths relative to the project root.`;
       // Collect full response（带看门狗，避免模型无响应时无限等待）
       let fullResponse: string;
       try {
-        // 工具轮次（第 2 轮起）实时转发思考片段；心跳保活，前端不会误判超时
-        const isToolRound = iteration > 1;
+        // 每一轮都实时转发思考片段（第 1 轮起，用户第一时间看到进展）；心跳保活
         fullResponse = await streamWithWatchdog(
           client,
           conversationMessages,
@@ -2557,9 +2556,7 @@ All file operations should use paths relative to the project root.`;
           undefined,
           undefined,
           taskId,
-          isToolRound
-            ? (text: string) => res.write(`data: ${JSON.stringify({ thinking_chunk: text })}\n\n`)
-            : undefined
+          (text: string) => res.write(`data: ${JSON.stringify({ thinking_chunk: text })}\n\n`)
         );
       } catch (err: any) {
         const errMsg = `\n\n[系统提示] ${err?.message || String(err)}`;
@@ -2580,6 +2577,8 @@ All file operations should use paths relative to the project root.`;
 
       if (toolCalls.length === 0 || !projectId) {
         // No tool call or no project context - stream final response to client
+        // 思考草稿已在面板实时显示，这里清掉，避免与最终回答重复
+        res.write(`data: ${JSON.stringify({ thinking_clear: true })}\n\n`);
         // 逐块转发，前端实现打字机效果
         let finalText = '';
         try {
@@ -2606,16 +2605,8 @@ All file operations should use paths relative to the project root.`;
         return;
       }
 
-      // 工具轮次：把模型的推理文本作为思考过程转发给前端（折叠面板展示）
-      // 第 1 轮响应完成后一次性发送；后续轮次已实时转发 thinking_chunk，只发结束标记
-      if (iteration === 1) {
-        const thinkingText = fullResponse.replace(/```tool\s*\n?[\s\S]*?```/g, '').trim();
-        if (thinkingText) {
-          res.write(`data: ${JSON.stringify({ thinking: thinkingText })}\n\n`);
-        }
-      } else {
-        res.write(`data: ${JSON.stringify({ thinking_end: true })}\n\n`);
-      }
+      // 工具轮次：思考片段已实时转发，这里收尾，去掉残留的工具 JSON 块
+      res.write(`data: ${JSON.stringify({ thinking_end: true })}\n\n`);
 
       // 逐个执行本轮的全部工具调用
       for (const toolCall of toolCalls) {
