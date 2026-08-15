@@ -502,6 +502,56 @@ async function aiComplete(
  * 流式读取 LLM 响应并带看门狗：空闲超时（长时间无数据）或总超时后中断，
  * 避免网络/模型异常导致 Agent 循环无限等待。
  */
+async function streamWithForwarding(
+  client: LLMClient,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  options: { temperature?: number; model?: string },
+  res: express.Response,
+  idleTimeoutMs = 60_000,
+  totalTimeoutMs = 180_000
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let out = '';
+    let idleTimer: NodeJS.Timeout | null = null;
+    const totalTimer = setTimeout(() => {
+      if (idleTimer) clearTimeout(idleTimer);
+      reject(new Error('LLM 响应超时，请稍后重试'));
+    }, totalTimeoutMs);
+
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        clearTimeout(totalTimer);
+        reject(new Error('LLM 响应中断（长时间无数据），请稍后重试'));
+      }, idleTimeoutMs);
+    };
+
+    (async () => {
+      try {
+        const stream = client.stream(messages, options);
+        armIdle();
+        for await (const chunk of stream) {
+          if (chunk.content) {
+            const text = chunk.content.toString();
+            if (text) {
+              out += text;
+              res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+            }
+            armIdle();
+          }
+        }
+        if (idleTimer) clearTimeout(idleTimer);
+        clearTimeout(totalTimer);
+        resolve(out);
+      } catch (err) {
+        if (idleTimer) clearTimeout(idleTimer);
+        clearTimeout(totalTimer);
+        reject(err);
+      }
+    })();
+  });
+}
+
 async function streamWithWatchdog(
   client: LLMClient,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -2176,17 +2226,17 @@ All file operations should use paths relative to the project root.`;
 
       if (!toolCall || !projectId) {
         // No tool call or no project context - stream final response to client
-        // Re-stream the response（带看门狗）
+        // 逐块转发，前端实现打字机效果
         let finalText = '';
         try {
-          finalText = await streamWithWatchdog(client, conversationMessages, {
+          finalText = await streamWithForwarding(client, conversationMessages, {
             temperature: 0.3,
             ...(model ? { model } : {}),
-          });
+          }, res);
         } catch (err: any) {
           finalText = `\n\n[系统提示] ${err?.message || String(err)}`;
+          res.write(`data: ${JSON.stringify({ content: finalText })}\n\n`);
         }
-        res.write(`data: ${JSON.stringify({ content: finalText })}\n\n`);
 
         saveChatMessage(sessionId, 'assistant', fullResponse);
         if (agentInstance) {
