@@ -242,17 +242,12 @@ export function Sidebar({ visible, activeModule, onModuleChange, onClose }: Side
         {!collapsed ? (
           <View style={styles.brandBlock}>
             <View style={styles.brandRow}>
-              <View style={styles.logoIcon}>
-                <AppIcon name="bolt" size={18} color="#FFFFFF" />
-              </View>
               <Text style={styles.brandTitle}>CORE</Text>
             </View>
           </View>
         ) : (
           <View style={[styles.brandBlock, styles.brandBlockCollapsed]}>
-            <View style={styles.logoIcon}>
-              <AppIcon name="bolt" size={18} color="#FFFFFF" />
-            </View>
+            <View style={styles.logoIcon} />
           </View>
         )}
         <View style={styles.divider} />

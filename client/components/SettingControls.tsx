@@ -100,11 +100,11 @@ export function SettingRow({
           <AppIcon name={icon} size={18} color={danger ? DANGER_COLOR : iconColor} />
         </View>
       ) : null}
-      <Text style={[styles.rowLabel, { color: danger ? DANGER_COLOR : sc.label }]} numberOfLines={1}>
+      <Text style={[styles.rowLabel, { color: danger ? DANGER_COLOR : sc.label }]} numberOfLines={2}>
         {label}
       </Text>
       {value !== undefined ? (
-        <Text style={[styles.rowValue, { color: sc.value }]} numberOfLines={1}>
+        <Text style={[styles.rowValue, { color: sc.value }]} numberOfLines={2}>
           {value}
         </Text>
       ) : null}
@@ -297,7 +297,9 @@ const styles = StyleSheet.create({
   },
   rowValue: {
     fontSize: 14,
-    maxWidth: 160,
+    flexShrink: 1,
+    maxWidth: 220,
+    textAlign: 'right',
   },
   rowChevron: {
     marginLeft: 2,

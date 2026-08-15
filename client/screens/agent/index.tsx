@@ -526,6 +526,33 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     );
     esRef.current = es;
 
+    // 看门狗：长时间无数据（工具执行卡住/网络静默）时自动结束，避免无限等待
+    let lastEventAt = Date.now();
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastEventAt > 120_000) {
+        clearInterval(watchdog);
+        if (esRef.current === es) es.close();
+        const timeoutMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content:
+            (accumulated ? accumulated + '\n\n' : '') +
+            '[响应超时] 后端长时间无响应（可能后端服务未运行或工具执行卡住）。请检查：1) 通知栏是否显示「本地后端服务运行中」；2) 是否已绑定项目；3) 稍后重试。',
+          timestamp: Date.now(),
+          status: 'error',
+        };
+        setMessages((prev) => [...prev, timeoutMsg]);
+        patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
+        setStreamingContent('');
+        setIsStreaming(false);
+        isStreamingRef.current = false;
+        setCurrentToolCalls([]);
+        esRef.current = null;
+        fetchBalance();
+        dequeueNext();
+      }
+    }, 10_000);
+
     let accumulated = '';
     const executedToolCalls: ToolCall[] = [];
 
@@ -535,6 +562,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
     // 收尾：更新消息状态、关闭流、处理队列下一个
     const finish = (userStatus: Message['status']) => {
+      clearInterval(watchdog);
       setMessages((prev) =>
         prev.map((m) => (m.id === item.userMsgId ? { ...m, status: userStatus } : m))
       );
@@ -549,6 +577,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     };
 
     es.addEventListener('message', (event) => {
+      lastEventAt = Date.now();
       if (event.data === '[DONE]') {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
@@ -1498,16 +1527,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               blurOnSubmit={false}
             />
             <Pressable
-              style={styles.modelButton}
-              onPress={switchModel}
-              disabled={isStreaming || isRecording}
-            >
-              <FontAwesome6 name="microchip" size={11} color={colors.textSecondary} />
-              <Text style={styles.modelButtonText} numberOfLines={1}>
-                {modelLabel}
-              </Text>
-            </Pressable>
-            <Pressable
               style={[styles.voiceButton, isRecording && styles.voiceButtonActive]}
               onPress={isRecording ? stopRecording : startRecording}
               disabled={isStreaming}
@@ -1534,6 +1553,17 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </View>
           <View style={styles.inputFooter}>
             <View style={styles.inputFooterLeft}>
+              <Pressable
+                style={styles.modelButton}
+                onPress={switchModel}
+                disabled={isStreaming || isRecording}
+                hitSlop={4}
+              >
+                <FontAwesome6 name="microchip" size={11} color={colors.textSecondary} />
+                <Text style={styles.modelButtonText} numberOfLines={1}>
+                  {modelLabel}
+                </Text>
+              </Pressable>
               <Pressable onPress={pickImage} style={styles.footerIconBtn} hitSlop={6}>
                 <FontAwesome6 name="image" size={13} color={colors.textSecondary} />
               </Pressable>
@@ -2413,12 +2443,10 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    height: 40,
+    height: 28,
     borderRadius: radius.md,
     backgroundColor: 'rgba(255,255,255,0.06)',
     paddingHorizontal: spacing.sm,
-    marginBottom: 4,
-    marginLeft: spacing.sm,
     maxWidth: 110,
   },
   modelButtonText: {

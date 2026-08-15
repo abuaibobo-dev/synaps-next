@@ -841,7 +841,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     if (!balance) return '查询中...';
     if (balance.balance === -1) return '额度未知';
     if (!balance.available) return balance.message || '未配置';
-    return `¥${Number(balance.balance).toFixed(2)}`;
+    const v = Math.round(Number(balance.balance) * 100) / 100;
+    const fmt = !Number.isFinite(v) ? '0.00' : v >= 100000000 ? `${(v / 100000000).toFixed(2)}亿` : v >= 10000 ? `${(v / 10000).toFixed(2)}万` : v.toFixed(2);
+    return `¥${fmt}`;
   }, [balance]);
 
   const checkUpdate = useCallback(() => {
