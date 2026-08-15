@@ -196,6 +196,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueMenu, setQueueMenu] = useState<QueueItem | null>(null);
+  const [queueManagerVisible, setQueueManagerVisible] = useState(false);
   const [networkError, setNetworkError] = useState(false);
   const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -1255,24 +1256,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </View>
           </View>
           <View style={styles.headerRight}>
-            {deviceReady !== null && (
-              <View style={[styles.deviceBadge, deviceReady && styles.deviceBadgeOn]}>
-                <FontAwesome6 name="hand-pointer" size={10} color={deviceReady ? colors.primary : colors.textMuted} />
-                <Text style={[styles.deviceBadgeText, deviceReady && styles.deviceBadgeTextOn]}>
-                  {deviceReady ? '设备控制' : '未开启'}
-                </Text>
-              </View>
-            )}
             {balance !== null && (
               <Pressable style={styles.balanceBadge} onPress={openTopUp} hitSlop={6}>
                 <FontAwesome6 name="coins" size={10} color={colors.primary} />
                 <Text style={styles.balanceText} numberOfLines={1}>{balanceCurrency}{formatBalance(balance)}</Text>
+                <FontAwesome6 name="plus" size={8} color={colors.textMuted} />
               </Pressable>
             )}
-            <Pressable style={styles.rechargeBtn} onPress={openTopUp} hitSlop={6}>
-              <FontAwesome6 name="plus" size={9} color="#FFFFFF" />
-              <Text style={styles.rechargeText}>充值</Text>
-            </Pressable>
             <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
               <PanelToggleIcon
                 open={taskPanelVisible}
@@ -1321,7 +1311,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </ScrollView>
         </View>
 
-        {/* 精简任务卡片 */}
+        {/* 精简任务卡片（细进度条，点击展开面板） */}
         {currentTask && (
           <Animated.View {...cardEntry}>
             <PressableScale style={styles.taskCard} onPress={() => setTaskPanelVisible(true)}>
@@ -1340,44 +1330,20 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 }
                 color={colors.primary}
                 trackColor={colors.bgInput}
-                height={4}
+                height={3}
               />
-              <Text style={styles.taskCardHint}>点击查看任务详情</Text>
             </PressableScale>
           </Animated.View>
         )}
 
-        {/* 消息队列（等待中） */}
+        {/* 消息队列（等待中，一行显示，点击管理） */}
         {queue.length > 0 && (
-          <View style={styles.queueBar}>
-            <View style={styles.queueHeader}>
-              <Text style={styles.queueHeaderText}>
-                ⏳ {queue.length} 条等待中（{queue.filter((q) => q.isPriority).length} 条插队）
-              </Text>
-            </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.queueChipsContent}
-            >
-              {queue.map((item) => (
-                <Pressable
-                  key={item.id}
-                  onLongPress={() => {
-                    Vibration.vibrate(10);
-                    setQueueMenu(item);
-                  }}
-                  delayLongPress={250}
-                  style={[styles.queueChip, item.isPriority && styles.queueChipPriority]}
-                >
-                  {item.isPriority && <Text style={styles.queueChipPin}>🔝</Text>}
-                  <Text style={styles.queueChipText} numberOfLines={1}>
-                    {item.prompt.replace(/\n/g, ' ')}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
+          <Pressable style={styles.queueBar} onPress={() => setQueueManagerVisible(true)}>
+            <Text style={styles.queueBarText} numberOfLines={1}>
+              ⏳ {queue.length} 条等待中（{queue.filter((q) => q.isPriority).length} 条插队）
+            </Text>
+            <Text style={styles.queueBarHint}>管理</Text>
+          </Pressable>
         )}
 
         {/* Messages */}
@@ -1720,6 +1686,48 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Pressable>
         </Modal>
 
+        {/* 队列管理面板 */}
+        <Modal
+          visible={queueManagerVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setQueueManagerVisible(false)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setQueueManagerVisible(false)}>
+            <View style={[styles.queueManagerSheet, { paddingBottom: insets.bottom + spacing.md }]}>
+              <View style={styles.queueManagerHeader}>
+                <Text style={styles.modalTitle}>消息队列</Text>
+                <Text style={styles.queueManagerCount}>
+                  {queue.length} 条等待中 · {queue.filter((q) => q.isPriority).length} 条插队
+                </Text>
+              </View>
+              {queue.length === 0 ? (
+                <Text style={styles.queueManagerEmpty}>队列为空</Text>
+              ) : (
+                queue.map((item) => (
+                  <View key={item.id} style={styles.queueManagerItem}>
+                    <Text style={styles.queueManagerName} numberOfLines={1}>
+                      {item.isPriority ? '🔝 ' : ''}
+                      {item.prompt.replace(/\n/g, ' ')}
+                    </Text>
+                    <Pressable style={styles.queueManagerBtn} onPress={() => promoteTask(item.id)} hitSlop={6}>
+                      <FontAwesome6 name="arrow-up" size={11} color={colors.warning} />
+                      <Text style={[styles.queueManagerBtnText, { color: colors.warning }]}>插队</Text>
+                    </Pressable>
+                    <Pressable style={styles.queueManagerBtn} onPress={() => removeTask(item.id)} hitSlop={6}>
+                      <FontAwesome6 name="trash" size={11} color={colors.error} />
+                      <Text style={[styles.queueManagerBtnText, { color: colors.error }]}>移除</Text>
+                    </Pressable>
+                  </View>
+                ))
+              )}
+              <Pressable style={[styles.modalItem, styles.modalItemCancel]} onPress={() => setQueueManagerVisible(false)}>
+                <Text style={styles.modalItemCancelText}>关闭</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
+
         {/* Project picker */}
         <Modal
           visible={projectPickerVisible}
@@ -1931,12 +1939,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   taskCard: {
     marginHorizontal: spacing.md,
     marginTop: spacing.sm,
-    padding: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
     backgroundColor: colors.bgCard,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.primaryBorder,
-    gap: 6,
+    gap: 4,
   },
   taskCardHeader: {
     flexDirection: 'row',
@@ -2113,7 +2122,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: spacing.sm,
-    marginBottom: spacing.md,
+    marginBottom: 8,
   },
   messageRowInner: {
     flexDirection: 'row',
@@ -2130,9 +2139,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   messageBubble: {
     maxWidth: '78%',
-    borderRadius: 18,
+    borderRadius: 16,
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   userBubble: {
     backgroundColor: colors.primaryDark,
@@ -2539,47 +2548,82 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textSecondary,
   },
   queueBar: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.sm,
-    gap: spacing.xs,
-  },
-  queueHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
   },
-  queueHeaderText: {
+  queueBarText: {
+    flex: 1,
     fontSize: fontSize.xs,
+    color: colors.textSecondary,
     fontWeight: '600',
+  },
+  queueBarHint: {
+    fontSize: fontSize.xs,
+    color: colors.primary,
+    fontWeight: '600',
+    marginLeft: spacing.sm,
+  },
+  queueManagerSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.bgRoot,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+  },
+  queueManagerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  queueManagerCount: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
+  queueManagerEmpty: {
+    fontSize: fontSize.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingVertical: spacing.lg,
+  },
+  queueManagerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  queueManagerName: {
+    flex: 1,
+    fontSize: fontSize.sm,
     color: colors.textSecondary,
   },
-  queueChipsContent: {
-    gap: spacing.sm,
-    paddingRight: spacing.md,
-  },
-  queueChip: {
+  queueManagerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: colors.bgCard,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
     paddingVertical: 5,
-    maxWidth: 220,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(85,85,85,0.08)',
   },
-  queueChipPriority: {
-    backgroundColor: isDark ? '#1A2A1A' : '#EAFFEA',
-    borderColor: isDark ? '#2E5E2E' : '#B7F0B7',
-  },
-  queueChipPin: {
-    fontSize: 10,
-  },
-  queueChipText: {
-    flexShrink: 1,
+  queueManagerBtnText: {
     fontSize: fontSize.xs,
-    color: colors.textSecondary,
+    fontWeight: '600',
   },
   queueMenuPreview: {
     fontSize: fontSize.sm,
