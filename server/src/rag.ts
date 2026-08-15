@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { getDb, queryAll, runSql, saveDb } from './db.js';
+import { getDb, queryAll, queryOne, runSql, saveDb } from './db.js';
 
 // 纯 JS 检索（sql.js 无法加载 sqlite-vss 原生扩展，故用 BM25 + 中文字形分词实现）
 // 把项目文档/历史对话/用户备注切块入库，rag_search 检索后带出处引用。
@@ -20,7 +20,7 @@ interface ChunkDoc {
   chunk: string;
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   const tokens: string[] = [];
   // 英文/数字单词
   for (const w of text.toLowerCase().match(/[a-z0-9_]+/g) || []) {
@@ -198,4 +198,50 @@ export function searchKnowledge(projectId: string | null, query: string, topK = 
 
 export async function ensureKnowledgeTable(): Promise<void> {
   await getDb();
+}
+
+// ---- 经验记忆（agent_memory）：BM25 检索，自动注入对话开头 ----
+export function rememberMemory(projectId: string | null, pattern: string, solution: string, context = ''): void {
+  if (!pattern.trim() || !solution.trim()) return;
+  const existing = queryOne(
+    'SELECT id, use_count FROM agent_memory WHERE project_id = ? AND pattern = ? LIMIT 1',
+    [projectId || null, pattern]
+  ) as Record<string, unknown> | null;
+  if (existing) {
+    runSql('UPDATE agent_memory SET solution = ?, context = ?, use_count = use_count + 1, last_used_at = ? WHERE id = ?', [
+      solution,
+      context,
+      new Date().toISOString(),
+      existing.id,
+    ]);
+  } else {
+    runSql(
+      'INSERT INTO agent_memory (id, project_id, pattern, solution, context, confidence, use_count, created_at) VALUES (?, ?, ?, ?, ?, 0.5, 0, ?)',
+      [crypto.randomUUID(), projectId || null, pattern, solution, context, new Date().toISOString()]
+    );
+  }
+  saveDb();
+}
+
+export function recallMemories(projectId: string | null, query: string, topK = 5): string {
+  const qTokens = tokenize(query);
+  if (qTokens.length === 0) return '';
+  const rows = queryAll(
+    'SELECT id, pattern, solution, context, confidence, use_count FROM agent_memory WHERE project_id = ? OR project_id IS NULL',
+    [projectId || null]
+  ) as Array<Record<string, unknown>>;
+  if (rows.length === 0) return '';
+  const docs = rows.map((r) => ({ id: String(r.id), chunk: `${String(r.pattern || '')} ${String(r.solution || '')}` }));
+  const top = bm25(qTokens, docs, topK);
+  if (top.length === 0) return '';
+  const byId = new Map(rows.map((r) => [String(r.id), r]));
+  return top
+    .map((r, i) => {
+      const m = byId.get(r.id) || {};
+      const confidence = Number(m.confidence || 0.5);
+      const uses = Number(m.use_count || 0);
+      return `[${i + 1}] 情境：${String(m.pattern || '').slice(0, 120)}
+做法：${String(m.solution || '').slice(0, 400)}${m.context ? `\n上下文：${String(m.context).slice(0, 150)}` : ''}（置信 ${Math.round(confidence * 100)}%，用过 ${uses} 次）`;
+    })
+    .join('\n\n');
 }

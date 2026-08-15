@@ -20,7 +20,7 @@ import {
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
-import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable } from '../rag.js';
+import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable, rememberMemory, recallMemories } from '../rag.js';
 import {
   createTask,
   saveTaskProgress,
@@ -204,6 +204,8 @@ You have access to tools that let you interact with the project files:
 - rag_index: Rebuild the project knowledge base index (args: scope "all" | "project" | "chat"; indexes project docs + chat history into retrievable chunks). Auto-executed.
 - rag_search: Search the knowledge base with source citations (args: query, topK optional). Use before answering questions that reference project docs or history.
 - rag_remember: Store a long-term fact/note into the knowledge base (args: content or query, title optional).
+- memory_remember: Store a reusable experience/pattern into memory (args: pattern 情境, solution 做法, context optional). Auto-recalled in future sessions.
+- memory_recall: Retrieve past experiences by similarity (args: query, topK optional).
 
 - goal_set: Create a long-term autonomous goal (args: title, description optional, steps optional array of strings). Persisted per project; use for multi-turn/long-horizon tasks.
 - goal_status: Show the current active goal's progress (args: goalId optional; defaults to latest active goal for the project). Read-only.
@@ -330,6 +332,9 @@ interface ToolCall {
   goalId?: string;
   scope?: string;
   topK?: number;
+  pattern?: string;
+  solution?: string;
+  context?: string;
 }
 
 interface TeamTask {
@@ -1063,6 +1068,19 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
       return `Saved ${n} chunk(s) to knowledge base: ${title}`;
     }
 
+    case 'memory_remember': {
+      if (!toolCall.pattern || !toolCall.solution) return 'Error: pattern and solution are required';
+      rememberMemory(projectId, toolCall.pattern, toolCall.solution, toolCall.context || '');
+      logAudit(projectId, 'memory_remember', `存入经验记忆：${toolCall.pattern.slice(0, 80)}`, 'none', 'auto');
+      return `Memory saved. 情境：${toolCall.pattern.slice(0, 120)}\n做法：${toolCall.solution.slice(0, 200)}`;
+    }
+
+    case 'memory_recall': {
+      if (!toolCall.query) return 'Error: query is required';
+      const res = recallMemories(projectId, toolCall.query, Math.min(10, Math.max(1, Number(toolCall.topK) || 5)));
+      return res || 'No related memories found. Use memory_remember to store experiences.';
+    }
+
     case 'goal_set': {
       if (!toolCall.title) return 'Error: title is required';
       const steps = Array.isArray(toolCall.steps) ? toolCall.steps.filter((x) => typeof x === 'string') : [];
@@ -1313,7 +1331,29 @@ async function executeTool(projectId: string, toolCall: ToolCall, sessionId: str
 
       const fixOutput = [fix.stdout.trim(), fix.stderr.trim()].filter(Boolean).join('\n') || '(no output)';
       const changedList = changed.length > 0 ? changed.join('\n') : '(no files changed)';
-      return `Auto-fix finished (exit ${fix.exitCode}):\n${truncateText(fixOutput, 3000)}\n\nChanged files:\n${truncateText(changedList, 2000)}`;
+
+      // 反思评分：修复后重新跑 lint/typecheck，统计剩余错误并给出质量分
+      const reLint = await execInProject(cwd, lintCmd.replace(/ --fix/g, ''), 120000);
+      const lintErrLines = reLint.stdout.split('\n').filter((l) => /error/i.test(l) && !/\d+ problems?/.test(l)).length;
+      let typeErrLines = 0;
+      let typeSummary = '(无 tsconfig，跳过类型检查)';
+      if (fs.existsSync(path.join(cwd, 'tsconfig.json'))) {
+        const tc = await execInProject(cwd, 'npx tsc --noEmit', 120000);
+        typeErrLines = tc.stdout.split('\n').filter((l) => /error TS/i.test(l)).length;
+        typeSummary = typeErrLines > 0 ? `${typeErrLines} 个类型错误` : '类型检查通过';
+      }
+      const qualityScore = Math.max(
+        0,
+        Math.min(100, 100 - lintErrLines * 8 - typeErrLines * 5 - (changed.length > 30 ? 10 : 0))
+      );
+      const verdict =
+        qualityScore >= 90
+          ? '质量达标，可以停止迭代'
+          : qualityScore >= 70
+            ? '基本稳定，建议再跑一轮 auto_fix 或 analyze_code 收尾'
+            : '仍有多处问题，建议继续 auto_fix / analyze_code 直到分数稳定';
+
+      return `Auto-fix finished (exit ${fix.exitCode}):\n${truncateText(fixOutput, 2000)}\n\nChanged files:\n${truncateText(changedList, 1500)}\n\n📊 quality_score: ${qualityScore}/100\n- 剩余 lint 错误：${lintErrLines}\n- 类型检查：${typeSummary}\n- 修改文件数：${changed.length}\n- 判断：${verdict}`;
     }
 
     case 'git_commit_push': {
@@ -2442,6 +2482,16 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     const sharedCtxText = sharedContextToText(sharedCtx);
     if (sharedCtxText) {
       systemPrompt += `\n\n## Shared Context (跨会话记忆)\n用户之前告知的上下文，默认遵循，无需重复询问：\n${sharedCtxText}\n当用户说“更新上下文：xxx”时，记住新信息；说“查看上下文”时展示当前记忆。`;
+    }
+
+    // 自动检索跨会话经验记忆（BM25，按当前用户消息匹配）
+    try {
+      const memoryText = recallMemories(projectId || null, (lastUserMessage?.content || '').slice(0, 300), 5);
+      if (memoryText) {
+        systemPrompt += `\n\n## 经验记忆（自动检索）\n过去遇到类似问题时的做法，默认遵循；与当前任务冲突时以当前任务为准：\n${memoryText}`;
+      }
+    } catch {
+      // 记忆检索失败不影响主流程
     }
 
     if (projectId) {
