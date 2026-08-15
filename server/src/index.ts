@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from "express";
 import cors from "cors";
 import chatRouter, { startProactiveMonitor } from "./routes/chat.js";
+import uploadsRouter from "./routes/uploads.js";
 import projectsRouter from "./routes/projects.js";
 import filesRouter from "./routes/files.js";
 import balanceRouter from "./routes/balance.js";
@@ -33,6 +34,7 @@ app.get('/api/v1/health', (req, res) => {
 
 // Routes
 app.use('/api/v1/chat', chatRouter);
+app.use('/api/v1/uploads', uploadsRouter);
 app.use('/api/v1/projects', projectsRouter);
 app.use('/api/v1/files', filesRouter);
 app.use('/api/v1/balance', balanceRouter);

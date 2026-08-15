@@ -13,6 +13,7 @@ import {
   Linking,
   Modal,
   Share,
+  Image,
   useWindowDimensions,
   KeyboardAvoidingView,
 } from 'react-native';
@@ -21,6 +22,8 @@ import * as Clipboard from 'expo-clipboard';
 import Toast from 'react-native-toast-message';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Screen } from '@/components/Screen';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MenuButton } from '@/components/Sidebar';
@@ -103,6 +106,16 @@ interface Message {
   timestamp: number;
   toolCalls?: ToolCall[];
   replyingTo?: { content: string; role: string };
+  attachments?: Array<{ name: string; path?: string; uri?: string; type: 'image' | 'file' }>;
+}
+
+interface PendingAttachment {
+  id: string;
+  name: string;
+  uri: string;
+  type: 'image' | 'file';
+  mimeType?: string;
+  size?: number;
 }
 
 interface ToolCall {
@@ -143,6 +156,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [balanceCurrency, setBalanceCurrency] = useState('¥');
   const [isRecording, setIsRecording] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
@@ -392,7 +406,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, []);
 
-  const startTask = useCallback((prompt: string) => {
+  const startTask = useCallback((prompt: string, msgAttachments?: Message['attachments']) => {
     if (!prompt.trim() || isStreaming) return;
 
     const requestId = `task-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
@@ -416,6 +430,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
+      attachments: msgAttachments,
       replyingTo: replyingTo
         ? { content: replyingTo.content, role: replyingTo.role }
         : undefined,
@@ -573,13 +588,122 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     });
   }, [inputText, isStreaming, messages, replyingTo, currentProjectId, agentType, agentInstanceIds]);
 
-  const handleSend = useCallback(() => {
+  // 选择相册图片
+  const pickImage = async () => {
+    if (isStreaming) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('需要相册权限', '请在系统设置中允许 Synaps 访问相册');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        allowsMultipleSelection: false,
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      const asset = result.assets[0];
+      addAttachment({
+        id: `att-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+        name: asset.fileName || asset.uri.split('/').pop() || 'photo.jpg',
+        uri: asset.uri,
+        type: 'image',
+        mimeType: asset.mimeType || 'image/jpeg',
+        size: asset.fileSize,
+      });
+    } catch (err) {
+      Alert.alert('选择图片失败', String(err));
+    }
+  };
+
+  // 选择文件
+  const pickFile = async () => {
+    if (isStreaming) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      const asset = result.assets[0];
+      addAttachment({
+        id: `att-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+        name: asset.name || asset.uri.split('/').pop() || 'file',
+        uri: asset.uri,
+        type: 'file',
+        mimeType: asset.mimeType || 'application/octet-stream',
+        size: asset.size,
+      });
+    } catch (err) {
+      Alert.alert('选择文件失败', String(err));
+    }
+  };
+
+  const addAttachment = (att: PendingAttachment) => {
+    setAttachments((prev) => {
+      if (prev.length >= 6) {
+        Alert.alert('提示', '每条消息最多附带 6 个附件');
+        return prev;
+      }
+      return [...prev, att];
+    });
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  // 上传附件到后端，返回服务端保存路径
+  const uploadAttachments = async (list: PendingAttachment[]) => {
+    const uploaded: Array<{ name: string; path: string; type: 'image' | 'file' }> = [];
+    for (const att of list) {
+      const form = new FormData();
+      if (currentProjectId) form.append('projectId', currentProjectId);
+      form.append('file', {
+        uri: att.uri,
+        name: att.name,
+        type: att.mimeType || (att.type === 'image' ? 'image/jpeg' : 'application/octet-stream'),
+      } as unknown as Blob);
+      const res = await fetch(`${API_BASE}/api/v1/uploads`, { method: 'POST', body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `附件「${att.name}」上传失败`);
+      }
+      uploaded.push({ name: data.name || att.name, path: data.path, type: att.type });
+    }
+    return uploaded;
+  };
+
+  const handleSend = useCallback(async () => {
     if (!inputText.trim() || isStreaming) return;
-    const quotedText = replyingTo
-      ? `> ${replyingTo.content.replace(/\n/g, '\n> ')}\n\n`
-      : '';
-    startTask(`${quotedText}${inputText.trim()}`);
-  }, [inputText, isStreaming, replyingTo, startTask]);
+    try {
+      const uploaded = attachments.length ? await uploadAttachments(attachments) : [];
+      const quotedText = replyingTo
+        ? `> ${replyingTo.content.replace(/\n/g, '\n> ')}\n\n`
+        : '';
+      const attachmentText = uploaded.length
+        ? '\n\n' +
+          uploaded
+            .map(
+              (u, i) =>
+                `[附件${u.type === 'image' ? '图片' : '文件'} ${i + 1}] ${u.name}（已保存到 ${u.path}，请根据需求读取并处理该附件）`
+            )
+            .join('\n')
+        : '';
+      const prompt = `${quotedText}${inputText.trim()}${attachmentText}`;
+      const msgAttachments = attachments.map((a, i) => ({
+        name: a.name,
+        path: uploaded[i]?.path || '',
+        uri: a.uri,
+        type: a.type,
+      }));
+      startTask(prompt, msgAttachments);
+      setAttachments([]);
+    } catch (err) {
+      Alert.alert('发送失败', err instanceof Error ? err.message : String(err));
+    }
+  }, [inputText, isStreaming, replyingTo, attachments, currentProjectId, startTask]);
 
   // 取消当前任务
   const cancelTask = useCallback(() => {
@@ -798,6 +922,22 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           <Text style={[styles.messageContent, isUser && styles.messageContentUser]}>
             {item.content}
           </Text>
+          {item.attachments && item.attachments.length > 0 && (
+            <View style={styles.msgAttachments}>
+              {item.attachments.map((att, idx) =>
+                att.type === 'image' && att.uri ? (
+                  <Image key={idx} source={{ uri: att.uri }} style={styles.msgAttachmentImage} resizeMode="cover" />
+                ) : (
+                  <View key={idx} style={styles.msgAttachmentFile}>
+                    <FontAwesome6 name="paperclip" size={11} color={colors.textSecondary} />
+                    <Text style={styles.msgAttachmentFileName} numberOfLines={1}>
+                      {att.name}
+                    </Text>
+                  </View>
+                )
+              )}
+            </View>
+          )}
           {item.toolCalls && item.toolCalls.length > 0 && (
             <View style={styles.toolCallsContainer}>
               <Text style={styles.toolCallsLabel}>Tools executed:</Text>
@@ -1092,6 +1232,33 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               </Pressable>
             </View>
           )}
+          {attachments.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.attachChips}
+              contentContainerStyle={styles.attachChipsContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {attachments.map((att) => (
+                <View key={att.id} style={styles.attachChip}>
+                  {att.type === 'image' ? (
+                    <Image source={{ uri: att.uri }} style={styles.attachChipThumb} />
+                  ) : (
+                    <View style={styles.attachChipIcon}>
+                      <FontAwesome6 name="paperclip" size={11} color={colors.textSecondary} />
+                    </View>
+                  )}
+                  <Text style={styles.attachChipName} numberOfLines={1}>
+                    {att.name}
+                  </Text>
+                  <Pressable onPress={() => removeAttachment(att.id)} hitSlop={8} style={styles.attachChipRemove}>
+                    <FontAwesome6 name="xmark" size={10} color={colors.textSecondary} />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          )}
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
@@ -1142,16 +1309,24 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </Pressable>
           </View>
           <View style={styles.inputFooter}>
-            <Pressable onPress={() => setAutoSpeak(!autoSpeak)} style={styles.autoSpeakToggle}>
-              <FontAwesome6
-                name={autoSpeak ? 'volume-high' : 'volume-xmark'}
-                size={12}
-                color={autoSpeak ? colors.primary : colors.textMuted}
-              />
-              <Text style={[styles.autoSpeakText, autoSpeak && styles.autoSpeakTextActive]}>
-                {autoSpeak ? 'Auto-speak ON' : 'Auto-speak OFF'}
-              </Text>
-            </Pressable>
+            <View style={styles.inputFooterLeft}>
+              <Pressable onPress={pickImage} disabled={isStreaming} style={styles.footerIconBtn} hitSlop={6}>
+                <FontAwesome6 name="image" size={13} color={isStreaming ? colors.textMuted : colors.textSecondary} />
+              </Pressable>
+              <Pressable onPress={pickFile} disabled={isStreaming} style={styles.footerIconBtn} hitSlop={6}>
+                <FontAwesome6 name="paperclip" size={13} color={isStreaming ? colors.textMuted : colors.textSecondary} />
+              </Pressable>
+              <Pressable onPress={() => setAutoSpeak(!autoSpeak)} style={styles.autoSpeakToggle}>
+                <FontAwesome6
+                  name={autoSpeak ? 'volume-high' : 'volume-xmark'}
+                  size={12}
+                  color={autoSpeak ? colors.primary : colors.textMuted}
+                />
+                <Text style={[styles.autoSpeakText, autoSpeak && styles.autoSpeakTextActive]}>
+                  {autoSpeak ? 'Auto-speak ON' : 'Auto-speak OFF'}
+                </Text>
+              </Pressable>
+            </View>
             {isRecording && (
               <View style={styles.recordingIndicator}>
                 <View style={styles.recordingDot} />
@@ -1972,6 +2147,90 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.xs,
     color: colors.textSecondary,
     fontWeight: '600',
+  },
+  inputFooterLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  footerIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachChips: {
+    marginBottom: spacing.sm,
+    flexGrow: 0,
+  },
+  attachChipsContent: {
+    gap: spacing.sm,
+    paddingRight: spacing.md,
+  },
+  attachChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingLeft: 4,
+    paddingRight: 8,
+    paddingVertical: 4,
+    maxWidth: 180,
+  },
+  attachChipThumb: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+  },
+  attachChipIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  attachChipName: {
+    flexShrink: 1,
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+  },
+  attachChipRemove: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  msgAttachments: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  msgAttachmentImage: {
+    width: 96,
+    height: 96,
+    borderRadius: radius.md,
+  },
+  msgAttachmentFile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    maxWidth: 200,
+  },
+  msgAttachmentFileName: {
+    flexShrink: 1,
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
   },
   inputFooter: {
     flexDirection: 'row',
