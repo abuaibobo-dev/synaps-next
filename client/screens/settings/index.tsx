@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput, Image } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
 import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
@@ -900,9 +900,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     <>
       <SettingsGroup title="账户" sc={sc} bar={ACCENT}>
         <View style={styles.avatarRow}>
-          <View style={[styles.avatar, { backgroundColor: ACCENT }]}>
-            <AppIcon name="user" size={26} color="#FFFFFF" />
-          </View>
+          <Image source={require('@/assets/images/avatar.png')} style={styles.avatar} />
           <View style={{ flex: 1 }}>
             <Text style={[styles.fieldLabel, { color: sc.label }]}>账户名</Text>
             <UnderlineInput
