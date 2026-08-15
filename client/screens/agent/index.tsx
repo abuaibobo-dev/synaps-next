@@ -781,13 +781,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         delayLongPress={350}
         style={styles.messageRowInner}
       >
-        <View style={[styles.avatarCircle, isUser ? styles.avatarUser : styles.avatarBot]}>
-          <FontAwesome6
-            name={isUser ? 'user' : 'robot'}
-            size={14}
-            color={isUser ? '#FFFFFF' : colors.primary}
-          />
-        </View>
         <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
           {item.replyingTo && (
             <View style={[styles.replyPreview, isUser && styles.replyPreviewUser]}>
@@ -1042,9 +1035,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             isStreaming ? (
               streamingContent ? (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
-                  <View style={[styles.avatarCircle, styles.avatarBot]}>
-                    <AppIcon name="bot" size={14} color={colors.primary} />
-                  </View>
                   <View style={[styles.messageBubble, styles.assistantBubble]}>
                     <Text style={styles.messageContent}>{streamingContent}</Text>
                     {currentToolCalls.length > 0 && (
@@ -1068,9 +1058,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 </View>
               ) : (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
-                  <View style={[styles.avatarCircle, styles.avatarBot]}>
-                    <AppIcon name="bot" size={14} color={colors.primary} />
-                  </View>
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble]}>
                     <ThinkingDots color={colors.primary} size={6} />
                     <Text style={styles.thinkingText}>Agent 思考中...</Text>
@@ -1657,21 +1644,6 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   messageRowAssistant: {
     justifyContent: 'flex-start',
-  },
-  avatarCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarUser: {
-    backgroundColor: colors.primaryDark,
-  },
-  avatarBot: {
-    backgroundColor: colors.primaryGlow,
-    borderWidth: 1,
-    borderColor: colors.primaryBorder,
   },
   messageBubble: {
     maxWidth: '78%',
