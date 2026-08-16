@@ -1018,6 +1018,23 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     if (brains.codex.reachable) return `✅ 已连接 ${brains.codex.version || ''}`.trim();
     return '⚠️ 未连接';
   }, [brains]);
+  const copyBridgeCommand = useCallback(async () => {
+    let cmd = `curl -o ~/codex-bridge.js ${API_BASE}/api/v1/bridge/script && node ~/codex-bridge.js &`;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`${API_BASE}/api/v1/bridge/command`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data.command === 'string') cmd = data.command;
+      }
+    } catch {
+      // 后端未就绪时使用本地拼接的默认命令
+    }
+    await Clipboard.setStringAsync(cmd);
+    Alert.alert('已复制', '在 Termux 里粘贴运行这一条即可。\n（需先安装 Node：pkg install nodejs -y）');
+  }, []);
 
   const mainPage = (
     <>
@@ -1297,6 +1314,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           iconColor={ACCENT}
           sc={sc}
           right={<AnimatedToggle value={settings.codex_enabled === 'true'} onValueChange={() => handleToggle('codex_enabled')} sc={sc} trackOn={INTERACTIVE} />}
+        />
+        <SettingRow
+          label="复制一键安装命令"
+          icon="download"
+          iconColor={ACCENT}
+          sc={sc}
+          onPress={copyBridgeCommand}
+          right={<Text style={[styles.fieldValue, { color: sc.value }]}>复制</Text>}
         />
         <FieldRow styles={styles} label="桥接服务地址" sc={sc}>
           <UnderlineInput

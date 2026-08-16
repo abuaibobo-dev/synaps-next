@@ -19,6 +19,7 @@ import backupRouter from "./routes/backup.js";
 import diagnosticsRouter from "./routes/diagnostics.js";
 import tasksRouter from "./routes/tasks.js";
 import brainsRouter from "./routes/brains.js";
+import bridgeRouter from "./routes/bridge.js";
 import { seedImpeccableSkills } from "./impeccable.js";
 
 const app = express();
@@ -53,6 +54,7 @@ app.use('/api/v1/backup', backupRouter);
 app.use('/api/v1/diagnostics', diagnosticsRouter);
 app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/brains', brainsRouter);
+app.use('/api/v1/bridge', bridgeRouter);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);

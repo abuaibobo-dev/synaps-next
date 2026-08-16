@@ -1,3 +1,4 @@
+import path from 'path';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { getDb, queryAll, queryOne, runSql } from '../db.js';
@@ -50,6 +51,19 @@ router.get('/recent', async (req, res) => {
 router.get('/templates', async (_req, res) => {
   await getDb();
   res.json({ templates: listProjectTemplates() });
+});
+
+/**
+ * GET /api/v1/projects/default-path
+ * Query 参数：name?: string
+ * 返回默认项目目录下的建议路径，前端创建项目时自动填充，避免用户不知道路径怎么填
+ */
+router.get('/default-path', async (req, res) => {
+  await getDb();
+  const raw = String(req.query.name || '').trim();
+  const safe = (raw || 'synaps-app').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'synaps-app';
+  const base = path.join(process.cwd(), 'synaps-projects');
+  res.json({ path: path.join(base, safe) });
 });
 
 /**

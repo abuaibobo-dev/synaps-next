@@ -15,7 +15,11 @@ pkg install nodejs git -y
 # 2. 安装 Codex CLI（官方）
 npm i -g @openai/codex
 
-# 3. 下载桥接服务脚本
+# 3. 下载桥接服务脚本（二选一）
+#    方式一（推荐，App 内置，无需联网）：Synaps 设置 → Codex CLI → 「复制一键安装命令」，
+#    到 Termux 粘贴运行即可，等价于：
+#    curl -o ~/codex-bridge.js http://127.0.0.1:19091/api/v1/bridge/script
+#    方式二（手动，需能访问 GitHub）：
 curl -L -o ~/codex-bridge.js \
   https://raw.githubusercontent.com/abuaibobo-dev/synaps-next/master/tools/codex-bridge/server.js
 

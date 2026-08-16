@@ -88,6 +88,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [formName, setFormName] = useState('');
   const [formPath, setFormPath] = useState('');
+  const [pathTouched, setPathTouched] = useState(false);
   const [formDesc, setFormDesc] = useState('');
   const [formTemplate, setFormTemplate] = useState('blank');
   const [templates, setTemplates] = useState<Array<{ id: string; name: string; icon: string; description: string }>>([]);
@@ -116,6 +117,19 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
     }
   }, []);
 
+  const fetchDefaultPath = useCallback(async (name: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/projects/default-path?name=${encodeURIComponent(name)}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data && typeof data.path === 'string' && data.path.trim()) {
+        setFormPath(data.path);
+      }
+    } catch {
+      // 后端未就绪时保持原样
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       fetchProjects();
@@ -127,6 +141,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
     setEditingProject(null);
     setFormName('');
     setFormPath('');
+    setPathTouched(false);
     setFormDesc('');
     setFormTemplate('blank');
     setModalVisible(true);
@@ -136,6 +151,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
     setEditingProject(project);
     setFormName(project.name);
     setFormPath(project.path);
+    setPathTouched(true);
     setFormDesc(project.description);
     setModalVisible(true);
   };
@@ -174,47 +190,45 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
 
     setLoading(true);
     try {
-      if (editingProject) {
-        /**
-         * 服务端文件：server/src/routes/projects.ts
-         * 接口：PUT /api/v1/projects/:id
-         * Path 参数：id: string
-         * Body 参数：name?: string, path?: string, description?: string
-         */
-        await fetch(`${API_BASE}/api/v1/projects/${editingProject.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: formName.trim(),
-            path: formPath.trim(),
-            description: formDesc.trim(),
-          }),
-        });
-      } else {
-        /**
-         * 服务端文件：server/src/routes/projects.ts
-         * 接口：POST /api/v1/projects
-         * Body 参数：name: string, path: string, description?: string
-         */
-        await fetch(`${API_BASE}/api/v1/projects`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: formName.trim(),
-            path: formPath.trim(),
-            description: formDesc.trim(),
-            template: formTemplate,
-          }),
-        });
+      const url = editingProject
+        ? `${API_BASE}/api/v1/projects/${editingProject.id}`
+        : `${API_BASE}/api/v1/projects`;
+      const method = editingProject ? 'PUT' : 'POST';
+      /**
+       * 服务端文件：server/src/routes/projects.ts
+       * 接口：POST /api/v1/projects（新建）/ PUT /api/v1/projects/:id（编辑）
+       * Body 参数：name: string, path: string, description?: string, template?: string
+       */
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formName.trim(),
+          path: formPath.trim(),
+          description: formDesc.trim(),
+          ...(editingProject ? {} : { template: formTemplate }),
+        }),
+      });
+      if (!res.ok) {
+        let msg = `请求失败（${res.status}）`;
+        try {
+          const data = await res.json();
+          if (data && data.error) msg = String(data.error);
+        } catch {
+          // 保留默认错误信息
+        }
+        Alert.alert('保存失败', msg);
+        return;
       }
       setModalVisible(false);
       fetchProjects();
     } catch {
-      // Silently fail
+      Alert.alert('保存失败', '无法连接后端，请确认 App 后端服务已启动');
     } finally {
       setLoading(false);
     }
   };
+;
 
   const handleProjectPress = async (project: Project) => {
     // Open project - update last opened
@@ -322,19 +336,38 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
                     placeholder="例如：MyApp"
                     placeholderTextColor={colors.textMuted}
                     value={formName}
-                    onChangeText={setFormName}
+                    onChangeText={(v) => {
+                      setFormName(v);
+                      if (!pathTouched && v.trim()) fetchDefaultPath(v.trim());
+                    }}
                     autoCapitalize="none"
                   />
 
                   <Text style={styles.label}>项目路径</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="例如：/storage/emulated/0/MyApp"
+                    placeholder="自动生成，也可手动填写"
                     placeholderTextColor={colors.textMuted}
                     value={formPath}
-                    onChangeText={setFormPath}
+                    onChangeText={(v) => {
+                      setFormPath(v);
+                      setPathTouched(true);
+                    }}
                     autoCapitalize="none"
                   />
+                  <View style={styles.pathHintRow}>
+                    <Text style={styles.pathHint}>输入项目名称后路径会自动生成，也可点右侧「自动」重新生成</Text>
+                    <Pressable
+                      style={styles.pathAutoBtn}
+                      onPress={() => {
+                        if (!formName.trim()) return;
+                        setPathTouched(false);
+                        fetchDefaultPath(formName.trim());
+                      }}
+                    >
+                      <Text style={styles.pathAutoBtnText}>自动</Text>
+                    </Pressable>
+                  </View>
 
                   {!editingProject && (
                     <>
@@ -595,6 +628,29 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     minHeight: 80,
     textAlignVertical: 'top',
   },
+  pathHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: 2,
+  },
+  pathHint: {
+    flex: 1,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
+  pathAutoBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    backgroundColor: colors.primary,
+  },
+  pathAutoBtnText: {
+    fontSize: fontSize.xs,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+
   modalFooter: {
     flexDirection: 'row',
     padding: spacing.lg,

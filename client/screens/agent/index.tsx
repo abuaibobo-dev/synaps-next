@@ -1335,6 +1335,28 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const currentProjectName = currentProjectId
     ? projectOptions.find((p) => p.id === currentProjectId)?.name
     : null;
+  const showBackendInfo = useCallback(async () => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`${API_BASE}/api/v1/diagnostics`, { signal: ctrl.signal });
+      clearTimeout(t);
+      const data = await res.json();
+      const b = (data && data.backend) || {};
+      const detail = [
+        `状态：${b.status === 'ok' ? '已连接' : '异常'}`,
+        `地址：${API_BASE}`,
+        `端口：${b.port ?? '-'}`,
+        `运行：${b.uptimeSec ?? '-'}s`,
+        `Node：${b.nodeVersion || '-'}`,
+        `架构：${b.arch || '-'}`,
+      ].join('\n');
+      Alert.alert('后端状态', detail);
+    } catch {
+      Alert.alert('后端状态', `未连接（${API_BASE}）\n请确认本地后端服务已启动，或到设置查看诊断`);
+    }
+  }, []);
+
 
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
@@ -1350,14 +1372,27 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           <MenuButton onPress={onOpenSidebar} />
           <View style={styles.headerCenter}>
             <Text style={styles.headerTitle}>Agent</Text>
-            <View style={styles.statusBadge}>
-              <View style={[styles.statusDot, isStreaming && styles.statusDotStreaming]} />
-              <Text style={[styles.statusText, isStreaming && styles.statusTextStreaming]}>
-                {isStreaming ? 'THINKING' : 'READY'}
-              </Text>
-            </View>
           </View>
           <View style={styles.headerRight}>
+            <Pressable
+              style={styles.backendChip}
+              onPress={showBackendInfo}
+              hitSlop={6}
+            >
+              <View
+                style={[
+                  styles.backendChipDot,
+                  backendOnline === null
+                    ? styles.backendStatusDotConnecting
+                    : backendOnline
+                      ? styles.backendStatusDotOnline
+                      : styles.backendStatusDotOffline,
+                ]}
+              />
+              <Text style={styles.backendChipText} numberOfLines={1}>
+                {backendOnline === null ? '后端' : backendOnline ? '后端' : '离线'}
+              </Text>
+            </Pressable>
             <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
               <PanelToggleIcon
                 open={taskPanelVisible}
@@ -1392,36 +1427,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Text>
           <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
         </Pressable>
-
-        {/* 后端状态条（常驻） */}
-        <View
-          style={[
-            styles.backendStatusBar,
-            backendOnline === null
-              ? styles.backendStatusBarConnecting
-              : backendOnline
-                ? styles.backendStatusBarOnline
-                : styles.backendStatusBarOffline,
-          ]}
-        >
-          <View
-            style={[
-              styles.backendStatusDot,
-              backendOnline === null
-                ? styles.backendStatusDotConnecting
-                : backendOnline
-                  ? styles.backendStatusDotOnline
-                  : styles.backendStatusDotOffline,
-            ]}
-          />
-          <Text style={styles.backendStatusText} numberOfLines={1}>
-            {backendOnline === null
-              ? '后端 · 连接中…'
-              : backendOnline
-                ? '后端 · 已连接'
-                : '后端 · 离线，自动重试中（对话和工具暂不可用）'}
-          </Text>
-        </View>
 
         {/* Agent 类型选择器（独立上下文/角色） */}
         <View style={styles.agentSelector}>
@@ -2187,30 +2192,6 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '700',
     color: colors.textPrimary,
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 2,
-  },
-  statusDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: colors.success,
-  },
-  statusDotStreaming: {
-    backgroundColor: colors.primary,
-  },
-  statusText: {
-    fontSize: fontSize.xs,
-    color: colors.success,
-    letterSpacing: 1.5,
-    fontWeight: '600',
-  },
-  statusTextStreaming: {
-    color: colors.primary,
-  },
   rechargeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2255,6 +2236,29 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     alignItems: 'center',
     justifyContent: 'center',
   },
+  backendChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  backendChipDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  backendChipText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    maxWidth: 48,
+  },
+
   onboardBar: {
     flexDirection: 'row',
     alignItems: 'center',

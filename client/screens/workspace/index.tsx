@@ -7,7 +7,6 @@ import { useThemeColors } from '@/components/ThemeProvider';
 import { spacing, radius, fontSize } from '@/utils/theme';
 import type { ThemeColors } from '@/utils/theme';
 import { FontAwesome6 } from '@expo/vector-icons';
-import OfflineBanner from '@/components/OfflineBanner';
 
 import ProjectsScreen from '@/screens/projects';
 import AgentScreen from '@/screens/agent';
@@ -87,7 +86,6 @@ export default function WorkspaceScreen() {
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['left', 'right']} scrollable>
       <View style={styles.container}>
-        <OfflineBanner />
         <Animated.View
           key={activeModule}
           entering={FadeIn.duration(200).withInitialValues({ opacity: 0 })}
