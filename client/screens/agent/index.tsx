@@ -178,6 +178,172 @@ interface AgentScreenProps {
   onOpenSidebar: () => void;
 }
 
+/* ==================== AI-Native UI：富内容渲染 ==================== */
+
+interface ContentBlock {
+  type: 'text' | 'code' | 'insight';
+  text: string;
+  lang?: string;
+  icon?: string;
+  title?: string;
+}
+
+/** 结构化洞察卡片（Agent 思考/计划/反思等），按图标识别，灰白中性风格 */
+const INSIGHT_PATTERNS: Array<{ icon: string; title: string; match: RegExp }> = [
+  { icon: 'brain', title: '思考过程', match: /^\u{1F9E0}/u },
+  { icon: 'circle-question', title: '执行前判断', match: /^\u{1F914}/u },
+  { icon: 'eye', title: '多视角分析', match: /^\u{1F441}/u },
+  { icon: 'list-check', title: '执行计划', match: /^\u{1F4CB}/u },
+  { icon: 'chart-simple', title: '进度报告', match: /^\u{1F4CA}/u },
+  { icon: 'rotate', title: '反思', match: /^\u{1F504}/u },
+  { icon: 'lightbulb', title: '经验关联', match: /^\u{1F4A1}/u },
+  { icon: 'triangle-exclamation', title: '风险提示', match: /^\u{26A0}/u },
+  { icon: 'thumbtack', title: '综合判断', match: /^\u{1F4CC}/u },
+  { icon: 'note-sticky', title: '记录', match: /^\u{1F4DD}/u },
+  { icon: 'book', title: '引用记忆', match: /^\u{1F4D6}/u },
+];
+
+function splitInsightText(text: string): ContentBlock[] {
+  const lines = text.split('\n');
+  const out: ContentBlock[] = [];
+  let buf: string[] = [];
+  let current: { icon: string; title: string } | null = null;
+  const flush = () => {
+    const body = buf.join('\n').trim();
+    if (body) {
+      out.push(
+        current
+          ? { type: 'insight', text: body, icon: current.icon, title: current.title }
+          : { type: 'text', text: body }
+      );
+    }
+    buf = [];
+    current = null;
+  };
+  for (const line of lines) {
+    const hit = INSIGHT_PATTERNS.find((p) => p.match.test(line));
+    if (hit) {
+      flush();
+      current = { icon: hit.icon, title: hit.title };
+      const rest = line.replace(hit.match, '').replace(/^[：:\s]+/, '').trim();
+      if (rest) buf.push(rest);
+    } else {
+      buf.push(line);
+    }
+  }
+  flush();
+  return out;
+}
+
+/** 将消息内容拆分为 代码块 / 洞察卡片 / 纯文本 三种渲染单元 */
+function parseContentBlocks(content: string): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+  const fenceRe = /```([\w+-]*)\n?([\s\S]*?)```/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(content)) !== null) {
+    if (m.index > last) blocks.push(...splitInsightText(content.slice(last, m.index)));
+    blocks.push({ type: 'code', lang: m[1] || 'code', text: m[2].replace(/\n$/, '') });
+    last = m.index + m[0].length;
+  }
+  if (last < content.length) blocks.push(...splitInsightText(content.slice(last)));
+  if (blocks.length === 0) blocks.push({ type: 'text', text: content });
+  return blocks;
+}
+
+/** 代码块卡片：语言徽标 + 复制按钮 + 等宽字体横向滚动 */
+function CodeCard({
+  lang,
+  text,
+  colors,
+  styles,
+}: {
+  lang: string;
+  text: string;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const copyCode = useCallback(async () => {
+    await Clipboard.setStringAsync(text);
+    Toast.show({ type: 'success', text1: '代码已复制' });
+  }, [text]);
+  return (
+    <View style={styles.codeCard}>
+      <View style={styles.codeCardHeader}>
+        <Text style={styles.codeCardLang}>{lang}</Text>
+        <Pressable onPress={copyCode} hitSlop={6}>
+          <Text style={styles.codeCardCopy}>复制</Text>
+        </Pressable>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <Text style={styles.codeCardBody} selectable>
+          {text}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+/** 洞察卡片：图标 + 标题 + 正文 */
+function InsightCard({
+  icon,
+  title,
+  text,
+  colors,
+  styles,
+}: {
+  icon: string;
+  title: string;
+  text: string;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={styles.insightCard}>
+      <View style={styles.insightCardHeader}>
+        <FontAwesome6 name={icon as any} size={11} color={colors.textSecondary} />
+        <Text style={styles.insightCardTitle}>{title}</Text>
+      </View>
+      <Text style={styles.insightCardBody} selectable>
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+/** 消息正文富渲染：代码块/洞察卡片/纯文本 */
+function RichContent({
+  content,
+  isUser,
+  colors,
+  styles,
+}: {
+  content: string;
+  isUser: boolean;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const blocks = useMemo(() => parseContentBlocks(content), [content]);
+  return (
+    <>
+      {blocks.map((b, i) => {
+        if (b.type === 'code') {
+          return <CodeCard key={i} lang={b.lang || 'code'} text={b.text} colors={colors} styles={styles} />;
+        }
+        if (b.type === 'insight') {
+          return <InsightCard key={i} icon={b.icon || 'note-sticky'} title={b.title || '记录'} text={b.text} colors={colors} styles={styles} />;
+        }
+        return (
+          <Text key={i} style={[styles.messageContent, isUser && styles.messageContentUser]}>
+            {b.text}
+          </Text>
+        );
+      })}
+    </>
+  );
+}
+
+
 export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const { colors, isDark } = useThemeColors();
   const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
@@ -222,6 +388,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const isStreamingRef = useRef(false);
   const cursorShared = useSharedValue(1);
   const cursorStyle = useAnimatedStyle(() => ({ opacity: cursorShared.value }));
+  const thinkingPulse = useSharedValue(1);
+  const thinkingPulseStyle = useAnimatedStyle(() => ({ opacity: thinkingPulse.value }));
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isSideBySide = windowWidth >= 600 && windowWidth > windowHeight * 0.8;
   const insets = useSafeAreaInsets();
@@ -304,25 +472,49 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         ? `${API_BASE}/api/v1/chat/agents?projectId=${encodeURIComponent(projectId)}`
         : `${API_BASE}/api/v1/chat/agents`;
       const response = await fetch(url);
-      if (!response.ok) return;
+      if (!response.ok) return {};
       const data = await response.json();
       const map: Record<string, string> = {};
       for (const a of data.agents || []) {
         if (a && typeof a.type === 'string' && typeof a.id === 'string') map[a.type] = a.id;
       }
       setAgentInstanceIds(map);
+      return map;
     } catch {
       // 忽略：后端未就绪时静默重试
+      return {};
     }
   }, []);
 
-  const loadAgentHistory = useCallback(async (type: string, instanceId?: string) => {
-    if (!instanceId) {
-      setMessages([]);
-      return;
+  const loadAgentHistory = useCallback(async (type: string, instanceId?: string, projectId?: string | null) => {
+    if (instanceId) {
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/chat/agent-history?agentInstanceId=${encodeURIComponent(instanceId)}`);
+        if (response.ok) {
+          const data = await response.json();
+          const msgs: Message[] = (data.messages || []).map(
+            (m: { id: string; role: string; content: string; created_at: string }) => ({
+              id: m.id || `${m.created_at}-${m.role}`,
+              role: m.role === 'assistant' ? 'assistant' : 'user',
+              content: m.content,
+              timestamp: new Date(m.created_at + 'Z').getTime(),
+            })
+          );
+          if (msgs.length > 0) {
+            setMessages(msgs);
+            return;
+          }
+        }
+      } catch {
+        // 实例历史不可用时回退到会话历史
+      }
     }
+    // 兜底：加载会话历史（chat_messages），确保历史对话可见
     try {
-      const response = await fetch(`${API_BASE}/api/v1/chat/agent-history?agentInstanceId=${encodeURIComponent(instanceId)}`);
+      const url = projectId
+        ? `${API_BASE}/api/v1/chat/history?project_id=${encodeURIComponent(projectId)}`
+        : `${API_BASE}/api/v1/chat/history`;
+      const response = await fetch(url);
       if (!response.ok) return;
       const data = await response.json();
       const msgs: Message[] = (data.messages || []).map(
@@ -368,8 +560,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
   useEffect(() => {
     (async () => {
-      await loadAgents(currentProjectId);
-      await loadAgentHistory(agentType, agentInstanceIds[agentType]);
+      const map = await loadAgents(currentProjectId);
+      await loadAgentHistory(agentType, map[agentType], currentProjectId);
       setInitialLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -384,8 +576,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
   const switchAgent = useCallback((type: AgentOptionKey) => {
     setAgentType(type);
-    loadAgentHistory(type, agentInstanceIds[type]);
-  }, [agentInstanceIds, loadAgentHistory]);
+    loadAgentHistory(type, agentInstanceIds[type], currentProjectId);
+  }, [agentInstanceIds, loadAgentHistory, currentProjectId]);
 
   // Track keyboard visibility so the input area can extend to the bottom edge
   useEffect(() => {
@@ -1143,6 +1335,19 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     return () => cancelAnimation(cursorShared);
   }, [cursorShared]);
 
+  // Thinking 组件：脉冲呼吸动画
+  useEffect(() => {
+    thinkingPulse.value = withRepeat(
+      withSequence(
+        withTiming(0.35, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      false
+    );
+    return () => cancelAnimation(thinkingPulse);
+  }, [thinkingPulse]);
+
   const openMessageMenu = useCallback((message: Message) => {
     Vibration.vibrate(10);
     setMenuMessage(message);
@@ -1224,9 +1429,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               </Text>
             </View>
           )}
-          <Text style={[styles.messageContent, isUser && styles.messageContentUser]}>
-            {item.content}
-          </Text>
+          {isUser ? (
+            <Text style={[styles.messageContent, styles.messageContentUser]}>{item.content}</Text>
+          ) : (
+            <RichContent content={item.content} isUser={false} colors={colors} styles={styles} />
+          )}
           {item.attachments && item.attachments.length > 0 && (
             <View style={styles.msgAttachments}>
               {item.attachments.map((att, idx) =>
@@ -1252,6 +1459,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 const exitMatch = tc.result?.match(/exit (\d+)/);
                 const exitCode = exitMatch ? parseInt(exitMatch[1], 10) : null;
                 const failed = exitCode !== null && exitCode !== 0;
+                const durMatch = tc.result?.match(/\((\d+)ms/);
+                const durationMs = durMatch ? parseInt(durMatch[1], 10) : null;
                 const rawResult = tc.result || '';
                 const analysisIdx = rawResult.indexOf('[失败分析]');
                 const hasAnalysis = analysisIdx >= 0;
@@ -1265,17 +1474,27 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 return (
                   <View key={idx} style={styles.toolCallItem}>
                     <View style={styles.toolCallHeader}>
-                      <AppIcon name={toolIcon(tc.name)} size={11} color={colors.primary} />
+                      <AppIcon name={toolIcon(tc.name)} size={11} color={colors.textSecondary} />
                       <Text style={styles.toolCallName}>{tc.name}</Text>
+                      {durationMs !== null && (
+                        <Text style={styles.toolCallDuration}>{durationMs}ms</Text>
+                      )}
                       {exitCode !== null && (
-                        <Text
-                          style={[
-                            styles.toolCallExit,
-                            failed && styles.toolCallExitError,
-                          ]}
-                        >
-                          {failed ? `exit ${exitCode}` : 'ok'}
-                        </Text>
+                        <View style={[styles.toolCallStatus, failed && styles.toolCallStatusError]}>
+                          <FontAwesome6
+                            name={failed ? 'xmark' : 'check'}
+                            size={9}
+                            color={failed ? colors.error : colors.success}
+                          />
+                          <Text
+                            style={[
+                              styles.toolCallStatusText,
+                              failed && styles.toolCallStatusTextError,
+                            ]}
+                          >
+                            {failed ? `失败 ${exitCode}` : '成功'}
+                          </Text>
+                        </View>
                       )}
                     </View>
                     {command ? (
@@ -1312,16 +1531,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               })}
             </View>
           )}
-          {(isUser && item.status && item.status !== 'sent') && (
-            <View style={styles.messageStatusRow}>
-              {item.status === 'pending' && <Text style={styles.messageStatusPending}>排队中</Text>}
-              {item.status === 'sending' && <Text style={styles.messageStatusPending}>发送中...</Text>}
-              {item.status === 'error' && <Text style={styles.messageStatusError}>发送失败 · 长按重试</Text>}
-              {item.status === 'cancelled' && <Text style={styles.messageStatusPending}>已取消</Text>}
-            </View>
-          )}
           </View>
         </Pressable>
+        {(isUser && item.status && item.status !== 'sent') && (
+          <View style={styles.messageStatusRow}>
+            {item.status === 'pending' && <Text style={styles.messageStatusPending}>排队中</Text>}
+            {item.status === 'sending' && <Text style={styles.messageStatusPending}>发送中...</Text>}
+            {item.status === 'error' && <Text style={styles.messageStatusError}>发送失败 · 长按重试</Text>}
+            {item.status === 'cancelled' && <Text style={styles.messageStatusPending}>已取消</Text>}
+          </View>
+        )}
         <Text style={styles.messageTime}>{formatRelativeTime(item.timestamp)}</Text>
       </Animated.View>
     );
@@ -1363,7 +1582,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.panes}>
@@ -1434,11 +1653,22 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           <Animated.View {...cardEntry}>
             <PressableScale style={styles.taskCard} onPress={() => setTaskPanelVisible(true)}>
               <View style={styles.taskCardHeader}>
-                <AppIcon name="list-checks" size={12} color={colors.primary} />
+                <AppIcon name="list-checks" size={12} color={colors.textSecondary} />
                 <Text style={styles.taskCardName} numberOfLines={1}>{currentTask.name}</Text>
-                <Text style={[styles.taskCardStatus, currentTask.status === 'running' && styles.taskCardStatusRunning]}>
-                  {currentTask.status === 'running' ? '执行中' : currentTask.status === 'done' ? '已完成' : currentTask.status === 'cancelled' ? '已取消' : '出错'}
-                </Text>
+                <View style={[styles.taskCardStatusPill, currentTask.status === 'error' && styles.taskCardStatusPillError]}>
+                  {currentTask.status === 'running' ? (
+                    <FontAwesome6 name="spinner" size={9} color={colors.textSecondary} spin />
+                  ) : currentTask.status === 'done' ? (
+                    <FontAwesome6 name="check" size={9} color={colors.success} />
+                  ) : currentTask.status === 'error' ? (
+                    <FontAwesome6 name="xmark" size={9} color={colors.error} />
+                  ) : (
+                    <FontAwesome6 name="circle-minus" size={9} color={colors.textMuted} />
+                  )}
+                  <Text style={[styles.taskCardStatus, currentTask.status === 'error' && styles.taskCardStatusError]}>
+                    {currentTask.status === 'running' ? '执行中' : currentTask.status === 'done' ? '已完成' : currentTask.status === 'cancelled' ? '已取消' : '出错'}
+                  </Text>
+                </View>
               </View>
               <AnimatedProgressBar
                 progress={
@@ -1458,7 +1688,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         {thinking ? (
           <View style={styles.thinkingPanel}>
             <Pressable style={styles.thinkingHeader} onPress={() => setThinkingOpen(!thinkingOpen)}>
-              <FontAwesome6 name="brain" size={11} color={colors.primary} />
+              <Animated.View style={thinkingPulseStyle}>
+                <FontAwesome6 name="brain" size={11} color={colors.primary} />
+              </Animated.View>
               <Text style={styles.thinkingHeaderText}>🧠 思考过程</Text>
               <Text style={styles.thinkingHeaderMeta} numberOfLines={1}>
                 {thinkingOpen ? '' : thinking.replace(/\n/g, ' ').slice(0, 40) + '…'}
@@ -1663,7 +1895,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
           <View style={styles.inputWrapper}>
             <Pressable style={styles.attachButton} onPress={() => setAttachMenuVisible(true)} hitSlop={6}>
-              <FontAwesome6 name="plus" size={15} color={colors.textSecondary} />
+              <FontAwesome6 name="plus" size={14} color={colors.textSecondary} />
             </Pressable>
             <TextInput
               style={styles.textInput}
@@ -1684,7 +1916,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               disabled={isStreaming || isRecording}
               hitSlop={4}
             >
-              <FontAwesome6 name="microchip" size={11} color={colors.textSecondary} />
+              <FontAwesome6 name="microchip" size={12} color={colors.textSecondary} />
               <Text style={styles.modelButtonText} numberOfLines={1}>
                 {modelLabel}
               </Text>
@@ -1692,7 +1924,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             <Pressable onPress={toggleAutoSpeak} style={styles.footerIconBtn} hitSlop={6}>
               <FontAwesome6
                 name={autoSpeak ? 'volume-high' : 'volume-xmark'}
-                size={13}
+                size={14}
                 color={autoSpeak ? colors.primary : colors.textMuted}
               />
             </Pressable>
@@ -2014,11 +2246,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                       : 'shield-halved'
                   }
                   size={16}
-                  color={
-                    permissionRequest?.level === 'high'
-                      ? colors.warning
-                      : colors.primary
-                  }
+                  color={colors.textSecondary}
                 />
                 <Text style={styles.permissionTitle}>
                   {permissionRequest?.level === 'high'
@@ -2073,7 +2301,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                   style={[styles.permissionBtn, styles.permissionBtnAllow]}
                   onPress={() => respondPermission(true)}
                 >
-                  <Text style={styles.permissionBtnAllowText}>允许</Text>
+                  <Text style={styles.permissionBtnAllowText}>通过</Text>
                 </Pressable>
               </View>
             </View>
@@ -2181,13 +2409,25 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '600',
     color: colors.textPrimary,
   },
+  taskCardStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(85,85,85,0.10)',
+  },
+  taskCardStatusPillError: {
+    backgroundColor: 'rgba(244,67,54,0.12)',
+  },
   taskCardStatus: {
     fontSize: fontSize.xs,
     fontWeight: '700',
-    color: colors.textMuted,
+    color: colors.textSecondary,
   },
-  taskCardStatusRunning: {
-    color: '#F59E0B',
+  taskCardStatusError: {
+    color: colors.error,
   },
   taskCardTrack: {
     height: 4,
@@ -2224,6 +2464,8 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    // headerCenter 是绝对定位（不占宽度），不加 auto 会把右侧元素挤到三条杠旁边
+    marginLeft: 'auto',
   },
   headerTitle: {
     fontSize: fontSize.lg,
@@ -2431,6 +2673,67 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   messageContentUser: {
     color: '#FFFFFF',
   },
+  /* ---- AI-Native UI：代码块卡片 ---- */
+  codeCard: {
+    marginTop: spacing.sm,
+    backgroundColor: isDark ? '#1A1A1A' : '#F0F0F0',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  codeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    backgroundColor: isDark ? '#242424' : '#E8E8E8',
+  },
+  codeCardLang: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    textTransform: 'lowercase',
+  },
+  codeCardCopy: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  codeCardBody: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textPrimary,
+    padding: spacing.sm,
+  },
+  /* ---- AI-Native UI：洞察卡片 ---- */
+  insightCard: {
+    marginTop: spacing.sm,
+    backgroundColor: isDark ? '#1A1A1A' : '#F5F5F5',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    gap: 4,
+  },
+  insightCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  insightCardTitle: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  insightCardBody: {
+    fontSize: fontSize.xs,
+    color: colors.textPrimary,
+    lineHeight: 17,
+  },
+
   replyPreview: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2501,6 +2804,31 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '700',
   },
   toolCallExitError: {
+    color: colors.error,
+  },
+  toolCallDuration: {
+    fontSize: 9,
+    color: colors.textMuted,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  toolCallStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    backgroundColor: 'rgba(76,175,80,0.12)',
+  },
+  toolCallStatusError: {
+    backgroundColor: 'rgba(244,67,54,0.12)',
+  },
+  toolCallStatusText: {
+    fontSize: 9,
+    color: colors.success,
+    fontWeight: '700',
+  },
+  toolCallStatusTextError: {
     color: colors.error,
   },
   toolCallArgs: {
@@ -2691,13 +3019,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     textAlignVertical: 'top',
   },
   sendButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: isDark ? '#FFFFFF' : '#1A1A1A',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 3,
+    marginBottom: 4,
     marginLeft: spacing.sm,
   },
   sendButtonDisabled: {
@@ -2710,13 +3038,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     marginTop: spacing.sm,
   },
   voiceButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 3,
+    marginBottom: 4,
     marginLeft: spacing.sm,
   },
   voiceButtonActive: {
@@ -2728,11 +3056,12 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    height: 28,
+    height: 32,
     borderRadius: radius.md,
     backgroundColor: 'rgba(255,255,255,0.06)',
-    paddingHorizontal: 6,
-    maxWidth: 76,
+    paddingHorizontal: 8,
+    maxWidth: 84,
+    marginBottom: 4,
   },
   modelButtonText: {
     fontSize: fontSize.xs,
@@ -2740,20 +3069,20 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '600',
   },
   footerIconBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 3,
+    marginBottom: 4,
   },
   attachButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 3,
+    marginBottom: 4,
   },
   attachChips: {
     marginBottom: spacing.sm,
@@ -3245,7 +3574,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderColor: colors.primary,
   },
   permissionBtnAllowText: {
-    color: '#0A0A0F',
+    color: '#FFFFFF',
     fontWeight: '700',
   },
 });

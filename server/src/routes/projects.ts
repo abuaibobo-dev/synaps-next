@@ -39,12 +39,24 @@ function assertWritableProjectPath(projectPath: string): string | null {
       fs.accessSync(projectPath, fs.constants.W_OK);
       return null;
     }
-    const parent = path.dirname(projectPath);
-    fs.accessSync(parent, fs.constants.W_OK | fs.constants.X_OK);
-    return null;
+    // 路径不存在：向上找到最近的已存在祖先校验可写性，
+    // 避免多层不存在路径（如 /sdcard/Projects/new-app）对不存在的父目录误报 ENOENT
+    let p = path.dirname(projectPath);
+    while (p && p !== path.dirname(p)) {
+      if (fs.existsSync(p)) {
+        const st = fs.statSync(p);
+        if (st.isDirectory()) {
+          fs.accessSync(p, fs.constants.W_OK | fs.constants.X_OK);
+          return null;
+        }
+        break;
+      }
+      p = path.dirname(p);
+    }
+    return `目录不可写：${projectPath}（上级目录不可访问），请使用自动填充的默认路径或换一个可写目录`;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code || 'EACCES';
-    return `目录不可写：${projectPath}（${code}），请换一个可写路径`;
+    return `目录不可写：${projectPath}（${code}），请使用自动填充的默认路径或换一个可写目录`;
   }
 }
 
