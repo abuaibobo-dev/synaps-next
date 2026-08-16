@@ -9,6 +9,8 @@ import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
 import { runProcess, isAndroidRuntime } from '../nativeProc.js';
 import { runHarnessTask, harnessStatus } from '../harness.js';
+import { generateDiagramSVG, type DiagramNode, type DiagramEdge } from '../diagram.js';
+import { runSpecKit, specKitStatus } from '../specKit.js';
 import { runCodexTask, runBrainTask, BRAIN_IDS, codexStatus, checkCodexBridge } from '../codex.js';
 import {
   deviceControlEnabled,
@@ -216,6 +218,8 @@ You have access to tools that let you interact with the project files:
 - goal_loop: Advance the current goal (args: note optional, milestone true at key checkpoints, done true to finish, nextStep optional). Medium risk: milestone checkpoints pause and require user approval.
 
 - device_action: Control this phone's screen. Args: type one of "tap" (params x,y), "swipe" (params x1,y1,x2,y2,duration), "screenshot" (no params, returns saved PNG path + size), "ui_dump" (no params, returns the visible UI tree with bounds), "back", "home", "launch_app" (params package). Requires the accessibility service enabled in Settings → 设备控制. Medium risk, requires confirmation.
+- generate_diagram: Create an editorial SVG diagram (no Mermaid). Args: type one of flowchart/architecture/sequence/erd/dependency/roadmap/timeline/swimlane, title, nodes [{id,label,kind?,layer?,lane?,fields?}], edges [{from,to,label?}]. Use when user asks 画架构图/流程图/依赖图/时序图/ER图/路线图/项目规划/调用链/泳道. Returns __SYNAPS_DIAGRAM__ + SVG which MUST be echoed verbatim in your final reply (the chat renders it as an image). Before drawing, read_skill "diagram-design". Medium risk.
+- spec_kit: Spec-Driven Development (github.com/github/spec-kit). Args: action one of status/init/spec/plan/tasks/implement/test, requirement, title. Flow for feature requests: 1) spec_kit spec → show the generated docs/specs/*.md to the user and WAIT for confirmation; 2) after confirmation spec_kit plan → implement → spec_kit test (generates tests from acceptance criteria). Store specs under docs/specs/. Medium risk.
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -340,6 +344,10 @@ interface ToolCall {
   topK?: number;
   pattern?: string;
   solution?: string;
+  nodes?: Array<{ id: string; label: string; kind?: string; layer?: string; lane?: string; fields?: string[] }>;
+  edges?: Array<{ from: string; to: string; label?: string }>;
+  action?: string;
+  requirement?: string;
   context?: string;
 }
 
@@ -2333,6 +2341,40 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       } catch (err) {
         return `[DeepSeek Harness error]\n${err instanceof Error ? err.message : String(err)}`;
       }
+    }
+
+    case 'generate_diagram': {
+      const type = String(toolCall.type || 'flowchart');
+      const title = String(toolCall.title || '');
+      const nodes = Array.isArray(toolCall.nodes) ? (toolCall.nodes as DiagramNode[]) : [];
+      const edges = Array.isArray(toolCall.edges) ? (toolCall.edges as DiagramEdge[]) : [];
+      if (nodes.length === 0) return 'Error: generate_diagram 需要 nodes（至少一个节点）';
+      if (nodes.length > 20) return 'Error: 节点过多（>20），请拆分或精简（diagram-design：密度 4/10）';
+      const svg = generateDiagramSVG({ type, title, nodes, edges });
+      return `__SYNAPS_DIAGRAM__\n${svg}`;
+    }
+
+    case 'spec_kit': {
+      const action = String(toolCall.action || 'spec');
+      const requirement = String(toolCall.requirement || toolCall.task || toolCall.query || '');
+      const title = String(toolCall.title || '');
+      let projectPath: string | undefined;
+      try {
+        projectPath = resolveProjectPath(projectId, '');
+      } catch {
+        projectPath = undefined;
+      }
+      if (!projectPath) return 'Error: spec_kit 需要先绑定项目';
+      try {
+        const result = await runSpecKit(projectPath, action, { title, requirement });
+        return `[spec-kit ${action}]\n${truncateText(result, 4000)}`;
+      } catch (err) {
+        return `[spec-kit error] ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    case 'spec_kit_status': {
+      return JSON.stringify(await specKitStatus(), null, 2);
     }
 
     case 'device_status': {

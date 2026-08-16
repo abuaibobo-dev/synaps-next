@@ -50,6 +50,7 @@ import Animated, {
   ReduceMotion,
 } from 'react-native-reanimated';
 import { AppIcon, toolIcon } from '@/components/AppIcon';
+import DiagramView from '@/components/DiagramView';
 import { useEntry, PressableScale, ThinkingDots, ToolSpinner, AnimatedProgressBar, Skeleton } from '@/components/motion';
 
 function PanelToggleIcon({
@@ -181,7 +182,7 @@ interface AgentScreenProps {
 /* ==================== AI-Native UI：富内容渲染 ==================== */
 
 interface ContentBlock {
-  type: 'text' | 'code' | 'insight';
+  type: 'text' | 'code' | 'insight' | 'diagram';
   text: string;
   lang?: string;
   icon?: string;
@@ -235,9 +236,32 @@ function splitInsightText(text: string): ContentBlock[] {
   return out;
 }
 
-/** 将消息内容拆分为 代码块 / 洞察卡片 / 纯文本 三种渲染单元 */
+/** 将消息内容拆分为 图表 / 代码块 / 洞察卡片 / 纯文本 四种渲染单元 */
+const DIAGRAM_MARKER = '__SYNAPS_DIAGRAM__';
+
+/** 流式阶段隐藏原始图表标记，避免把 SVG 源码当文本显示 */
+export function stripDiagramMarkup(text: string): string {
+  if (!text.includes(DIAGRAM_MARKER)) return text;
+  return text.replace(/__SYNAPS_DIAGRAM__\s*<svg[\s\S]*?<\/svg>/g, '[图表生成中…]');
+}
+
 function parseContentBlocks(content: string): ContentBlock[] {
   const blocks: ContentBlock[] = [];
+  const markerIdx = content.indexOf(DIAGRAM_MARKER);
+  if (markerIdx > -1) {
+    if (markerIdx > 0) blocks.push(...parseContentBlocks(content.slice(0, markerIdx)));
+    const svgStart = content.indexOf('<svg', markerIdx);
+    const svgEnd = svgStart > -1 ? content.indexOf('</svg>', svgStart) : -1;
+    if (svgStart > -1 && svgEnd > -1) {
+      blocks.push({ type: 'diagram', text: content.slice(svgStart, svgEnd + '</svg>'.length) });
+      const tail = content.slice(svgEnd + '</svg>'.length);
+      if (tail.trim()) blocks.push(...parseContentBlocks(tail));
+    } else {
+      const tail = content.slice(markerIdx + DIAGRAM_MARKER.length);
+      if (tail.trim()) blocks.push(...parseContentBlocks(tail));
+    }
+    return blocks;
+  }
   const fenceRe = /```([\w+-]*)\n?([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
@@ -327,6 +351,9 @@ function RichContent({
   return (
     <>
       {blocks.map((b, i) => {
+        if (b.type === 'diagram') {
+          return <DiagramView key={i} svg={b.text} colors={colors} />;
+        }
         if (b.type === 'code') {
           return <CodeCard key={i} lang={b.lang || 'code'} text={b.text} colors={colors} styles={styles} />;
         }
@@ -1767,7 +1794,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.streamBubble]}>
                     <Text style={styles.messageContent}>
-                      {displayedText}
+                      {stripDiagramMarkup(displayedText)}
                       <Animated.Text style={[styles.streamCursor, cursorStyle]}>▍</Animated.Text>
                     </Text>
                     {currentToolCalls.length > 0 && (

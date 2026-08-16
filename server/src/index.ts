@@ -22,6 +22,7 @@ import brainsRouter from "./routes/brains.js";
 import bridgeRouter from "./routes/bridge.js";
 import codexLocalRouter from "./routes/codexLocal.js";
 import { seedImpeccableSkills } from "./impeccable.js";
+import { seedDiagramSkill } from "./diagramSkill.js";
 
 const app = express();
 const port = process.env.PORT || 19091;
@@ -79,5 +80,6 @@ process.on('uncaughtException', (err) => {
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);
   seedImpeccableSkills().catch(() => {});
+  seedDiagramSkill();
   startProactiveMonitor();
 });

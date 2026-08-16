@@ -25,6 +25,7 @@ export const BRAIN_DEFS: BrainDef[] = [
   { id: 'aix', agentType: 'automator', name: 'aix', cli: 'aix', install: 'npm i -g aix-ai', desc: '40 家提供商自动化（自动化助手）' },
   { id: 'miii', agentType: 'memory_admin', name: 'miii', cli: 'miii', install: 'npm i -g miii-agent', desc: '100% 本地离线（记忆管理员）' },
   { id: 'myai', agentType: 'translator', name: 'my-ai', cli: 'my-ai', install: 'npm i -g @gh3ttoniga/my-ai', desc: '本地优先翻译（翻译官备选）' },
+  { id: 'specify', agentType: 'scheduler', name: 'Spec Kit', cli: 'specify', install: 'pip install specify-cli', desc: '规格驱动开发（github.com/github/spec-kit）：先规格后实现' },
 ];
 
 export const BUILTIN_BRAINS = [
