@@ -1,4 +1,5 @@
 import { queryOne } from './db.js';
+import { codexLocalInstalled, runCodexLocal, refreshCodexLocalVersion, codexLocalVersion, ENGINE_VERSION } from './codexLocal.js';
 
 /**
  * Codex CLI 集成（方案一：Termux 桥接）
@@ -11,6 +12,7 @@ import { queryOne } from './db.js';
 
 export interface CodexConfig {
   enabled: boolean;
+  builtin: boolean;
   apiKey: string;
   bridgeUrl: string;
   token: string;
@@ -28,6 +30,7 @@ function getSetting(key: string): string | null {
 export function getCodexConfig(): CodexConfig {
   return {
     enabled: getSetting('codex_enabled') === 'true',
+    builtin: getSetting('codex_builtin') === 'true',
     apiKey: getSetting('codex_api_key') || getSetting('ai_api_key') || '',
     bridgeUrl: (getSetting('codex_bridge_url') || 'http://127.0.0.1:19290').replace(/\/+$/, ''),
     token: getSetting('codex_token') || '',
@@ -84,12 +87,17 @@ export function codexStatus(): Record<string, unknown> {
   }
   return {
     enabled: true,
+    builtin: cfg.builtin,
+    builtinInstalled: cfg.builtin ? codexLocalInstalled() : false,
+    engineVersion: cfg.builtin ? ENGINE_VERSION : null,
     bridgeUrl: cfg.bridgeUrl,
     model: cfg.model,
     baseUrl: cfg.baseUrl,
     wireApi: cfg.wireApi,
     token: cfg.token ? '(已设置)' : '(未设置)',
-    note: cfg.token ? 'OK' : '建议设置 x-codex-token 令牌防止局域网内其他应用调用桥接服务',
+    note: cfg.builtin
+      ? (codexLocalInstalled() ? '内置引擎已就绪（无需 Termux）' : '内置引擎未安装，请到设置下载')
+      : (cfg.token ? 'OK' : '建议设置 x-codex-token 令牌防止局域网内其他应用调用桥接服务'),
   };
 }
 
@@ -121,6 +129,19 @@ export async function runBrainTask(brainId: string, task: string, projectPath?: 
     throw new Error('Codex CLI 桥接未启用，请到 设置 → Codex CLI 启用（Termux 安装说明见 docs/EXEC_BRAINS_SETUP.md）');
   }
 
+  if (brainId === 'codex' && cfg.builtin && codexLocalInstalled()) {
+    const result = await runCodexLocal({
+      task,
+      cwd: projectPath || undefined,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      wireApi: cfg.wireApi,
+      timeoutMs: cfg.timeoutMs,
+    });
+    return `[codex exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
+  }
+
   const r = await bridgeFetch(
     cfg,
     '/brain',
@@ -148,6 +169,20 @@ export async function runCodexTask(task: string, projectPath?: string): Promise<
 
   const cfg = getCodexConfig();
   if (!cfg.enabled) throw new Error('Codex CLI 未启用，请到 设置 → Codex CLI 启用');
+
+  // 内置引擎模式（无需 Termux）
+  if (cfg.builtin && codexLocalInstalled()) {
+    const result = await runCodexLocal({
+      task,
+      cwd: projectPath || undefined,
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      wireApi: cfg.wireApi,
+      timeoutMs: cfg.timeoutMs,
+    });
+    return `[Codex exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
+  }
 
   const r = await bridgeFetch(
     cfg,

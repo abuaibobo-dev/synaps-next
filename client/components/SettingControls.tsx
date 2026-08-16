@@ -44,23 +44,53 @@ export function settingsColors(colors: ThemeColors, isDark: boolean): SettingCol
   };
 }
 
-/** 卡片分组：左侧 2dp 紫色竖条 + 圆角 12dp 卡片 */
+/** 卡片分组：左侧 2dp 竖条 + 圆角 12dp 卡片；collapsible 时标题可点击折叠 */
 export function SettingsGroup({
   title,
   sc,
   bar,
   children,
   style,
+  collapsible,
+  defaultOpen = false,
 }: {
-  title: string;
+  title?: string;
   sc: SettingColors;
   bar: string;
   children: React.ReactNode;
   style?: ViewStyle;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  if (collapsible) {
+    return (
+      <View style={styles.groupWrap}>
+        <View style={[styles.group, { backgroundColor: sc.cardBg, borderColor: sc.cardBorder }, style]}>
+          <View style={[styles.groupBar, { backgroundColor: bar }]} />
+          <Pressable
+            style={[
+              styles.groupCollapseHeader,
+              open && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: sc.separator },
+            ]}
+            onPress={() => setOpen(!open)}
+            hitSlop={6}
+          >
+            <Text style={[styles.groupCollapseTitle, { color: sc.title }]} numberOfLines={1}>
+              {title}
+            </Text>
+            <AppIcon name={open ? 'chevron-up' : 'chevron-down'} size={14} color={sc.arrow} />
+          </Pressable>
+          {open ? children : null}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.groupWrap}>
-      <Text style={[styles.groupTitle, { color: sc.title }]}>{title}</Text>
+      {title ? <Text style={[styles.groupTitle, { color: sc.title }]}>{title}</Text> : null}
       <View style={[styles.group, { backgroundColor: sc.cardBg, borderColor: sc.cardBorder }, style]}>
         <View style={[styles.groupBar, { backgroundColor: bar }]} />
         {children}
@@ -265,6 +295,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 6,
     marginLeft: 2,
+  },
+  groupCollapseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: 16,
+    minHeight: 44,
+  },
+  groupCollapseTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 0,
+    marginLeft: 0,
+    flexShrink: 1,
   },
   group: {
     borderRadius: 12,

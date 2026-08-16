@@ -6,7 +6,21 @@ Codex CLI 作为 Synaps 的「外部执行大脑」：App 里的 Agent 遇到需
 Android 不允许 App 直接执行 Termux 里的二进制，所以采用 **HTTP 桥接**：
 Termux 里跑一个小服务（`tools/codex-bridge/server.js`），Synaps 通过 `127.0.0.1:19290` 调用它。
 
-## 一、在 Termux 里安装（只需一次）
+## 〇、内置引擎（推荐，无需 Termux）
+
+新版 Synaps 可以直接在 App 内运行 Codex，完全不需要 Termux 桥接：
+
+1. 打开 App → 设置 → Codex CLI
+2. 打开「启用 Codex CLI」→ 打开「内置引擎（无需 Termux）」
+3. 点「下载引擎」（约 99MB，只下载一次），等待进度条走完
+4. 状态变为「✅ 引擎已就绪」后即可使用，Agent 会在 App 内直接运行 Codex
+
+> 内置引擎与 Termux 桥接二选一：内置引擎开启且已就绪时，`codex_exec` / `brain_exec(codex)`
+> 直接在 App 内执行；否则回落到 Termux 桥接。
+
+## 一、Termux 桥接方式（备选）
+
+在 Termux 里安装（只需一次）：
 
 ```bash
 # 1. 安装 Node.js 与 Git

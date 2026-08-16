@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { queryOne } from '../db.js';
 import { getCodexConfig, checkCodexBridge, bridgeFetch } from '../codex.js';
+import { codexLocalInstalled, codexLocalVersion, ENGINE_VERSION } from '../codexLocal.js';
 
 /**
  * 执行大脑注册表（与 Termux 桥接 tools/codex-bridge/server.js 的 BRAINS 保持一致）。
@@ -66,7 +67,11 @@ router.get('/status', async (_req: Request, res: Response) => {
       note: '',
     };
     let detected: Record<string, string | null> = {};
-    if (cfg.enabled) {
+    if (cfg.enabled && cfg.builtin && codexLocalInstalled()) {
+      codex.reachable = true;
+      codex.version = (await codexLocalVersion()) || ENGINE_VERSION;
+      codex.note = '内置引擎（无需 Termux）';
+    } else if (cfg.enabled) {
       try {
         const raw = await checkCodexBridge();
         let parsed: Record<string, unknown> | null = null;

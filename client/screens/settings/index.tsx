@@ -56,6 +56,7 @@ interface Settings {
   harness_api_key: string;
   harness_base_url: string;
   codex_enabled: string;
+  codex_builtin: string;
   codex_api_key: string;
   codex_bridge_url: string;
   codex_token: string;
@@ -71,7 +72,7 @@ interface Settings {
 const DEFAULT_SETTINGS: Settings = {
   ai_model: 'deepseek-chat',
   ai_api_key: '',
-  ai_base_url: '',
+  ai_base_url: 'https://api.deepseek.com',
   ai_model_base_url: '',
   stt_api_key: '',
   stt_base_url: '',
@@ -89,6 +90,7 @@ const DEFAULT_SETTINGS: Settings = {
   harness_api_key: '',
   harness_base_url: '',
   codex_enabled: 'false',
+  codex_builtin: 'false',
   codex_api_key: '',
   codex_bridge_url: 'http://127.0.0.1:19290',
   codex_token: '',
@@ -454,8 +456,11 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [brains, setBrains] = useState<BrainStatus | null>(null);
   const [brainsRefreshing, setBrainsRefreshing] = useState(false);
   const [brainsRefreshedAt, setBrainsRefreshedAt] = useState<number | null>(null);
+  // 用 ref 防重入，避免 useCallback 依赖 state 导致刷新无限循环
+  const brainsFetchingRef = useRef(false);
   const fetchBrains = useCallback(async () => {
-    if (brainsRefreshing) return;
+    if (brainsFetchingRef.current) return;
+    brainsFetchingRef.current = true;
     setBrainsRefreshing(true);
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 10000);
@@ -468,13 +473,55 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       setBrainsRefreshedAt(Date.now());
     } finally {
       clearTimeout(t);
+      brainsFetchingRef.current = false;
       setBrainsRefreshing(false);
     }
-  }, [brainsRefreshing]);
+  }, []);
+
+  const [codexLocal, setCodexLocal] = useState<{
+    enabled?: boolean;
+    installed?: boolean;
+    version?: string | null;
+    downloading?: boolean;
+    bytesDone?: number;
+    bytesTotal?: number;
+    error?: string | null;
+  } | null>(null);
+
+  const fetchCodexLocal = useCallback(async () => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(`${API_BASE}/api/v1/codex-local/status`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) return;
+      setCodexLocal((await res.json()) as typeof codexLocal);
+    } catch {
+      // 后端未就绪时保持上次状态
+    }
+  }, []);
+
+  const startCodexLocalInstall = useCallback(async () => {
+    try {
+      await fetch(`${API_BASE}/api/v1/codex-local/install`, { method: 'POST' });
+      fetchCodexLocal();
+      const timer = setInterval(() => fetchCodexLocal(), 2000);
+      setTimeout(() => clearInterval(timer), 60 * 60 * 1000);
+    } catch {
+      Alert.alert('下载失败', '无法启动下载，请检查网络');
+    }
+  }, [fetchCodexLocal]);
 
   useEffect(() => {
     fetchBrains();
-  }, [fetchBrains]);
+    fetchCodexLocal();
+  }, [fetchBrains, fetchCodexLocal]);
+
+  useEffect(() => {
+    if (!codexLocal?.downloading) return;
+    const timer = setInterval(() => fetchCodexLocal(), 2000);
+    return () => clearInterval(timer);
+  }, [codexLocal?.downloading, fetchCodexLocal]);
 
   // 自动检查最新版本（GitHub Releases）
   useEffect(() => {
@@ -965,8 +1012,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }, []);
 
   const provider = useMemo<ProviderKey>(() => {
-    if (settings.ai_base_url.includes('openai')) return 'openai';
-    if (settings.ai_base_url.includes('deepseek')) return 'deepseek';
+    const base = (settings.ai_base_url || '').toLowerCase();
+    if (base.includes('openai')) return 'openai';
+    if (!base || base.includes('deepseek')) return 'deepseek';
     return 'custom';
   }, [settings.ai_base_url]);
 
@@ -1045,25 +1093,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const mainPage = (
     <>
-      <SettingsGroup title="账户与安全" sc={sc} bar={ACCENT}>
-        <SettingRow label="账户与安全" icon="user" iconColor={ACCENT} sc={sc} onPress={() => setSection('account')} last />
-      </SettingsGroup>
-      <SettingsGroup title="AI 模型" sc={sc} bar={ACCENT}>
-        <SettingRow label="AI 模型" icon="bot" iconColor={ACCENT} sc={sc} onPress={() => setSection('ai')} last />
-      </SettingsGroup>
-      <SettingsGroup title="开发环境" sc={sc} bar={ACCENT}>
-        <SettingRow label="开发环境" icon="terminal" iconColor={ACCENT} sc={sc} onPress={() => setSection('dev')} last />
-      </SettingsGroup>
-      <SettingsGroup title="外观" sc={sc} bar={ACCENT}>
-        <SettingRow label="外观" icon="palette" iconColor={ACCENT} sc={sc} onPress={() => setSection('appearance')} last />
-      </SettingsGroup>
-      <SettingsGroup title="安全" sc={sc} bar={ACCENT}>
-        <SettingRow label="安全" icon="shield" iconColor={ACCENT} sc={sc} onPress={() => setSection('security')} last />
-      </SettingsGroup>
-      <SettingsGroup title="技能与 MCP" sc={sc} bar={ACCENT}>
-        <SettingRow label="技能与 MCP" icon="plug" iconColor={ACCENT} sc={sc} onPress={() => setSection('skills')} last />
-      </SettingsGroup>
-      <SettingsGroup title="存储与日志" sc={sc} bar={ACCENT}>
+      <SettingsGroup sc={sc} bar={ACCENT}>
+        <SettingRow label="账户与安全" icon="user" iconColor={ACCENT} sc={sc} onPress={() => setSection('account')} />
+        <SettingRow label="AI 模型" icon="bot" iconColor={ACCENT} sc={sc} onPress={() => setSection('ai')} />
+        <SettingRow label="开发环境" icon="terminal" iconColor={ACCENT} sc={sc} onPress={() => setSection('dev')} />
+        <SettingRow label="外观" icon="palette" iconColor={ACCENT} sc={sc} onPress={() => setSection('appearance')} />
+        <SettingRow label="安全" icon="shield" iconColor={ACCENT} sc={sc} onPress={() => setSection('security')} />
+        <SettingRow label="技能与 MCP" icon="plug" iconColor={ACCENT} sc={sc} onPress={() => setSection('skills')} />
         <SettingRow
           label="存储与日志"
           icon="database"
@@ -1073,10 +1109,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             setSection('storage');
             calcStorage();
           }}
-          last
         />
-      </SettingsGroup>
-      <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
         <SettingRow label="关于" icon="info" iconColor={ACCENT} sc={sc} onPress={() => setSection('about')} last />
       </SettingsGroup>
       <Pressable
@@ -1145,7 +1178,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const aiPage = (
     <>
-      <SettingsGroup title="AI 模型" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="AI 模型" sc={sc} bar={ACCENT} collapsible defaultOpen>
         <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
           <Text style={[styles.fieldLabel, { color: sc.label }]}>提供商</Text>
           <SegmentControl options={PROVIDER_OPTIONS} value={provider} onChange={setProvider} activeColor={ACCENT} inactiveBg={sc.underline} textColor={sc.value} />
@@ -1200,7 +1233,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           <Text style={[styles.fieldValue, { color: sc.value }]}>{contextLimit}</Text>
         </FieldRow>
       </SettingsGroup>
-      <SettingsGroup title="DeepSeek Harness" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="DeepSeek Harness" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
           label="启用 Harness"
           icon="bot"
@@ -1266,7 +1299,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         </FieldRow>
       </SettingsGroup>
 
-      <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
           label="Codex CLI 桥接"
           value={brainsRefreshing ? '刷新中...' : brainsRefreshedAt ? `已刷新 ${new Date(brainsRefreshedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : codexBrainText}
@@ -1314,7 +1347,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           />
         </View>
       </SettingsGroup>
-      <SettingsGroup title="Codex CLI" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="Codex CLI" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
           label="启用 Codex CLI"
           icon="terminal"
@@ -1330,6 +1363,55 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           onPress={copyBridgeCommand}
           right={<Text style={[styles.fieldValue, { color: sc.value }]}>复制</Text>}
         />
+        <SettingRow
+          label="内置引擎（无需 Termux）"
+          icon="microchip"
+          iconColor={ACCENT}
+          sc={sc}
+          right={<AnimatedToggle value={settings.codex_builtin === 'true'} onValueChange={() => handleToggle('codex_builtin')} sc={sc} trackOn={INTERACTIVE} />}
+        />
+        {settings.codex_builtin === 'true' && (
+          <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+            <View style={styles.codexLocalRow}>
+              <Text style={[styles.fieldLabel, { color: sc.label }]}>
+                {codexLocal === null
+                  ? '引擎状态检测中...'
+                  : codexLocal.downloading
+                    ? `引擎下载中 ${(codexLocal.bytesTotal || 0) > 0 ? `${Math.round(((codexLocal.bytesDone || 0) / (codexLocal.bytesTotal || 1)) * 100)}%` : ''}（${Math.round((codexLocal.bytesDone || 0) / 1048576)}MB / ${Math.round((codexLocal.bytesTotal || 0) / 1048576)}MB）`
+                    : codexLocal.installed
+                      ? `✅ 引擎已就绪 ${codexLocal.version || ''}`
+                      : codexLocal.error
+                        ? `❌ 下载失败：${codexLocal.error}`
+                        : '引擎未安装（约 99MB，下载一次即可）'}
+              </Text>
+            </View>
+            {codexLocal?.downloading ? (
+              <View style={styles.codexLocalProgressTrack}>
+                <View
+                  style={[
+                    styles.codexLocalProgressFill,
+                    {
+                      width: `${(codexLocal.bytesTotal || 0) > 0 ? Math.min(100, Math.round(((codexLocal.bytesDone || 0) / (codexLocal.bytesTotal || 1)) * 100)) : 5}%`,
+                    },
+                  ]}
+                />
+              </View>
+            ) : !codexLocal?.installed ? (
+              <Pressable
+                style={styles.codexLocalBtn}
+                onPress={startCodexLocalInstall}
+                disabled={codexLocal?.downloading}
+              >
+                <Text style={styles.codexLocalBtnText}>
+                  {codexLocal?.error ? '重试下载引擎' : '下载引擎'}
+                </Text>
+              </Pressable>
+            ) : null}
+            <Text style={styles.codexLocalHint}>
+              启用后 Agent 直接在 App 内运行 Codex，不再需要 Termux 桥接
+            </Text>
+          </View>
+        )}
         <FieldRow styles={styles} label="桥接服务地址" sc={sc}>
           <UnderlineInput
             value={settings.codex_bridge_url}
@@ -1415,7 +1497,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const devPage = (
     <>
-      <SettingsGroup title="项目与终端" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="项目与终端" sc={sc} bar={ACCENT} collapsible defaultOpen>
         <FieldRow styles={styles} label="项目目录" sc={sc}>
           <UnderlineInput
             value={settings.project_root}
@@ -1439,7 +1521,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           />
         </FieldRow>
       </SettingsGroup>
-      <SettingsGroup title="GitHub" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="GitHub" sc={sc} bar={ACCENT} collapsible>
         <FieldRow styles={styles} label="Access Token" sc={sc}>
           <UnderlineInput
             value={settings.github_token}
@@ -1473,7 +1555,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           />
         </View>
       </SettingsGroup>
-      <SettingsGroup title="设备控制" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="设备控制" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
           label="启用设备控制"
           value={deviceServiceConnected ? '服务已连接' : '服务未连接'}
@@ -1539,13 +1621,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const securityPage = (
     <>
-      <SettingsGroup title="权限分级" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="权限分级" sc={sc} bar={ACCENT} collapsible defaultOpen>
         <SettingRow label="无风险操作" value="自动执行" icon="lock" iconColor={ACCENT} sc={sc} />
         <SettingRow label="中风险操作" value="需确认" icon="lock" iconColor={ACCENT} sc={sc} />
         <SettingRow label="高风险操作" value="需确认" icon="lock" iconColor={ACCENT} sc={sc} />
         <SettingRow label="极高风险操作" value="默认拒绝" icon="shield" iconColor={ACCENT} sc={sc} last />
       </SettingsGroup>
-      <SettingsGroup title="策略" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="策略" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
           label="工作区快照"
           icon="file-plus"
@@ -1562,7 +1644,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           last
         />
       </SettingsGroup>
-      <SettingsGroup title="授权管理" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="授权管理" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
           label="可信项目"
           value={`${trustedProjects.length} 个`}
@@ -1579,7 +1661,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const skillsPage = (
     <>
-      <SettingsGroup title="MCP 服务器" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="MCP 服务器" sc={sc} bar={ACCENT} collapsible defaultOpen>
         {mcpServers.length === 0 && (
           <SettingRow label="未配置 MCP 服务器" sc={sc} />
         )}
@@ -1607,7 +1689,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           last={mcpServers.length === 0}
         />
       </SettingsGroup>
-      <SettingsGroup title="已安装技能" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="已安装技能" sc={sc} bar={ACCENT} collapsible>
         {skills.length === 0 && <SettingRow label="暂无技能" sc={sc} last />}
         {skills.map((skill, idx) => (
           <SettingRow
@@ -1643,7 +1725,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           last
         />
       </SettingsGroup>
-      <SettingsGroup title="数据备份" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="数据备份" sc={sc} bar={ACCENT} collapsible>
         <SettingRow label="导出完整备份" value="JSON" icon="file-export" iconColor={ACCENT} sc={sc} onPress={exportBackup} />
         <SettingRow
           label="导入备份"
@@ -1658,7 +1740,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         />
         <SettingRow label="导出日志" value="JSON" icon="file-text" iconColor={ACCENT} sc={sc} onPress={exportLogs} last />
       </SettingsGroup>
-      <SettingsGroup title="诊断与维护" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="诊断与维护" sc={sc} bar={ACCENT} collapsible>
         <SettingRow label="一键自检" value="运行" icon="shield" iconColor={ACCENT} sc={sc} onPress={runDiagnostics} />
         <SettingRow label="崩溃日志" value="查看" icon="file-text" iconColor={ACCENT} sc={sc} onPress={handleShowCrashLogs} />
         <SettingRow label="导出崩溃日志" icon="file-export" iconColor={ACCENT} sc={sc} onPress={exportCrashLogs} />
@@ -1669,7 +1751,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const aboutPage = (
     <>
-      <SettingsGroup title="关于" sc={sc} bar={ACCENT}>
+      <SettingsGroup title="关于" sc={sc} bar={ACCENT} collapsible defaultOpen>
         <SettingRow label="版本" value={`v${appVersion}`} icon="info" iconColor={ACCENT} sc={sc} />
         <SettingRow
           label="检查更新"
@@ -1786,7 +1868,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               size={13}
               color={saveFeedback.type === 'success' ? colors.success : saveFeedback.type === 'error' ? colors.error : colors.primary}
             />
-            <Text style={styles.saveToastText} numberOfLines={2}>
+            <Text style={styles.saveToastText}>
               {saveFeedback.text}
             </Text>
           </Animated.View>
@@ -2116,12 +2198,11 @@ const createStyles = (colors: ThemeColors) =>
       shadowRadius: 6,
       elevation: 4,
       zIndex: 999,
-      maxWidth: '86%',
+      maxWidth: '92%',
     },
     saveToastText: {
       fontSize: 13,
       color: colors.textPrimary,
-      flexShrink: 1,
     },
     updateDotWrap: {
       paddingHorizontal: 2,
@@ -2177,7 +2258,42 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 14,
       paddingBottom: 6,
     },
-    segmentBlock: {
+    codexLocalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  codexLocalProgressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.border,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  codexLocalProgressFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: INTERACTIVE,
+  },
+  codexLocalBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: ACCENT,
+    marginBottom: spacing.sm,
+  },
+  codexLocalBtnText: {
+    fontSize: fontSize.sm,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  codexLocalHint: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    lineHeight: 16,
+  },
+  segmentBlock: {
       paddingHorizontal: 16,
       paddingVertical: 12,
       borderBottomWidth: StyleSheet.hairlineWidth,

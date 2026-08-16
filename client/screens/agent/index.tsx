@@ -203,6 +203,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
+  const [attachMenuVisible, setAttachMenuVisible] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
@@ -1370,7 +1371,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         {/* Header */}
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
-          <View style={styles.headerCenter}>
+          <View style={styles.headerCenter} pointerEvents="none">
             <Text style={styles.headerTitle}>Agent</Text>
           </View>
           <View style={styles.headerRight}>
@@ -1413,43 +1414,20 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Pressable>
         )}
 
-        {/* Project bar */}
-        <Pressable style={styles.projectBar} onPress={openProjectPicker}>
+        {/* 项目行（绑定项目用） */}
+        <Pressable style={styles.contextBar} onPress={openProjectPicker} hitSlop={4}>
           <FontAwesome6
             name="folder-open"
             size={12}
             color={currentProjectId ? colors.primary : colors.warning}
           />
-          <Text style={styles.projectBarText} numberOfLines={1}>
+          <Text style={styles.contextProjectText} numberOfLines={1}>
             {currentProjectId
               ? currentProjectName || '项目已绑定'
-              : '未绑定项目 — 点击选择，Agent 才能执行命令/工具'}
+              : '选择项目'}
           </Text>
-          <FontAwesome6 name="chevron-down" size={10} color={colors.textMuted} />
+          <FontAwesome6 name="chevron-down" size={9} color={colors.textMuted} />
         </Pressable>
-
-        {/* Agent 类型选择器（独立上下文/角色） */}
-        <View style={styles.agentSelector}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.agentSelectorContent}
-          >
-            {AGENT_OPTIONS.map((opt) => {
-              const active = agentType === opt.key;
-              return (
-                <Pressable
-                  key={opt.key}
-                  style={[styles.agentChip, active && styles.agentChipActive]}
-                  onPress={() => switchAgent(opt.key)}
-                >
-                  <FontAwesome6 name={opt.icon} size={11} color={active ? '#FFFFFF' : colors.textSecondary} />
-                  <Text style={[styles.agentChipText, active && styles.agentChipTextActive]}>{opt.label}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
 
         {/* 精简任务卡片（细进度条，点击展开面板） */}
         {currentTask && (
@@ -1659,7 +1637,34 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               ))}
             </ScrollView>
           )}
+          {/* Agent 选择条（10 个 Agent，收进输入框） */}
+          <View style={styles.agentStrip}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.agentStripContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {AGENT_OPTIONS.map((opt) => {
+                const active = agentType === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    style={[styles.agentStripChip, active && styles.agentStripChipActive]}
+                    onPress={() => switchAgent(opt.key)}
+                  >
+                    <FontAwesome6 name={opt.icon} size={9} color={active ? '#FFFFFF' : colors.textSecondary} />
+                    <Text style={[styles.agentStripText, active && styles.agentStripTextActive]}>{opt.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+
           <View style={styles.inputWrapper}>
+            <Pressable style={styles.attachButton} onPress={() => setAttachMenuVisible(true)} hitSlop={6}>
+              <FontAwesome6 name="plus" size={15} color={colors.textSecondary} />
+            </Pressable>
             <TextInput
               style={styles.textInput}
               placeholder="Describe your development task..."
@@ -1668,12 +1673,29 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               onChangeText={setInputText}
               multiline
               numberOfLines={1}
-              scrollEnabled
               maxLength={2000}
               editable={!isRecording}
               returnKeyType="default"
               blurOnSubmit={false}
             />
+            <Pressable
+              style={styles.modelButton}
+              onPress={switchModel}
+              disabled={isStreaming || isRecording}
+              hitSlop={4}
+            >
+              <FontAwesome6 name="microchip" size={11} color={colors.textSecondary} />
+              <Text style={styles.modelButtonText} numberOfLines={1}>
+                {modelLabel}
+              </Text>
+            </Pressable>
+            <Pressable onPress={toggleAutoSpeak} style={styles.footerIconBtn} hitSlop={6}>
+              <FontAwesome6
+                name={autoSpeak ? 'volume-high' : 'volume-xmark'}
+                size={13}
+                color={autoSpeak ? colors.primary : colors.textMuted}
+              />
+            </Pressable>
             <Pressable
               style={[styles.voiceButton, isRecording && styles.voiceButtonActive]}
               onPress={isRecording ? stopRecording : startRecording}
@@ -1698,38 +1720,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 weight={400}
               />
             </Pressable>
-          </View>
-          <View style={styles.inputFooter}>
-            <View style={styles.inputFooterLeft}>
-              <Pressable
-                style={styles.modelButton}
-                onPress={switchModel}
-                disabled={isStreaming || isRecording}
-                hitSlop={4}
-              >
-                <FontAwesome6 name="microchip" size={11} color={colors.textSecondary} />
-                <Text style={styles.modelButtonText} numberOfLines={1}>
-                  {modelLabel}
-                </Text>
-              </Pressable>
-              <Pressable onPress={pickImage} style={styles.footerIconBtn} hitSlop={6}>
-                <FontAwesome6 name="image" size={13} color={colors.textSecondary} />
-              </Pressable>
-              <Pressable onPress={pickFile} style={styles.footerIconBtn} hitSlop={6}>
-                <FontAwesome6 name="paperclip" size={13} color={colors.textSecondary} />
-              </Pressable>
-              <Pressable onPress={toggleAutoSpeak} style={styles.footerIconBtn} hitSlop={6}>
-                <FontAwesome6
-                  name={autoSpeak ? 'volume-high' : 'volume-xmark'}
-                  size={13}
-                  color={autoSpeak ? colors.primary : colors.textMuted}
-                />
-              </Pressable>
-            </View>
             {isRecording && (
-              <View style={styles.recordingIndicator}>
+              <View style={styles.recordingOverlay} pointerEvents="none">
                 <View style={styles.recordingDot} />
-                <Text style={styles.recordingText}>Recording...</Text>
+                <Text style={styles.recordingText}>录音中...</Text>
               </View>
             )}
           </View>
@@ -1771,6 +1765,49 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </View>
           </Modal>
         )}
+
+        {/* 附件选择菜单（+ 号） */}
+        <Modal
+          visible={attachMenuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAttachMenuVisible(false)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setAttachMenuVisible(false)}>
+            <Pressable
+              style={[styles.modalContainer, styles.messageMenuContainer, { paddingBottom: spacing.lg }]}
+              onPress={() => {}}
+            >
+              <Text style={[styles.modalTitle, styles.messageMenuTitle]}>添加附件</Text>
+              <Pressable
+                style={styles.messageMenuItem}
+                onPress={() => {
+                  setAttachMenuVisible(false);
+                  pickImage();
+                }}
+              >
+                <FontAwesome6 name="image" size={13} color={colors.primary} />
+                <Text style={styles.messageMenuItemText}>从相册选择图片</Text>
+              </Pressable>
+              <Pressable
+                style={styles.messageMenuItem}
+                onPress={() => {
+                  setAttachMenuVisible(false);
+                  pickFile();
+                }}
+              >
+                <FontAwesome6 name="file" size={13} color={colors.primary} />
+                <Text style={styles.messageMenuItemText}>选择文件</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.messageMenuItem, styles.messageMenuItemCancel]}
+                onPress={() => setAttachMenuVisible(false)}
+              >
+                <Text style={styles.messageMenuItemCancelText}>取消</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {/* Message action menu */}
         <Modal
@@ -2176,11 +2213,12 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
   },
   headerCenter: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerRight: {
     flexDirection: 'row',
@@ -2278,24 +2316,55 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.warning,
     fontWeight: '600',
   },
-  projectBar: {
+  contextBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 6,
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
     backgroundColor: 'rgba(85,85,85,0.06)',
     borderWidth: 1,
     borderColor: colors.primaryBorder,
     borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
   },
-  projectBarText: {
+  contextProjectText: {
     flex: 1,
     fontSize: fontSize.xs,
     color: colors.textSecondary,
     fontWeight: '500',
+  },
+  agentStrip: {
+    flexGrow: 0,
+    marginBottom: 4,
+  },
+  agentStripContent: {
+    gap: 4,
+    paddingRight: 8,
+  },
+  agentStripChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  agentStripChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  agentStripText: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  agentStripTextActive: {
+    color: '#FFFFFF',
   },
   messageList: {
     flex: 1,
@@ -2617,8 +2686,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textPrimary,
     fontSize: 17,
     paddingVertical: 12,
-    maxHeight: 160,
-    minHeight: 68,
+    maxHeight: 168,
+    minHeight: 76,
+    textAlignVertical: 'top',
   },
   sendButton: {
     width: 34,
@@ -2661,25 +2731,29 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     height: 28,
     borderRadius: radius.md,
     backgroundColor: 'rgba(255,255,255,0.06)',
-    paddingHorizontal: spacing.sm,
-    maxWidth: 110,
+    paddingHorizontal: 6,
+    maxWidth: 76,
   },
   modelButtonText: {
     fontSize: fontSize.xs,
     color: colors.textSecondary,
     fontWeight: '600',
   },
-  inputFooterLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
   footerIconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 3,
+  },
+  attachButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 3,
   },
   attachChips: {
     marginBottom: spacing.sm,
@@ -2955,13 +3029,6 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.primary,
     fontWeight: '700',
   },
-  inputFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.xs,
-  },
   autoSpeakToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2974,10 +3041,19 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   autoSpeakTextActive: {
     color: colors.primary,
   },
-  recordingIndicator: {
+  recordingOverlay: {
+    position: 'absolute',
+    top: -30,
+    right: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.error,
   },
   recordingDot: {
     width: 6,

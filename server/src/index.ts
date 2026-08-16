@@ -20,6 +20,7 @@ import diagnosticsRouter from "./routes/diagnostics.js";
 import tasksRouter from "./routes/tasks.js";
 import brainsRouter from "./routes/brains.js";
 import bridgeRouter from "./routes/bridge.js";
+import codexLocalRouter from "./routes/codexLocal.js";
 import { seedImpeccableSkills } from "./impeccable.js";
 
 const app = express();
@@ -55,6 +56,25 @@ app.use('/api/v1/diagnostics', diagnosticsRouter);
 app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/brains', brainsRouter);
 app.use('/api/v1/bridge', bridgeRouter);
+app.use('/api/v1/codex-local', codexLocalRouter);
+
+// 全局错误兜底：路由抛错时返回 JSON，而不是让内嵌 Node 进程崩溃
+// （Express 4 不会捕获 async 路由里的异常，未捕获会导致整个后端断连）
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error('[route-error]', message);
+  if (!res.headersSent) {
+    res.status(500).json({ error: message });
+  }
+});
+
+// 进程级兜底：记录日志并保持服务存活，避免单次异常导致后端整体掉线
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}/`);
