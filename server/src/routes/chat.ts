@@ -2,13 +2,12 @@ import express from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 import { getDb, queryAll, queryOne, runSql, saveDb } from '../db.js';
 import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } from '../permissions.js';
 import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
+import { runProcess, isAndroidRuntime } from '../nativeProc.js';
 import { runHarnessTask, harnessStatus } from '../harness.js';
 import { runCodexTask, runBrainTask, BRAIN_IDS, codexStatus, checkCodexBridge } from '../codex.js';
 import {
@@ -47,7 +46,6 @@ import {
 } from '../agentInstance.js';
 
 const router = express.Router();
-const execAsync = promisify(exec);
 
 // 任务取消注册表：requestId -> 是否请求取消（agent 循环在步骤间检查）
 const abortRegistry = new Map<string, boolean>();
@@ -460,25 +458,21 @@ async function execInProject(
   command: string,
   timeout = 30000
 ): Promise<{ stdout: string; stderr: string; exitCode: number; duration: number }> {
+  // Android（nodejs-mobile）不支持 child_process，统一走原生执行器；本地/CI 回退 child_process
   const startTime = Date.now();
-  let stdout = '';
-  let stderr = '';
-  let exitCode = 0;
-  try {
-    const result = await execAsync(command, {
-      cwd,
-      timeout,
-      maxBuffer: 1024 * 1024,
-      env: { ...process.env, PATH: process.env.PATH },
-    });
-    stdout = result.stdout;
-    stderr = result.stderr;
-  } catch (execError: any) {
-    stdout = execError.stdout || '';
-    stderr = execError.stderr || execError.message;
-    exitCode = execError.code || 1;
-  }
-  return { stdout, stderr, exitCode, duration: Date.now() - startTime };
+  const shell = isAndroidRuntime() ? '/system/bin/sh' : '/bin/sh';
+  const r = await runProcess({
+    cmd: shell,
+    args: ['-c', command],
+    cwd,
+    timeoutMs: timeout,
+  });
+  return {
+    stdout: r.stdout,
+    stderr: r.error && !r.stderr ? `[启动失败] ${r.error}` : r.stderr,
+    exitCode: r.timedOut ? -1 : r.exitCode,
+    duration: Date.now() - startTime,
+  };
 }
 
 async function inferRepo(cwd: string): Promise<string | null> {

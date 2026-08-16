@@ -46,6 +46,8 @@ object NodeBridge {
             started = true
             val appContext = context.applicationContext
             this.appContext = appContext
+            // 原生进程执行器：绕开 nodejs-mobile 不支持的 child_process（Android 权限限制）
+            NativeProcRunner.start(appContext)
             Executors.newSingleThreadExecutor().submit {
                 var attempt = 0
                 while (attempt < 20) {

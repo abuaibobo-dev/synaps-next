@@ -1,12 +1,9 @@
 import { Router, type Request, type Response } from 'express';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import * as crypto from 'crypto';
 import { getDb, saveDb, queryAll, queryOne, runSql } from '../db.js';
-
-const execAsync = promisify(exec);
+import { runProcess, isAndroidRuntime } from '../nativeProc.js';
 
 const router = Router();
 
@@ -52,18 +49,21 @@ router.post('/exec', async (req: Request, res: Response) => {
     let exitCode = 0;
 
     try {
-      const result = await execAsync(command, {
+      // Android 上 child_process 不可用，走原生执行器（Kotlin ProcessBuilder）
+      const shell = isAndroidRuntime() ? '/system/bin/sh' : '/bin/sh';
+      const result = await runProcess({
+        cmd: shell,
+        args: ['-c', command],
         cwd: workingDir,
-        timeout: 30000, // 30 second timeout
-        maxBuffer: 1024 * 1024, // 1MB buffer
-        env: { ...process.env, PATH: process.env.PATH },
+        timeoutMs: 30000, // 30 秒超时
       });
       output = result.stdout;
-      error = result.stderr;
+      error = result.stderr || (result.error ? `[启动失败] ${result.error}` : '');
+      exitCode = result.timedOut ? -1 : result.exitCode;
     } catch (execError: any) {
-      output = execError.stdout || '';
-      error = execError.stderr || execError.message;
-      exitCode = execError.code || 1;
+      output = '';
+      error = execError?.message || String(execError);
+      exitCode = 1;
     }
 
     const duration = Date.now() - startTime;

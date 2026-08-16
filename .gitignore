@@ -104,3 +104,7 @@ expo-env.d.ts
 node-compile-cache/
 .codegraph/
 data/synaps.db
+
+# runtime data (db, proc runner, engine binary)
+data/
+server/data/

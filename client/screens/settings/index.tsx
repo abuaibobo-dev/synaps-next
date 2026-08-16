@@ -1073,23 +1073,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     if (brains.codex.reachable) return `✅ 已连接 ${brains.codex.version || ''}`.trim();
     return '⚠️ 未连接';
   }, [brains]);
-  const copyBridgeCommand = useCallback(async () => {
-    let cmd = `curl -o ~/codex-bridge.js ${API_BASE}/api/v1/bridge/script && node ~/codex-bridge.js &`;
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 5000);
-      const res = await fetch(`${API_BASE}/api/v1/bridge/command`, { signal: ctrl.signal });
-      clearTimeout(t);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && typeof data.command === 'string') cmd = data.command;
-      }
-    } catch {
-      // 后端未就绪时使用本地拼接的默认命令
-    }
-    await Clipboard.setStringAsync(cmd);
-    Alert.alert('已复制', '在 Termux 里粘贴运行这一条即可。\n（需先安装 Node：pkg install nodejs -y）');
-  }, []);
 
   const mainPage = (
     <>
@@ -1356,14 +1339,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           right={<AnimatedToggle value={settings.codex_enabled === 'true'} onValueChange={() => handleToggle('codex_enabled')} sc={sc} trackOn={INTERACTIVE} />}
         />
         <SettingRow
-          label="复制一键安装命令"
-          icon="download"
-          iconColor={ACCENT}
-          sc={sc}
-          onPress={copyBridgeCommand}
-          right={<Text style={[styles.fieldValue, { color: sc.value }]}>复制</Text>}
-        />
-        <SettingRow
           label="内置引擎（无需 Termux）"
           icon="microchip"
           iconColor={ACCENT}
@@ -1412,30 +1387,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Text>
           </View>
         )}
-        <FieldRow styles={styles} label="桥接服务地址" sc={sc}>
-          <UnderlineInput
-            value={settings.codex_bridge_url}
-            placeholder="http://127.0.0.1:19290"
-            sc={sc}
-            focusColor={INTERACTIVE}
-            keyboardType="url"
-            autoCapitalize="none"
-            onChangeText={trackDraft('codex_bridge_url')}
-            onCommit={(v) => saveSetting('codex_bridge_url', v)}
-          />
-        </FieldRow>
-        <FieldRow styles={styles} label="访问令牌（可选）" sc={sc}>
-          <UnderlineInput
-            value={settings.codex_token}
-            placeholder="Termux 桥接脚本里设置的 x-codex-token"
-            secure
-            sc={sc}
-            focusColor={INTERACTIVE}
-            autoCapitalize="none"
-            onChangeText={trackDraft('codex_token')}
-            onCommit={(v) => saveSetting('codex_token', v)}
-          />
-        </FieldRow>
         <FieldRow styles={styles} label="API Key（可选）" sc={sc}>
           <UnderlineInput
             value={settings.codex_api_key}
@@ -1482,15 +1433,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             onCommit={(v) => saveSetting('codex_wire_api', v)}
           />
         </FieldRow>
-        <SettingRow
-          label="Termux 安装说明"
-          icon="info"
-          iconColor={ACCENT}
-          sc={sc}
-          onPress={() => Linking.openURL('https://github.com/abuaibobo-dev/synaps-next/blob/master/docs/CODEX_SETUP.md').catch(() => {})}
-          right={<Text style={[styles.fieldValue, { color: sc.value }]}>查看</Text>}
-          last
-        />
       </SettingsGroup>
     </>
   );

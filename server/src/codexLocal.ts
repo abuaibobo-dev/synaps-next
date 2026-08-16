@@ -3,7 +3,7 @@ import path from 'path';
 import https from 'https';
 import type { IncomingMessage } from 'http';
 import zlib from 'zlib';
-import { spawn, execFile } from 'child_process';
+import { runProcess } from './nativeProc.js';
 
 /**
  * 内置 Codex 引擎（无需 Termux）
@@ -30,6 +30,7 @@ export interface CodexLocalState {
   version: string | null;
   error: string | null;
   binPath: string;
+  arch: string;
 }
 
 const state: CodexLocalState = {
@@ -39,6 +40,7 @@ const state: CodexLocalState = {
   version: null,
   error: null,
   binPath: BIN_PATH,
+  arch: process.arch,
 };
 
 export function codexLocalInstalled(): boolean {
@@ -50,14 +52,28 @@ export function codexLocalInstalled(): boolean {
   }
 }
 
+export interface CodexLocalProbe {
+  version: string | null;
+  error: string | null;
+}
+
+/** 探测内置引擎：执行 --version，失败时返回具体原因（错误码/退出码/stderr） */
+export async function probeCodexLocal(): Promise<CodexLocalProbe> {
+  if (!codexLocalInstalled()) {
+    return { version: null, error: `二进制不可执行（${BIN_PATH}），请重新下载` };
+  }
+  const r = await runProcess({ cmd: BIN_PATH, args: ['--version'], timeoutMs: 30000 });
+  if (r.error) return { version: null, error: `执行失败：${r.error}` };
+  if (r.timedOut) return { version: null, error: '执行超时（30s）' };
+  const version = String(r.stdout || '').trim().split('\n')[0] || null;
+  if (!version) {
+    return { version: null, error: `执行失败（exit ${r.exitCode}）：${String(r.stderr || '').trim().slice(0, 300)}` };
+  }
+  return { version, error: null };
+}
+
 export function codexLocalVersion(): Promise<string | null> {
-  return new Promise((resolve) => {
-    if (!codexLocalInstalled()) return resolve(null);
-    execFile(BIN_PATH, ['--version'], { timeout: 15000 }, (err, stdout) => {
-      if (err) return resolve(null);
-      resolve(String(stdout || '').trim().split('\n')[0] || null);
-    });
-  });
+  return probeCodexLocal().then((r) => r.version);
 }
 
 export async function refreshCodexLocalVersion(): Promise<string | null> {
@@ -81,10 +97,11 @@ export async function installCodexLocal(): Promise<void> {
     await downloadAndGunzip(ENGINE_URL, tmp);
     fs.chmodSync(tmp, 0o755);
     fs.renameSync(tmp, BIN_PATH);
-    state.version = await codexLocalVersion();
-    if (!state.version) {
-      state.error = '引擎下载完成但无法执行，可能架构不兼容';
-      fs.rmSync(BIN_PATH, { force: true });
+    const probe = await probeCodexLocal();
+    state.version = probe.version;
+    if (!probe.version) {
+      // 保留二进制便于重试与诊断，错误信息带架构与具体原因
+      state.error = `引擎下载完成但无法执行（设备 ${process.arch}）：${probe.error || '版本检测失败'}`;
     }
   } catch (e) {
     state.error = String((e as Error).message || e);
@@ -190,99 +207,72 @@ export interface CodexLocalRunOptions {
   timeoutMs?: number;
 }
 
-export function runCodexLocal(opts: CodexLocalRunOptions): Promise<CodexLocalRunResult> {
-  return new Promise((resolve) => {
-    if (!codexLocalInstalled()) {
-      return resolve({
-        exitCode: -1,
-        timedOut: false,
-        output: '[内置 Codex 引擎未安装] 请到 设置 → Codex CLI → 下载内置引擎（无需 Termux）',
-        lastMessage: '',
-        failed: true,
-      });
-    }
-    const task = String(opts.task || '').trim();
-    const workDir = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : DATA_DIR;
-    const model = String(opts.model || 'deepseek-v4-flash').trim();
-    const apiKey = String(opts.apiKey || process.env.DEEPSEEK_API_KEY || '').trim();
-    const baseUrl = String(opts.baseUrl || 'https://api.deepseek.com').trim();
-    const wireApi = String(opts.wireApi || 'responses').trim();
-    const timeoutMs = Math.max(10000, Number(opts.timeoutMs) || 600000);
-
-    const q = (s: string) => JSON.stringify(String(s));
-    const args = [
-      'exec',
-      '--json',
-      '--skip-git-repo-check',
-      '--sandbox', 'danger-full-access',
-      '-C', workDir,
-      '-c', `model_provider=${q('deepseek')}`,
-      '-c', `model=${q(model)}`,
-      '-c', `model_providers.deepseek.base_url=${q(baseUrl)}`,
-      '-c', `model_providers.deepseek.env_key=${q('DEEPSEEK_API_KEY')}`,
-      '-c', `model_providers.deepseek.wire_api=${q(wireApi)}`,
-      task,
-    ];
-
-    const child = spawn(BIN_PATH, args, {
-      cwd: workDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        HOME: DATA_DIR,
-        DEEPSEEK_API_KEY: apiKey,
-      },
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const settle = (result: CodexLocalRunResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
+export async function runCodexLocal(opts: CodexLocalRunOptions): Promise<CodexLocalRunResult> {
+  if (!codexLocalInstalled()) {
+    return {
+      exitCode: -1,
+      timedOut: false,
+      output: '[内置 Codex 引擎未安装] 请到 设置 → Codex CLI → 下载内置引擎（无需 Termux）',
+      lastMessage: '',
+      failed: true,
     };
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      settle({
-        exitCode: -1,
-        timedOut: true,
-        output: `[超时] codex 执行超过 ${Math.round(timeoutMs / 1000)}s 已被终止`,
-        lastMessage: '',
-        failed: true,
-      });
-    }, timeoutMs);
+  }
+  const task = String(opts.task || '').trim();
+  const workDir = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : DATA_DIR;
+  const model = String(opts.model || 'deepseek-v4-flash').trim();
+  const apiKey = String(opts.apiKey || process.env.DEEPSEEK_API_KEY || '').trim();
+  const baseUrl = String(opts.baseUrl || 'https://api.deepseek.com').trim();
+  const wireApi = String(opts.wireApi || 'responses').trim();
+  const timeoutMs = Math.max(10000, Number(opts.timeoutMs) || 600000);
 
-    child.stdout.on('data', (d: Buffer) => { stdout += d; });
-    child.stderr.on('data', (d: Buffer) => { stderr += d; });
-    child.on('error', (err) => {
-      settle({
-        exitCode: -1,
-        timedOut: false,
-        output: `[无法启动内置 Codex] ${err.message}`,
-        lastMessage: '',
-        failed: true,
-      });
-    });
-    child.on('close', (code) => {
-      const parsed = parseCodexOutput(stdout);
-      const errTail = String(stderr || '')
-        .split('\n')
-        .filter((l) => !l.includes('Reading additional input from stdin'))
-        .join('\n')
-        .trim()
-        .slice(-2000);
-      let output = parsed.text || errTail;
-      if (!output) output = '(无输出)';
-      if (errTail && !parsed.text.includes(errTail)) output += `\n[stderr] ${errTail}`;
-      settle({
-        exitCode: code ?? -1,
-        timedOut: false,
-        output,
-        lastMessage: parsed.lastMessage,
-        failed: parsed.failed || (code ?? 0) !== 0,
-      });
-    });
+  const q = (s: string) => JSON.stringify(String(s));
+  const args = [
+    'exec',
+    '--json',
+    '--skip-git-repo-check',
+    '--sandbox', 'danger-full-access',
+    '-C', workDir,
+    '-c', `model_provider=${q('deepseek')}`,
+    '-c', `model=${q(model)}`,
+    '-c', `model_providers.deepseek.base_url=${q(baseUrl)}`,
+    '-c', `model_providers.deepseek.env_key=${q('DEEPSEEK_API_KEY')}`,
+    '-c', `model_providers.deepseek.wire_api=${q(wireApi)}`,
+    task,
+  ];
+
+  const r = await runProcess({
+    cmd: BIN_PATH,
+    args,
+    cwd: workDir,
+    env: { HOME: DATA_DIR, DEEPSEEK_API_KEY: apiKey },
+    timeoutMs,
   });
+
+  if (r.error && !r.stdout && !r.stderr) {
+    return {
+      exitCode: -1,
+      timedOut: false,
+      output: `[无法启动内置 Codex] ${r.error}`,
+      lastMessage: '',
+      failed: true,
+    };
+  }
+  const parsed = parseCodexOutput(r.stdout);
+  const errTail = String(r.stderr || '')
+    .split('\n')
+    .filter((l) => !l.includes('Reading additional input from stdin'))
+    .join('\n')
+    .trim()
+    .slice(-2000);
+  let output = parsed.text || errTail;
+  if (!output) output = '(无输出)';
+  if (r.timedOut) output = `[超时] codex 执行超过 ${Math.round(timeoutMs / 1000)}s 已被终止` + (output ? `\n${output}` : '');
+  if (errTail && !parsed.text.includes(errTail)) output += `\n[stderr] ${errTail}`;
+  return {
+    exitCode: r.timedOut ? -1 : r.exitCode,
+    timedOut: r.timedOut,
+    output,
+    lastMessage: parsed.lastMessage,
+    failed: parsed.failed || r.timedOut || (!r.error && r.exitCode !== 0),
+  };
 }

@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { runProcess } from './nativeProc.js';
 import path from 'path';
 import { queryOne } from './db.js';
 
@@ -83,37 +83,23 @@ export async function runHarnessTask(task: string, projectPath?: string): Promis
     DSH_CWD: cfg.workDir,
   };
 
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(nodeBin, args, {
-      cwd: cfg.workDir,
-      env,
-      timeout: cfg.timeoutMs,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`Harness 执行超时（${cfg.timeoutMs / 1000}s）`));
-    }, cfg.timeoutMs);
-
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(new Error(`Harness 启动失败：${err.message}`));
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        resolve(stdout.trim() || '(empty response)');
-      } else {
-        const tail = (stderr || stdout).trim().split('\n').slice(-8).join('\n');
-        reject(new Error(`Harness 执行失败（exit ${code}）\n${tail}`));
-      }
-    });
+  const r = await runProcess({
+    cmd: nodeBin,
+    args,
+    cwd: cfg.workDir,
+    env: env as Record<string, string>,
+    timeoutMs: cfg.timeoutMs,
   });
+
+  if (r.error && !r.stdout && !r.stderr) {
+    throw new Error(`Harness 启动失败：${r.error}`);
+  }
+  if (r.timedOut) {
+    throw new Error(`Harness 执行超时（${cfg.timeoutMs / 1000}s）`);
+  }
+  if (r.exitCode === 0) {
+    return r.stdout.trim() || '(empty response)';
+  }
+  const tail = (r.stderr || r.stdout).trim().split('\n').slice(-8).join('\n');
+  throw new Error(`Harness 执行失败（exit ${r.exitCode}）\n${tail}`);
 }
