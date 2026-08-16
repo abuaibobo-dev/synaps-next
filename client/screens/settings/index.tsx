@@ -453,17 +453,24 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const [brains, setBrains] = useState<BrainStatus | null>(null);
   const [brainsRefreshing, setBrainsRefreshing] = useState(false);
+  const [brainsRefreshedAt, setBrainsRefreshedAt] = useState<number | null>(null);
   const fetchBrains = useCallback(async () => {
+    if (brainsRefreshing) return;
     setBrainsRefreshing(true);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/brains/status`);
+      const res = await fetch(`${API_BASE}/api/v1/brains/status`, { signal: ctrl.signal });
       if (res.ok) setBrains((await res.json()) as BrainStatus);
+      setBrainsRefreshedAt(Date.now());
     } catch {
-      // 后端未运行时保持上次状态
+      // 后端或桥接不可达：保持上次状态，刷新时间照常更新
+      setBrainsRefreshedAt(Date.now());
     } finally {
+      clearTimeout(t);
       setBrainsRefreshing(false);
     }
-  }, []);
+  }, [brainsRefreshing]);
 
   useEffect(() => {
     fetchBrains();
@@ -1262,7 +1269,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT}>
         <SettingRow
           label="Codex CLI 桥接"
-          value={codexBrainText}
+          value={brainsRefreshing ? '刷新中...' : brainsRefreshedAt ? `已刷新 ${new Date(brainsRefreshedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : codexBrainText}
           icon="terminal"
           iconColor={ACCENT}
           sc={sc}
