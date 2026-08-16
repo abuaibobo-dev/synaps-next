@@ -401,6 +401,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const [trustProjectChecked, setTrustProjectChecked] = useState(false);
+  const [executorLabel, setExecutorLabel] = useState<string | null>(null);
   const [deviceReady, setDeviceReady] = useState<boolean | null>(null);
   const [currentTask, setCurrentTask] = useState<TaskRecord | null>(null);
   const [taskPanelVisible, setTaskPanelVisible] = useState(false);
@@ -738,6 +740,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     typewriterRef.current = '';
     setThinking('');
     setCurrentToolCalls([]);
+    setExecutorLabel(null);
 
     /**
      * Server file: server/src/routes/chat.ts
@@ -761,6 +764,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       }
     );
     esRef.current = es;
+
+    // 收尾守卫：确保用户消息状态只被结算一次（[DONE] / 看门狗 / 连接断开 三选一）
+    let settled = false;
+    const settleUser = (status: Message['status']) => {
+      if (settled) return;
+      settled = true;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === item.userMsgId ? { ...m, status } : m))
+      );
+    };
 
     // 看门狗：长时间无数据（工具执行卡住/网络静默）时自动结束，避免无限等待
     let lastEventAt = Date.now();
@@ -788,6 +801,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         };
         setMessages((prev) => [...prev, timeoutMsg]);
         patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
+        settleUser('sent');
         setStreamingContent('');
         setRunningTool(null);
         setIsStreaming(false);
@@ -820,9 +834,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       clearInterval(watchdog);
       clearInterval(typeTimer);
       setDisplayedText(typewriterRef.current);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === item.userMsgId ? { ...m, status: userStatus } : m))
-      );
+      settleUser(userStatus);
       setStreamingContent('');
       setRunningTool(null);
       setIsStreaming(false);
@@ -837,19 +849,23 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     es.addEventListener('message', (event) => {
       lastEventAt = Date.now();
       if (event.data === '[DONE]') {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: accumulated,
-          timestamp: Date.now(),
-          toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
+        // 兜底：累计内容为空时用打字机缓存，避免「有回复但气泡空白」
+        const finalContent = (accumulated || typewriterRef.current || '').trim();
+        if (finalContent) {
+          const assistantMessage: Message = {
+            id: `assist-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+            role: 'assistant',
+            content: finalContent,
+            timestamp: Date.now(),
+            toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
         patchTask((t) => ({ ...t, status: t.status === 'running' ? 'done' : t.status, endedAt: Date.now() }));
-        setDisplayedText(accumulated);
+        setDisplayedText(accumulated || typewriterRef.current);
         finish('sent');
         if (autoSpeakRef.current) {
-          const clean = accumulated.replace(/[#>*`\[\]]/g, '').slice(0, 500);
+          const clean = (accumulated || typewriterRef.current).replace(/[#>*`\[\]]/g, '').slice(0, 500);
           if (clean.trim()) speakMessageRef.current?.(clean);
         }
         return;
@@ -932,6 +948,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           // 无工具调用：清掉思考草稿，避免与最终回答重复
           setThinking('');
         }
+        if (parsed.executor) {
+          setExecutorLabel(typeof parsed.executor.label === 'string' ? parsed.executor.label : null);
+        }
         if (parsed.permission_request) {
           setPermissionRequest(parsed.permission_request as PermissionRequest);
         }
@@ -946,6 +965,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     });
 
     es.addEventListener('error', () => {
+      if (settled) return;
       try {
         fetch(`${API_BASE}/api/v1/chat/cancel`, {
           method: 'POST',
@@ -977,6 +997,24 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
       finish(accumulated ? 'sent' : 'error');
     });
+
+    // 连接意外关闭（未收到 [DONE]）：结算消息状态，避免一直显示「发送中」
+    es.addEventListener('close', () => {
+      if (settled) return;
+      setDisplayedText(typewriterRef.current);
+      if (accumulated) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: accumulated + '\n\n[连接已断开，未收到完整回复]',
+          timestamp: Date.now(),
+          status: 'error',
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+      }
+      patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
+      finish('sent');
+    });
   }, [messages, currentProjectId, agentType, agentInstanceIds, dequeueNext]);
 
   runQueueItemRef.current = runQueueItem;
@@ -985,7 +1023,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const startTask = useCallback((prompt: string, msgAttachments?: Message['attachments']) => {
     if (!prompt.trim()) return;
 
-    const userMsgId = Date.now().toString();
+    const userMsgId = `user-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const userMessage: Message = {
       id: userMsgId,
       role: 'user',
@@ -1413,12 +1451,18 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     async (approved: boolean) => {
       if (!permissionRequest) return;
       const request = permissionRequest;
+      const trustThisProject = trustProjectChecked;
       setPermissionRequest(null);
+      setTrustProjectChecked(false);
       try {
         const res = await fetch(`${API_BASE}/api/v1/chat/approval`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requestId: request.id, approved }),
+          body: JSON.stringify({
+            requestId: request.id,
+            approved,
+            trustProject: approved && trustThisProject && currentProjectId ? true : false,
+          }),
         });
         if (!res.ok) {
           Toast.show({ type: 'error', text1: '审批已过期，请重试' });
@@ -1427,7 +1471,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         Toast.show({ type: 'error', text1: '审批提交失败' });
       }
     },
-    [permissionRequest]
+    [permissionRequest, trustProjectChecked, currentProjectId]
   );
 
   const renderMessage = useCallback(({ item }: { item: Message }) => {
@@ -1697,6 +1741,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                   </Text>
                 </View>
               </View>
+              {executorLabel ? (
+                <Text style={styles.taskCardExecutor} numberOfLines={1}>
+                  ⚙ {executorLabel}
+                </Text>
+              ) : null}
               <AnimatedProgressBar
                 progress={
                   currentTask.steps.length > 0
@@ -1710,31 +1759,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </PressableScale>
           </Animated.View>
         )}
-
-        {/* 思考过程（折叠面板） */}
-        {thinking ? (
-          <View style={styles.thinkingPanel}>
-            <Pressable style={styles.thinkingHeader} onPress={() => setThinkingOpen(!thinkingOpen)}>
-              <Animated.View style={thinkingPulseStyle}>
-                <FontAwesome6 name="brain" size={11} color={colors.primary} />
-              </Animated.View>
-              <Text style={styles.thinkingHeaderText}>🧠 思考过程</Text>
-              <Text style={styles.thinkingHeaderMeta} numberOfLines={1}>
-                {thinkingOpen ? '' : thinking.replace(/\n/g, ' ').slice(0, 40) + '…'}
-              </Text>
-              <FontAwesome6
-                name={thinkingOpen ? 'chevron-up' : 'chevron-down'}
-                size={10}
-                color={colors.textMuted}
-              />
-            </Pressable>
-            {thinkingOpen && (
-              <Text style={styles.thinkingBody} numberOfLines={14} selectable>
-                {thinking}
-              </Text>
-            )}
-          </View>
-        ) : null}
 
         {/* 消息队列（等待中，一行显示，点击管理） */}
         {queue.length > 0 && (
@@ -1790,7 +1814,31 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           }
           ListFooterComponent={
             isStreaming ? (
-              streamingContent ? (
+              <>
+              {thinking ? (
+                <View style={styles.thinkingPanel}>
+                  <Pressable style={styles.thinkingHeader} onPress={() => setThinkingOpen(!thinkingOpen)}>
+                    <Animated.View style={thinkingPulseStyle}>
+                      <FontAwesome6 name="brain" size={11} color={colors.primary} />
+                    </Animated.View>
+                    <Text style={styles.thinkingHeaderText}>🧠 思考过程</Text>
+                    <Text style={styles.thinkingHeaderMeta} numberOfLines={1}>
+                      {thinkingOpen ? '' : thinking.replace(/\n/g, ' ').slice(0, 40) + '…'}
+                    </Text>
+                    <FontAwesome6
+                      name={thinkingOpen ? 'chevron-up' : 'chevron-down'}
+                      size={10}
+                      color={colors.textMuted}
+                    />
+                  </Pressable>
+                  {thinkingOpen && (
+                    <Text style={styles.thinkingBody} numberOfLines={14} selectable>
+                      {thinking}
+                    </Text>
+                  )}
+                </View>
+              ) : null}
+              {streamingContent ? (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.streamBubble]}>
                     <Text style={styles.messageContent}>
@@ -1834,7 +1882,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                     )}
                   </View>
                 </View>
-              )
+              )}
+              </>
             ) : null
           }
         />
@@ -1997,6 +2046,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               task={currentTask}
               colors={colors}
               isDark={isDark}
+              executorLabel={executorLabel}
               onCancel={cancelTask}
               onRerun={rerunTask}
               onRollback={rollbackTask}
@@ -2016,6 +2066,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                   task={currentTask}
                   colors={colors}
                   isDark={isDark}
+                  executorLabel={executorLabel}
                   onCancel={cancelTask}
                   onRerun={rerunTask}
                   onRollback={rollbackTask}
@@ -2317,6 +2368,27 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               <Text style={styles.permissionImpact}>
                 {permissionRequest?.impact}
               </Text>
+              {currentProjectId ? (
+                <Pressable
+                  style={styles.permissionTrustRow}
+                  onPress={() => setTrustProjectChecked((v) => !v)}
+                  hitSlop={6}
+                >
+                  <View
+                    style={[
+                      styles.permissionCheckbox,
+                      trustProjectChecked && styles.permissionCheckboxChecked,
+                    ]}
+                  >
+                    {trustProjectChecked && (
+                      <FontAwesome6 name="check" size={10} color="#FFFFFF" />
+                    )}
+                  </View>
+                  <Text style={styles.permissionTrustText}>
+                    信任该项目，之后的操作不再确认
+                  </Text>
+                </Pressable>
+              ) : null}
               <View style={styles.permissionActions}>
                 <Pressable
                   style={[styles.permissionBtn, styles.permissionBtnDeny]}
@@ -2435,6 +2507,12 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.xs,
     fontWeight: '600',
     color: colors.textPrimary,
+  },
+  taskCardExecutor: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 2,
+    marginBottom: 4,
   },
   taskCardStatusPill: {
     flexDirection: 'row',
@@ -3575,6 +3653,32 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textSecondary,
     lineHeight: 18,
     marginBottom: spacing.lg,
+  },
+  permissionTrustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: spacing.lg,
+    paddingVertical: 2,
+  },
+  permissionCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.bgCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permissionCheckboxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  permissionTrustText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
   },
   permissionActions: {
     flexDirection: 'row',

@@ -116,7 +116,7 @@ export async function checkCodexBridge(): Promise<string> {
   );
 }
 
-export const BRAIN_IDS = ['aider', 'sage', 'lydia', 'aix', 'miii', 'myai', 'codex'];
+export const BRAIN_IDS = ['codex'];
 
 export async function runBrainTask(brainId: string, task: string, projectPath?: string): Promise<string> {
   if (!BRAIN_IDS.includes(brainId)) {
@@ -139,7 +139,7 @@ export async function runBrainTask(brainId: string, task: string, projectPath?: 
       wireApi: cfg.wireApi,
       timeoutMs: cfg.timeoutMs,
     });
-    return `[codex exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
+    return `[Codex · 内置引擎 exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
   }
 
   const r = await bridgeFetch(
@@ -181,7 +181,7 @@ export async function runCodexTask(task: string, projectPath?: string): Promise<
       wireApi: cfg.wireApi,
       timeoutMs: cfg.timeoutMs,
     });
-    return `[Codex exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
+    return `[Codex · 内置引擎 exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
   }
 
   const r = await bridgeFetch(
@@ -203,11 +203,11 @@ export async function runCodexTask(task: string, projectPath?: string): Promise<
     const msg = (r.data && typeof r.data === 'object' && 'error' in r.data)
       ? String((r.data as Record<string, unknown>).error)
       : String(r.data || `桥接服务不可达（${r.status}）`);
-    return `[Codex 失败] ${truncate(msg, 1500)}`;
+    return `[Codex · Termux 桥接失败] ${truncate(msg, 1500)}`;
   }
 
   const data = (r.data || {}) as Record<string, unknown>;
   const body = String(data.output || '(no output)').trim();
   const exitCode = typeof data.exitCode === 'number' ? data.exitCode : '?';
-  return `[Codex exit ${exitCode}]\n${truncate(body || '(no output)', 4000)}`;
+  return `[Codex · Termux 桥接 exit ${exitCode}]\n${truncate(body || '(no output)', 4000)}`;
 }

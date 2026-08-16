@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 import { getDb, queryAll, queryOne, runSql, saveDb } from '../db.js';
-import { evaluateToolRisk, isProjectTrusted, logAudit, type RiskAssessment } from '../permissions.js';
+import { evaluateToolRisk, isProjectTrusted, logAudit, getTrustedProjects, setTrustedProjects, type RiskAssessment } from '../permissions.js';
 import { getMcpServers, setMcpServers, mcpListTools, mcpCallTool } from '../mcp.js';
 import { scanProject, scanFile, formatIssues, type SecurityIssue } from '../security.js';
 import { runProcess, isAndroidRuntime } from '../nativeProc.js';
@@ -12,6 +12,8 @@ import { runHarnessTask, harnessStatus } from '../harness.js';
 import { generateDiagramSVG, type DiagramNode, type DiagramEdge } from '../diagram.js';
 import { runSpecKit, specKitStatus } from '../specKit.js';
 import { runCodexTask, runBrainTask, BRAIN_IDS, codexStatus, checkCodexBridge } from '../codex.js';
+import { codexLocalInstalled } from '../codexLocal.js';
+import { searchStoreSkills, installStoreSkill, markSkillUsed, rememberTurnSkill, noteTurnSkillFailures } from '../skillStore.js';
 import {
   deviceControlEnabled,
   enqueueDeviceAction,
@@ -162,6 +164,7 @@ You have access to tools that let you interact with the project files:
 - search_file: Search for files by name
 - list_skills: List available skills (methodologies/guides)
 - read_skill: Read a skill's full content by name
+- skill_store_search: Search the CocoLoop skill store (170k+ free skills) by keyword and AUTO-INSTALL the best match, then call read_skill to load it. Args: query (关键词，如 "小红书运营"), install (false 时只列结果不安装；默认自动安装). Fully automatic, no user confirmation needed. Auto-installed skills enter a 3-day testing channel and promote to stable automatically if no issues.
 - run_command: Execute a shell command in the project directory (e.g. npm test, git status, git diff, git log, ls -la). Include the exact command string in the "command" field.
 - run_lint: Run lint checks in the project; returns a list of errors
 - run_typecheck: Run type checking; returns a list of errors
@@ -196,8 +199,8 @@ You have access to tools that let you interact with the project files:
 - harness_run: Delegate a complex task to the official DeepSeek Harness agent (args: task). Use for repo-level workflows, multi-step refactoring, "implement X then test and verify" jobs, or tasks that need an autonomous agent loop. The task runs in the current project directory. High risk, requires confirmation.
 - codex_status: Check whether the Codex CLI bridge is reachable (returns bridge status, Codex version, model config). Read-only.
 - codex_exec: Delegate a complex task to the official Codex CLI agent (args: task). Use for repo-level autonomous workflows, deep refactoring, "implement X then verify" jobs, or tasks needing Codex's own agent loop. Runs in the current project directory. High risk, requires confirmation.
-- brain_status: Check installation/version status of all external execution brains (Aider, Sage, Lydia, aix, miii, my-ai, Codex CLI) via the Termux bridge. Read-only.
-- brain_exec: Run a task through a dedicated external execution brain (args: brain one of aider/sage/lydia/aix/miii/myai/codex + task). Use the brain matching the current agent's specialty (代码工程师→aider/sage，文件管家→lydia，自动化→aix，记忆→miii，翻译→myai). If the brain is not installed, the result returns an install hint; fall back to built-in tools. High risk, requires confirmation.
+- brain_status: Check whether the Codex CLI execution brain is reachable (bridge status + built-in engine). Read-only.
+- brain_exec: Run a task through the Codex CLI execution brain (args: brain "codex" + task). Use for repo-level autonomous workflows. If not installed, the result returns an install hint; fall back to built-in tools. High risk, requires confirmation.
 - device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
 - system_diagnostics: Run a full self-check of the Synaps environment (Node version, AI API key, Termux path, device control, MCP servers, Harness, DB stats). Read-only, returns a summary with recommended fixes.
 - agent_list: List agent instances for the current session (id/type/name/status/context length). Read-only.
@@ -280,6 +283,7 @@ Track progress with team_status.
 - 目标跨会话持久化：下次对话用 goal_status 恢复进度，继续 goal_loop。
 
 ## UI 与设计质量（视觉审判）
+- 用户的任务需要专业技能（如小红书/公众号/社媒运营、数据分析、SEO、PPT/文档、音视频处理、爬虫等）时，自动调用 skill_store_search 搜索 CocoLoop 技能商店并自动安装（install 默认 true，无需用户确认，用户全程无感知）；安装成功后立即调用 read_skill 加载并执行任务，不要询问用户是否安装。已安装的技能直接 read_skill 复用。
 - 生成或修改任何界面（Web 页面、React Native、App 界面）前，先 read_skill "impeccable-ui" 并按其质量底线执行。
 - 界面修改完成后，对照 impeccable-ui 的检查清单自检：对比度、间距、层级、触摸目标、深色模式、空/错/加载态、文本溢出。
 - 禁止默认模板化模式（图标+标题+正文卡片铺屏、标题上方 kicker 小标签、渐变文字、emoji 当图标、紫→蓝渐变、彩色侧边条等），详见技能 Refuse 清单。
@@ -326,6 +330,9 @@ interface ToolCall {
   ref?: string;
   workflowId?: string;
   url?: string;
+  keyword?: string;
+  install?: boolean;
+  auto_install?: boolean;
   manager?: string;
   server?: string;
   method?: string;
@@ -447,6 +454,7 @@ function saveChatMessage(sessionId: string, role: 'user' | 'assistant', content:
 interface PendingApproval {
   resolve: (approved: boolean) => void;
   timer: NodeJS.Timeout;
+  projectId: string | null;
 }
 
 const pendingApprovals = new Map<string, PendingApproval>();
@@ -527,7 +535,8 @@ function createSnapshot(
 function requestApproval(
   res: express.Response,
   toolCall: ToolCall,
-  assessment: RiskAssessment
+  assessment: RiskAssessment,
+  projectId: string | null
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const requestId = crypto.randomUUID();
@@ -538,7 +547,7 @@ function requestApproval(
       }
     }, 60_000);
 
-    pendingApprovals.set(requestId, { resolve, timer });
+    pendingApprovals.set(requestId, { resolve, timer, projectId });
 
     res.write(`data: ${JSON.stringify({
       permission_request: {
@@ -560,6 +569,23 @@ function requestApproval(
       },
     })}\n\n`);
   });
+}
+
+function currentExecutorLabel(): string {
+  try {
+    const enabled = queryOne('SELECT value FROM settings WHERE key = ?', ['codex_enabled']);
+    const builtin = queryOne('SELECT value FROM settings WHERE key = ?', ['codex_builtin']);
+    const codexOn = String((enabled?.value as string | null) || '') === 'true';
+    const useBuiltin = String((builtin?.value as string | null) || '') === 'true';
+    if (codexOn) {
+      return useBuiltin && codexLocalInstalled()
+        ? 'Codex CLI · 内置引擎'
+        : 'Codex CLI · Termux 桥接';
+    }
+  } catch {
+    // 设置读取失败按默认处理
+  }
+  return '内置能力 · DeepSeek 主模型';
 }
 
 function getAiConfig(): { apiKey: string; baseUrl: string; model: string } {
@@ -1034,6 +1060,76 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       return results.length > 0 ? results.join('\n') : `No files matching "${toolCall.query}"`;
     }
 
+    case 'skill_store_search': {
+      const rawQuery = String(toolCall.query || toolCall.keyword || '').trim();
+      const listOnly = toolCall.install === false;
+      if (!rawQuery) return 'Error: skill_store_search requires a query (e.g. 小红书运营)';
+      // 从自然语言里提炼搜索关键词（去掉 帮我/写/使用说明/文档 等填充词），过长查询会导致 CocoLoop 搜不到
+      const STOPWORDS = new Set(['使用','说明','文档','教程','技术','帮我','给我','写','生成','创建','制作','一份','一个','如何','怎么','用','的','简单','快速','请','我','要','内容','资料']);
+      const deriveKeywords = (q: string): string[] => {
+        const tokens = q.toLowerCase().split(/[\s,，、.:：/\\-]+/).filter((t) => t && t.length > 1 && !STOPWORDS.has(t));
+        if (tokens.length === 0) return [q];
+        return [tokens.join(' '), tokens[0]];
+      };
+      const keywords = deriveKeywords(rawQuery);
+      // 本地已装同主题技能 → 直接复用，不重复安装
+      try {
+        const like = keywords.map((k) => `%${k}%`).join(',');
+        const local = queryAll(
+          'SELECT name, description, metadata FROM skills WHERE enabled = 1 AND (name LIKE ? OR description LIKE ?)',
+          [`%${keywords[0]}%`, `%${keywords[0]}%`]
+        ) as Array<{ name: string; description: string; metadata: string }>;
+        const match = local.find((sk) => keywords.some((k) => sk.name.toLowerCase().includes(k) || sk.description.toLowerCase().includes(k)));
+        if (match) {
+          let meta: Record<string, unknown> = {};
+          try {
+            meta = JSON.parse(match.metadata || '{}');
+          } catch {
+            // 忽略解析失败
+          }
+          const channelNote = meta.channel === 'testing' ? '（测试通道）' : '';
+          return `✅ 本地技能库已安装「${match.name}」${channelNote}，无需重复安装。\n简介：${match.description || ''}\n请用 read_skill "${match.name}" 加载并使用。`;
+        }
+      } catch {
+        // 本地检查失败不影响商店检索
+      }
+      // 商店搜索：关键词回退（完整 → 精简 → 首个词），任一命中即停
+      let found = { items: [] as { id: number; name: string; subtitle: string; brief: string; category: string; security_level: string; downloads: string; author: string }[], total: 0 };
+      let lastErr: Error | null = null;
+      for (const k of keywords) {
+        try {
+          const r = await searchStoreSkills({ keyword: k, pageSize: 8, sort: 'downloads' });
+          if (r.items.length > 0) {
+            found = r as typeof found;
+            break;
+          }
+        } catch (err) {
+          lastErr = err as Error;
+        }
+      }
+      if (found.items.length === 0) {
+        return lastErr ? `技能商店暂时不可用：${lastErr.message}` : `技能商店没有找到与「${rawQuery}」相关的技能（共 0 条）`;
+      }
+      if (listOnly) {
+        return `技能商店「${rawQuery}」共 ${found.total} 条结果（前 ${found.items.length} 条）：\n` +
+          found.items.map((it, i) =>
+            `${i + 1}. ${it.name}（${it.category || '未分类'}｜安全 ${it.security_level || '-'}｜下载 ${it.downloads || '0'}｜作者 ${it.author || '-'}）\n   ${it.subtitle || it.brief || '暂无简介'}`
+          ).join('\n') +
+          `\n\n默认会自动安装排名第一的技能，如需自动安装请直接调用 skill_store_search（不带 install: false）。`;
+      }
+      // 自动选最佳匹配：关键词命中越多越靠前，其次按商店排序
+      const scored = found.items.map((it, i) => {
+        const hay = `${it.name} ${it.subtitle} ${it.brief}`.toLowerCase();
+        const score = keywords.reduce((acc, k) => acc + (hay.includes(k) ? 1 : 0), 0);
+        return { it, score, i };
+      });
+      const best = scored.sort((a, b) => b.score - a.score || a.i - b.i)[0].it;
+      const result = await installStoreSkill(best.id, { auto: true });
+      const channelNote = result.channel === 'testing' ? '（已进入测试通道，3 天无问题自动转正式）' : '';
+      return `✅ 已自动安装技能「${result.name}」${result.version ? `(${result.version})` : ''}${channelNote}\n来源：${best.category || '未分类'}，安全等级 ${best.security_level || '-'}\n简介：${best.subtitle || best.brief || ''}\n已包含文件：${result.files.slice(0, 8).join(', ')}${result.files.length > 8 ? '…' : ''}\n现在请立即调用 read_skill "${result.name}" 加载并使用该技能完成任务。`;
+    }
+
+
     case 'list_skills': {
       const rows = queryAll('SELECT name, description FROM skills WHERE enabled = 1 ORDER BY name') as Record<string, string>[];
       if (rows.length === 0) return 'No skills available.';
@@ -1044,6 +1140,8 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       if (!toolCall.query) return 'Error: query (skill name) is required';
       const skill = queryOne('SELECT name, description, content FROM skills WHERE name = ? AND enabled = 1', [toolCall.query]) as Record<string, string> | null;
       if (!skill) return `Skill "${toolCall.query}" not found. Use list_skills to see available skills.`;
+      markSkillUsed(skill.name);
+      rememberTurnSkill(sessionId, skill.name);
       return `## ${skill.name}\n\n${skill.description}\n\n---\n\n${skill.content}`;
     }
 
@@ -2636,6 +2734,7 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       },
     })}\n\n`);
     createTask(taskId, projectId || null, sessionId, taskName, taskStartedAt);
+    res.write(`data: ${JSON.stringify({ executor: { label: currentExecutorLabel() } })}\n\n`);
 
     // Build system message with project context
     let systemPrompt = AGENT_SYSTEM_PROMPT;
@@ -2652,8 +2751,9 @@ router.post('/', async (req: express.Request, res: express.Response) => {
 
     // 注入用户设置的默认执行大脑
     const defaultBrainRow = queryOne('SELECT value FROM settings WHERE key = ?', ['default_exec_brain']);
-    const defaultBrain = String((defaultBrainRow?.value as string | null) || 'auto');
-    systemPrompt += `\n\n## 执行大脑\n默认执行大脑（用户设置）：${defaultBrain}（auto=自动路由；codex=优先 Codex CLI；claude=优先 Claude Code；harness=优先 DeepSeek Harness）。涉及复杂任务的执行时优先遵循该设置路由到对应执行大脑。`;
+    const rawBrain = String((defaultBrainRow?.value as string | null) || 'auto');
+    const defaultBrain = ['auto', 'codex', 'local'].includes(rawBrain) ? rawBrain : 'auto';
+    systemPrompt += `\n\n## 执行大脑\n默认执行大脑（用户设置）：${defaultBrain}（auto=自动路由；codex=优先 Codex CLI；local=本地内置能力）。涉及复杂任务的执行时优先遵循该设置路由到对应执行大脑。`;
 
     // 调度员临时权限系统通知（写入对话流，不结束请求）
     if (tempPermReply) {
@@ -2872,7 +2972,7 @@ All file operations should use paths relative to the project root.`;
       }
 
       if (assessment.level !== 'none' && !trusted) {
-        const approved = await requestApproval(res, toolCall, assessment);
+        const approved = await requestApproval(res, toolCall, assessment, projectId);
         logAudit(projectId, toolCall.tool, describeDetail(toolCall), assessment.level, approved ? 'approved' : 'denied');
         if (!approved) {
           const deniedResult = '[Permission denied] 用户拒绝了此操作';
@@ -2949,6 +3049,9 @@ All file operations should use paths relative to the project root.`;
         }
       }
       const toolOk = !isFailureResult(toolCall.tool, toolResult);
+      if (!toolOk) {
+        noteTurnSkillFailures(sessionId);
+      }
 
       // Send tool execution info to client
       res.write(`data: ${JSON.stringify({
@@ -3243,7 +3346,11 @@ router.get('/analyze-project/:projectId', async (req: express.Request, res: expr
  * 客户端在权限确认弹窗中回传用户决定，agent 循环据此继续或中止。
  */
 router.post('/approval', (req: express.Request, res: express.Response) => {
-  const { requestId, approved } = req.body as { requestId?: string; approved?: boolean };
+  const { requestId, approved, trustProject } = req.body as {
+    requestId?: string;
+    approved?: boolean;
+    trustProject?: boolean;
+  };
   if (!requestId) {
     res.status(400).json({ error: 'requestId is required' });
     return;
@@ -3255,6 +3362,18 @@ router.post('/approval', (req: express.Request, res: express.Response) => {
   }
   pendingApprovals.delete(requestId);
   clearTimeout(pending.timer);
+  // 用户勾选「信任该项目」且通过：把当前项目加入可信列表，后续中/高风险操作自动放行
+  if (approved === true && trustProject === true && pending.projectId) {
+    try {
+      const current = getTrustedProjects();
+      if (!current.includes(pending.projectId)) {
+        setTrustedProjects([...current, pending.projectId]);
+        logAudit(pending.projectId, 'trust_project', '用户通过审批时选择信任该项目，后续中/高风险操作自动放行', 'medium', 'approved');
+      }
+    } catch (err) {
+      console.error('Failed to trust project on approval:', err);
+    }
+  }
   pending.resolve(approved === true);
   res.json({ success: true });
 });

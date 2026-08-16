@@ -18,14 +18,7 @@ export interface BrainDef {
 }
 
 export const BRAIN_DEFS: BrainDef[] = [
-  { id: 'codex', agentType: 'scheduler', name: 'Codex CLI', cli: 'codex', install: 'npm i -g @openai/codex', desc: '复杂开发、多文件重构（调度员）' },
-  { id: 'aider', agentType: 'code_engineer', name: 'Aider', cli: 'aider', install: 'pip install aider-installer && aider-install', desc: 'AI 结对编程（代码工程师 / 推理研究员）' },
-  { id: 'sage', agentType: 'code_engineer', name: 'Sage', cli: 'sage', install: 'pip install sage-ai-cli', desc: '本地优先编码 CLI（代码工程师备选）' },
-  { id: 'lydia', agentType: 'file_manager', name: 'Lydia', cli: 'lydia', install: '参考 https://github.com/levimackay/lydia-cli', desc: '本地 Ollama 文件管家' },
-  { id: 'aix', agentType: 'automator', name: 'aix', cli: 'aix', install: 'npm i -g aix-ai', desc: '40 家提供商自动化（自动化助手）' },
-  { id: 'miii', agentType: 'memory_admin', name: 'miii', cli: 'miii', install: 'npm i -g miii-agent', desc: '100% 本地离线（记忆管理员）' },
-  { id: 'myai', agentType: 'translator', name: 'my-ai', cli: 'my-ai', install: 'npm i -g @gh3ttoniga/my-ai', desc: '本地优先翻译（翻译官备选）' },
-  { id: 'specify', agentType: 'scheduler', name: 'Spec Kit', cli: 'specify', install: 'pip install specify-cli', desc: '规格驱动开发（github.com/github/spec-kit）：先规格后实现' },
+  { id: 'codex', agentType: 'scheduler', name: 'Codex CLI', cli: 'codex', install: 'npm i -g @openai/codex', desc: '复杂开发、多文件重构（调度员，支持内置引擎）' },
 ];
 
 export const BUILTIN_BRAINS = [

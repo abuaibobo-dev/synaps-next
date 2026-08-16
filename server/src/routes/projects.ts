@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { getDb, queryAll, queryOne, runSql } from '../db.js';
 import { listProjectTemplates, scaffoldProject } from '../templates.js';
+import { getTrustedProjects, setTrustedProjects, logAudit } from '../permissions.js';
 
 const router = Router();
 
@@ -179,6 +180,19 @@ router.post('/', async (req, res) => {
     );
 
     const project = queryOne(`SELECT * FROM projects WHERE id = ?`, [id]);
+
+    // 在 App 内创建的项目自动加入可信列表：Agent 可直接写文件/执行命令，
+    // 不再每一步都弹确认（极高风险命令仍会被拦截）。
+    try {
+      const trusted = getTrustedProjects();
+      if (!trusted.includes(id)) {
+        setTrustedProjects([...trusted, id]);
+        logAudit(id, 'trust_project', '项目创建后自动加入可信列表，中/高风险操作自动放行', 'medium', 'auto');
+      }
+    } catch (err) {
+      console.error('[projects-create] auto-trust failed:', err);
+    }
+
     res.status(201).json({ project, scaffold: scaffold || { created: [], skipped: [] } });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -15,7 +15,7 @@ interface SkillInput {
 router.get('/', async (_req, res) => {
   try {
     await getDb();
-    const rows = queryAll('SELECT id, name, description, source, enabled, created_at FROM skills ORDER BY name') as Record<string, unknown>[];
+    const rows = queryAll('SELECT id, name, description, source, enabled, created_at, metadata FROM skills ORDER BY name') as Record<string, unknown>[];
     res.json({ skills: rows });
   } catch (error) {
     console.error('Failed to list skills:', error);

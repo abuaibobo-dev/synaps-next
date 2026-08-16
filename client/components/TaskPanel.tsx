@@ -77,12 +77,13 @@ interface TaskPanelProps {
   task: TaskRecord | null;
   colors: ThemeColors;
   isDark: boolean;
+  executorLabel?: string | null;
   onCancel: () => void;
   onRerun: () => void;
   onRollback: () => void;
 }
 
-export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onRollback }: TaskPanelProps) {
+export default function TaskPanel({ task, colors, isDark, executorLabel, onCancel, onRerun, onRollback }: TaskPanelProps) {
   const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const panelEntry = useEntry('panel');
   const cardEntry = useEntry('card');
@@ -127,6 +128,12 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
             开始 {formatClock(task.startedAt)}
             {task.endedAt ? ` · 耗时 ${formatDuration(task.endedAt - task.startedAt)}` : ' · 执行中...'}
           </Text>
+          {executorLabel ? (
+            <View style={styles.executorRow}>
+              <AppIcon name="microchip" size={11} color={colors.textMuted} />
+              <Text style={styles.executorText}>执行后端：{executorLabel}</Text>
+            </View>
+          ) : null}
           <AnimatedProgressBar
             progress={Math.max(0, Math.min(1, progress))}
             color={colors.primary}
@@ -278,6 +285,17 @@ export default function TaskPanel({ task, colors, isDark, onCancel, onRerun, onR
 }
 
 const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
+  executorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: spacing.sm,
+  },
+  executorText: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    flexShrink: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.bgRoot,

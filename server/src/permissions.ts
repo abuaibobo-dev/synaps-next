@@ -90,6 +90,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'team_review':
     case 'team_status':
     case 'skill_deps':
+    case 'skill_store_search':
     case 'project_export':
     case 'harness_status':
     case 'codex_status':

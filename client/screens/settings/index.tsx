@@ -136,6 +136,21 @@ interface SkillItem {
   description: string;
   source: string;
   enabled: number;
+  metadata?: string;
+}
+
+interface StoreSkillItem {
+  id: number;
+  icon: string;
+  author: string;
+  name: string;
+  subtitle: string;
+  brief: string;
+  category: string;
+  security_level: string;
+  downloads: string;
+  favorites: string;
+  is_featured: boolean;
 }
 
 type SectionKey = 'account' | 'ai' | 'dev' | 'appearance' | 'security' | 'skills' | 'storage' | 'about';
@@ -166,10 +181,9 @@ const BUILD_OPTIONS: Array<{ key: 'github_actions' | 'local'; label: string }> =
   { key: 'local', label: '本地构建' },
 ];
 
-const BRAIN_OPTIONS: Array<{ key: 'auto' | 'codex' | 'aider' | 'local'; label: string }> = [
+const BRAIN_OPTIONS: Array<{ key: 'auto' | 'codex' | 'local'; label: string }> = [
   { key: 'auto', label: '自动' },
   { key: 'codex', label: 'Codex' },
-  { key: 'aider', label: 'Aider' },
   { key: 'local', label: '本地' },
 ];
 
@@ -334,6 +348,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [trustModalVisible, setTrustModalVisible] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [skillStoreVisible, setSkillStoreVisible] = useState(false);
+  const [skillStoreQuery, setSkillStoreQuery] = useState('');
+  const [skillStoreItems, setSkillStoreItems] = useState<StoreSkillItem[]>([]);
+  const [skillStoreLoading, setSkillStoreLoading] = useState(false);
+  const [skillStoreInstalling, setSkillStoreInstalling] = useState<number | null>(null);
+  const [skillStoreChecking, setSkillStoreChecking] = useState(false);
+  const [skillStoreTotal, setSkillStoreTotal] = useState(0);
   const [deviceEnabled, setDeviceEnabled] = useState(false);
   const [deviceServiceConnected, setDeviceServiceConnected] = useState(false);
   const [mcpModalVisible, setMcpModalVisible] = useState(false);
@@ -967,6 +988,94 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     }
   }, []);
 
+  const fetchStoreSkills = useCallback(async (keyword: string) => {
+    setSkillStoreLoading(true);
+    try {
+      const url = keyword.trim()
+        ? `${API_BASE}/api/v1/skill-store/search?keyword=${encodeURIComponent(keyword.trim())}&page_size=20&sort=downloads`
+        : `${API_BASE}/api/v1/skill-store/featured?page_size=20`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!res.ok) {
+        setSkillStoreItems([]);
+        setSkillStoreTotal(0);
+        return;
+      }
+      setSkillStoreItems(data.items || []);
+      setSkillStoreTotal(data.total || 0);
+    } catch {
+      setSkillStoreItems([]);
+      setSkillStoreTotal(0);
+    } finally {
+      setSkillStoreLoading(false);
+    }
+  }, []);
+
+  const openSkillStore = useCallback(() => {
+    setSkillStoreVisible(true);
+    setSkillStoreQuery('');
+    fetchStoreSkills('');
+  }, [fetchStoreSkills]);
+
+  const installStoreSkill = useCallback(
+    async (id: number) => {
+      setSkillStoreInstalling(id);
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/skill-store/install`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          Alert.alert('安装失败', data?.error || '未知错误');
+          return;
+        }
+        Toast.show({ type: 'success', text1: `已安装 ${data.name}` });
+        try {
+          const r = await fetch(`${API_BASE}/api/v1/skills`);
+          const d = await r.json();
+          setSkills(d.skills || []);
+        } catch {
+          // 技能列表刷新失败不影响
+        }
+      } catch {
+        Alert.alert('安装失败', '无法连接后端');
+      } finally {
+        setSkillStoreInstalling(null);
+      }
+    },
+    []
+  );
+
+  const runStoreMaintenance = useCallback(async () => {
+    setSkillStoreChecking(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/skill-store/maintenance`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        Toast.show({ type: 'error', text1: '检查更新失败', text2: data?.error || '未知错误' });
+        return;
+      }
+      const parts: string[] = [];
+      if (data.updated > 0) parts.push(`更新 ${data.updated} 个`);
+      if (data.promoted > 0) parts.push(`转正式 ${data.promoted} 个`);
+      if (data.removed > 0) parts.push(`停用 ${data.removed} 个`);
+      Toast.show({ type: 'success', text1: '检查完成', text2: parts.length ? parts.join(' · ') : '已是最新' });
+      try {
+        const r = await fetch(`${API_BASE}/api/v1/skills`);
+        const d = await r.json();
+        setSkills(d.skills || []);
+      } catch {
+        // 刷新失败不影响
+      }
+    } catch {
+      Toast.show({ type: 'error', text1: '检查更新失败', text2: '无法连接后端' });
+    } finally {
+      setSkillStoreChecking(false);
+    }
+  }, []);
+
   const handleClearCache = useCallback(() => {
     Alert.alert('清除缓存', '确定要清除所有缓存数据吗？', [
       { text: '取消', style: 'cancel' },
@@ -1282,55 +1391,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         </FieldRow>
       </SettingsGroup>
 
-      <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT} collapsible>
-        <SettingRow
-          label="Codex CLI 桥接"
-          value={brainsRefreshing ? '刷新中...' : brainsRefreshedAt ? `已刷新 ${new Date(brainsRefreshedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : codexBrainText}
-          icon="terminal"
-          iconColor={ACCENT}
-          sc={sc}
-          right={
-            <Pressable onPress={fetchBrains} hitSlop={8} disabled={brainsRefreshing} style={styles.refreshBtn}>
-              <AppIcon
-                name="refresh-cw"
-                size={16}
-                color={sc.arrow}
-                style={brainsRefreshing ? { opacity: 0.5 } : undefined}
-              />
-            </Pressable>
-          }
-        />
-        {(brains?.brains || []).map((b, i) => (
-          <SettingRow
-            key={b.id}
-            label={b.name}
-            value={b.installed ? `✅ ${b.version || '已安装'}` : '⚠️ 未安装'}
-            icon={b.id === 'aider' ? 'code' : b.id === 'sage' ? 'test-tube' : 'bot'}
-            iconColor={ACCENT}
-            sc={sc}
-            last={i === (brains?.brains || []).length - 1}
-          />
-        ))}
-        <SettingRow
-          label="内置能力"
-          value={brains ? '✅ 搜索 / 设备控制 / 主模型' : '检测中...'}
-          icon="smartphone"
-          iconColor={ACCENT}
-          sc={sc}
-        />
-        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
-          <Text style={[styles.fieldLabel, { color: sc.label }]}>默认执行大脑</Text>
-          <SegmentControl
-            options={BRAIN_OPTIONS}
-            value={settings.default_exec_brain || 'auto'}
-            onChange={(k) => saveSetting('default_exec_brain', k)}
-            activeColor={ACCENT}
-            inactiveBg={sc.underline}
-            textColor={sc.value}
-          />
-        </View>
-      </SettingsGroup>
-      <SettingsGroup title="Codex CLI" sc={sc} bar={ACCENT} collapsible>
+      <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT} collapsible defaultOpen>
         <SettingRow
           label="启用 Codex CLI"
           icon="terminal"
@@ -1387,6 +1448,41 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Text>
           </View>
         )}
+        <SettingRow
+          label="Codex CLI 桥接"
+          value={brainsRefreshing ? '刷新中...' : brainsRefreshedAt ? `已刷新 ${new Date(brainsRefreshedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : codexBrainText}
+          icon="terminal"
+          iconColor={ACCENT}
+          sc={sc}
+          right={
+            <Pressable onPress={fetchBrains} hitSlop={8} disabled={brainsRefreshing} style={styles.refreshBtn}>
+              <AppIcon
+                name="refresh-cw"
+                size={16}
+                color={sc.arrow}
+                style={brainsRefreshing ? { opacity: 0.5 } : undefined}
+              />
+            </Pressable>
+          }
+        />
+        <SettingRow
+          label="内置能力"
+          value={brains ? '✅ 搜索 / 设备控制 / 主模型' : '检测中...'}
+          icon="smartphone"
+          iconColor={ACCENT}
+          sc={sc}
+        />
+        <View style={[styles.segmentBlock, { borderBottomColor: sc.separator }]}>
+          <Text style={[styles.fieldLabel, { color: sc.label }]}>默认执行大脑</Text>
+          <SegmentControl
+            options={BRAIN_OPTIONS}
+            value={BRAIN_OPTIONS.some((o) => o.key === settings.default_exec_brain) ? settings.default_exec_brain : 'auto'}
+            onChange={(k) => saveSetting('default_exec_brain', k)}
+            activeColor={ACCENT}
+            inactiveBg={sc.underline}
+            textColor={sc.value}
+          />
+        </View>
         <FieldRow styles={styles} label="API Key（可选）" sc={sc}>
           <UnderlineInput
             value={settings.codex_api_key}
@@ -1422,7 +1518,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             onCommit={(v) => saveSetting('codex_base_url', v)}
           />
         </FieldRow>
-        <FieldRow styles={styles} label="接口协议" sc={sc}>
+        <FieldRow styles={styles} label="接口协议" sc={sc} last>
           <UnderlineInput
             value={settings.codex_wire_api}
             placeholder="responses"
@@ -1631,21 +1727,56 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           last={mcpServers.length === 0}
         />
       </SettingsGroup>
+      <SettingsGroup title="技能商店" sc={sc} bar={ACCENT} collapsible>
+        <SettingRow
+          label="CocoLoop 技能商店"
+          value="17 万+ 免费技能 · 搜索安装"
+          icon="store"
+          iconColor={ACCENT}
+          sc={sc}
+          onPress={openSkillStore}
+          right={
+            <Pressable onPress={openSkillStore} hitSlop={8} style={styles.refreshBtn}>
+              <Text style={[styles.fieldLabel, { color: ACCENT }]}>进入</Text>
+            </Pressable>
+          }
+          last
+        />
+      </SettingsGroup>
       <SettingsGroup title="已安装技能" sc={sc} bar={ACCENT} collapsible>
         {skills.length === 0 && <SettingRow label="暂无技能" sc={sc} last />}
-        {skills.map((skill, idx) => (
-          <SettingRow
-            key={skill.name}
-            label={skill.name}
-            value={skill.description || '无描述'}
-            icon="bolt"
-            iconColor={ACCENT}
-            sc={sc}
-            onPress={() => showSkillDetail(skill.name)}
-            right={<AnimatedToggle value={skill.enabled === 1} onValueChange={(v) => toggleSkill(skill.name, v)} sc={sc} trackOn={INTERACTIVE} />}
-            last={idx === skills.length - 1}
-          />
-        ))}
+        {skills.map((skill, idx) => {
+          let channel = '';
+          try {
+            const meta = JSON.parse(skill.metadata || '{}');
+            if (meta?.channel === 'testing') channel = '测试通道';
+            else if (meta?.channel === 'stable') channel = '正式';
+          } catch {
+            // 忽略解析失败
+          }
+          return (
+            <SettingRow
+              key={skill.name}
+              label={skill.name}
+              value={skill.description || '无描述'}
+              icon="bolt"
+              iconColor={ACCENT}
+              sc={sc}
+              onPress={() => showSkillDetail(skill.name)}
+              right={
+                <View style={styles.skillRowRight}>
+                  {channel ? (
+                    <View style={[styles.channelBadge, channel === '测试通道' && styles.channelBadgeTesting]}>
+                      <Text style={styles.channelBadgeText}>{channel}</Text>
+                    </View>
+                  ) : null}
+                  <AnimatedToggle value={skill.enabled === 1} onValueChange={(v) => toggleSkill(skill.name, v)} sc={sc} trackOn={INTERACTIVE} />
+                </View>
+              }
+              last={idx === skills.length - 1}
+            />
+          );
+        })}
       </SettingsGroup>
     </>
   );
@@ -2088,6 +2219,87 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </View>
           </View>
         </Modal>
+
+        {/* 技能商店 Modal */}
+        <Modal visible={skillStoreVisible} transparent animationType="fade" onRequestClose={() => setSkillStoreVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, styles.skillStoreContent]}>
+              <View style={styles.skillStoreHeader}>
+                <Text style={styles.modalTitle}>技能商店</Text>
+                <Pressable onPress={() => setSkillStoreVisible(false)} hitSlop={8} style={styles.skillStoreClose}>
+                  <AppIcon name="xmark" size={18} color={colors.textSecondary} />
+                </Pressable>
+              </View>
+              <View style={styles.skillStoreSearchRow}>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="搜索技能，如：小红书运营 / redis / ppt"
+                  placeholderTextColor={colors.textMuted}
+                  value={skillStoreQuery}
+                  onChangeText={setSkillStoreQuery}
+                  onSubmitEditing={() => fetchStoreSkills(skillStoreQuery)}
+                  returnKeyType="search"
+                  autoCapitalize="none"
+                />
+                <Pressable style={styles.skillStoreSearchBtn} onPress={() => fetchStoreSkills(skillStoreQuery)}>
+                  <AppIcon name="magnifying-glass" size={16} color="#FFFFFF" />
+                </Pressable>
+              </View>
+              <View style={styles.skillStoreMetaRow}>
+                <Text style={styles.skillStoreMeta}>
+                  {skillStoreLoading
+                    ? '加载中...'
+                    : skillStoreQuery.trim()
+                      ? `「${skillStoreQuery}」共 ${skillStoreTotal} 条结果`
+                      : '热门技能（按下载量）'}
+                </Text>
+                <Pressable style={styles.skillStoreUpdateBtn} onPress={runStoreMaintenance} disabled={skillStoreChecking} hitSlop={6}>
+                  <AppIcon name="refresh-cw" size={12} color={ACCENT} />
+                  <Text style={styles.skillStoreUpdateText}>{skillStoreChecking ? '检查中' : '检查更新'}</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.skillStoreNote}>
+                自动安装：Agent 遇到专业任务会自动搜索并安装技能，无需手动确认。自动安装的技能进入测试通道，3 天无问题自动转正式，有问题自动停用。
+              </Text>
+              <ScrollView style={{ maxHeight: 380 }}>
+                {skillStoreItems.length === 0 && !skillStoreLoading && (
+                  <Text style={styles.modalEmptyText}>没有找到技能，换个关键词试试</Text>
+                )}
+                {skillStoreItems.map((item) => (
+                  <View key={item.id} style={styles.skillStoreItem}>
+                    <Text style={styles.skillStoreIcon}>{item.icon || '📦'}</Text>
+                    <View style={styles.skillStoreInfo}>
+                      <Text style={styles.skillStoreName} numberOfLines={1}>
+                        {item.name}
+                        {item.security_level ? (
+                          <Text style={styles.skillStoreLevel}>  [{item.security_level}]</Text>
+                        ) : null}
+                      </Text>
+                      <Text style={styles.skillStoreSubtitle} numberOfLines={2}>
+                        {item.subtitle || item.brief || '暂无简介'}
+                      </Text>
+                      <Text style={styles.skillStoreMeta2}>
+                        {item.category || '未分类'} · 下载 {item.downloads || '0'} · {item.author || '-'}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.skillStoreInstall, skillStoreInstalling === item.id && styles.skillStoreInstallDisabled]}
+                      onPress={() => installStoreSkill(item.id)}
+                      disabled={skillStoreInstalling === item.id}
+                    >
+                      <Text style={styles.skillStoreInstallText}>
+                        {skillStoreInstalling === item.id ? '安装中' : '安装'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+              <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setSkillStoreVisible(false)}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>关闭</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </View>
     </Screen>
   );
@@ -2388,6 +2600,132 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textMuted,
       textAlign: 'center',
       paddingVertical: spacing.xl,
+    },
+    skillStoreContent: {
+      maxWidth: 480,
+    },
+    skillStoreHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    skillStoreClose: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.lg,
+      backgroundColor: colors.bgElevated,
+    },
+    skillStoreSearchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    skillStoreSearchBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.md,
+      backgroundColor: ACCENT,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.lg,
+    },
+    skillStoreMeta: {
+      fontSize: fontSize.xs,
+      color: colors.textMuted,
+    },
+    skillStoreMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.sm,
+    },
+    skillStoreUpdateBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 4,
+      borderRadius: radius.md,
+      backgroundColor: colors.bgElevated,
+    },
+    skillStoreUpdateText: {
+      fontSize: 11,
+      color: ACCENT,
+    },
+    skillStoreNote: {
+      fontSize: 10,
+      color: colors.textMuted,
+      lineHeight: 14,
+      marginBottom: spacing.sm,
+    },
+    skillRowRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    channelBadge: {
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 6,
+      backgroundColor: colors.bgElevated,
+    },
+    channelBadgeTesting: {
+      backgroundColor: colors.warning + '22',
+    },
+    channelBadgeText: {
+      fontSize: 10,
+      color: colors.textSecondary,
+    },
+    skillStoreItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.separator,
+    },
+    skillStoreIcon: {
+      fontSize: 20,
+    },
+    skillStoreInfo: {
+      flex: 1,
+    },
+    skillStoreName: {
+      fontSize: fontSize.sm,
+      fontWeight: '600',
+      color: colors.textPrimary,
+    },
+    skillStoreLevel: {
+      fontSize: 10,
+      color: colors.success,
+    },
+    skillStoreSubtitle: {
+      fontSize: fontSize.xs,
+      color: colors.textSecondary,
+      marginTop: 2,
+      lineHeight: 15,
+    },
+    skillStoreMeta2: {
+      fontSize: 10,
+      color: colors.textMuted,
+      marginTop: 2,
+    },
+    skillStoreInstall: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: 6,
+      borderRadius: radius.md,
+      backgroundColor: ACCENT,
+    },
+    skillStoreInstallDisabled: {
+      opacity: 0.5,
+    },
+    skillStoreInstallText: {
+      color: '#FFFFFF',
+      fontSize: fontSize.xs,
+      fontWeight: '600',
     },
     modalBtnFull: {
       alignSelf: 'stretch',

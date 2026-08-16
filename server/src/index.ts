@@ -12,6 +12,8 @@ import snapshotsRouter from "./routes/snapshots.js";
 import githubRouter from "./routes/github.js";
 import settingsRouter from "./routes/settings.js";
 import skillsRouter from "./routes/skills.js";
+import skillStoreRouter from "./routes/skillStore.js";
+import { runSkillStoreMaintenance } from "./skillStore.js";
 import terminalRouter from "./routes/terminal.js";
 import auditRouter from "./routes/audit.js";
 import deviceRouter from "./routes/device.js";
@@ -49,6 +51,7 @@ app.use('/api/v1/snapshots', snapshotsRouter);
 app.use('/api/v1/github', githubRouter);
 app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/skills', skillsRouter);
+app.use('/api/v1/skill-store', skillStoreRouter);
 app.use('/api/v1/terminal', terminalRouter);
 app.use('/api/v1/audit', auditRouter);
 app.use('/api/v1/device', deviceRouter);
@@ -82,4 +85,11 @@ app.listen(port, () => {
   seedImpeccableSkills().catch(() => {});
   seedDiagramSkill();
   startProactiveMonitor();
+  // 技能商店后台维护：自动更新 + 测试通道转正/停用（启动 15s 后执行一次，之后每 24h 一次）
+  setTimeout(() => {
+    runSkillStoreMaintenance().catch((err) => console.error('[skill-store] maintenance failed:', err));
+  }, 15000);
+  setInterval(() => {
+    runSkillStoreMaintenance().catch((err) => console.error('[skill-store] maintenance failed:', err));
+  }, 24 * 3600 * 1000);
 });

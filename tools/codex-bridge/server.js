@@ -33,20 +33,8 @@ const CODEX_BIN = process.env.CODEX_BIN || 'codex';
 const MAX_BODY = 5 * 1024 * 1024;
 
 // 执行大脑注册表（与 Synaps 后端 server/src/brains.ts 保持一致）。
-// run: argv 模板，{{task}} 会被替换为用户任务；若 CLI 用法未知则用默认 [cli, task]。
+// 只保留 Codex CLI：其它未安装的执行大脑已移除（App 内不再展示）。
 const BRAINS = [
-  { id: 'aider',   cli: 'aider',    install: 'pip install aider-installer && aider-install（或 pip install aider-chat）',
-    run: ['aider', '--message', '{{task}}', '--yes-always', '--no-git', '--no-show-model-warnings', '--model', 'deepseek/deepseek-chat'] },
-  { id: 'sage',    cli: 'sage',     install: 'pip install sage-ai-cli',
-    run: ['sage', '{{task}}'] },
-  { id: 'lydia',   cli: 'lydia',    install: '参考 https://github.com/levimackay/lydia-cli',
-    run: ['lydia', '{{task}}'] },
-  { id: 'aix',     cli: 'aix',      install: 'npm i -g aix-ai',
-    run: ['aix', '{{task}}'] },
-  { id: 'miii',    cli: 'miii',     install: 'npm i -g miii-agent',
-    run: ['miii', '{{task}}'] },
-  { id: 'myai',    cli: 'my-ai',    install: 'npm i -g @gh3ttoniga/my-ai',
-    run: ['my-ai', '{{task}}'] },
   { id: 'codex',   cli: 'codex',    install: 'npm i -g @openai/codex',
     run: null }, // codex 走专用 /run 逻辑
 ];
