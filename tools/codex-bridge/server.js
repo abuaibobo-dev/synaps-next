@@ -36,7 +36,7 @@ const MAX_BODY = 5 * 1024 * 1024;
 // run: argv 模板，{{task}} 会被替换为用户任务；若 CLI 用法未知则用默认 [cli, task]。
 const BRAINS = [
   { id: 'aider',   cli: 'aider',    install: 'pip install aider-installer && aider-install（或 pip install aider-chat）',
-    run: ['aider', '--message', '{{task}}', '--yes-always', '--no-show-model-warnings', '--model', 'deepseek/deepseek-chat'] },
+    run: ['aider', '--message', '{{task}}', '--yes-always', '--no-git', '--no-show-model-warnings', '--model', 'deepseek/deepseek-chat'] },
   { id: 'sage',    cli: 'sage',     install: 'pip install sage-ai-cli',
     run: ['sage', '{{task}}'] },
   { id: 'lydia',   cli: 'lydia',    install: '参考 https://github.com/levimackay/lydia-cli',
