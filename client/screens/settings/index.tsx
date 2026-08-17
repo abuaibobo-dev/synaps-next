@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput, Image } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
+import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
 import type { ThemeColors, AccentKey } from '@/utils/theme';
@@ -1874,7 +1875,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bgRoot }]}>
+    <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} scrollable>
+      <View style={styles.container}>
         <View style={styles.header}>
           <MenuButton onPress={onOpenSidebar} />
           <Text style={styles.headerTitle}>设置</Text>
@@ -2299,6 +2301,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           </View>
         </Modal>
       </View>
+    </Screen>
   );
 }
 
