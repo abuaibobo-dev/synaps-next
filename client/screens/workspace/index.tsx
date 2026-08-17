@@ -17,7 +17,6 @@ import LogsScreen from '@/screens/logs';
 import GithubScreen from '@/screens/github';
 import TasksScreen from '@/screens/tasks';
 import SettingsScreen from '@/screens/settings';
-import CollectorScreen from '@/screens/collector';
 import Animated, { FadeIn } from 'react-native-reanimated';
 
 export default function WorkspaceScreen() {
@@ -77,8 +76,6 @@ export default function WorkspaceScreen() {
         return <GithubScreen onOpenSidebar={handleOpenSidebar} />;
       case 'tasks':
         return <TasksScreen onOpenSidebar={handleOpenSidebar} />;
-      case 'collector':
-        return <CollectorScreen onOpenSidebar={handleOpenSidebar} />;
       case 'settings':
         return <SettingsScreen onOpenSidebar={handleOpenSidebar} />;
       default:

@@ -3,6 +3,11 @@ import type { Request, Response } from 'express';
 import { getDb } from '../db.js';
 
 const router = Router();
+const SENSITIVE_KEYS = new Set([
+  'ai_api_key', 'stt_api_key', 'github_token', 'harness_api_key',
+  'codex_api_key', 'codex_token', 'mcp_token',
+]);
+const mask = (key: string, value: string) => SENSITIVE_KEYS.has(key) && value ? '••••••••' : value;
 
 // GET /api/v1/settings - Get all settings
 router.get('/', async (_req: Request, res: Response) => {
@@ -17,7 +22,8 @@ router.get('/', async (_req: Request, res: Response) => {
     
     const settings: Record<string, string> = {};
     for (const row of result[0].values) {
-      settings[row[0] as string] = row[1] as string;
+      const key = row[0] as string;
+      settings[key] = mask(key, row[1] as string);
     }
     
     res.json(settings);
@@ -31,7 +37,7 @@ router.get('/', async (_req: Request, res: Response) => {
 router.put('/', async (req: Request, res: Response) => {
   try {
     const db = await getDb();
-    const settings = req.body as Record<string, string>;
+    const settings = req.body as Record<string, unknown>;
     
     // Ensure settings table exists
     db.run(`
@@ -43,6 +49,11 @@ router.put('/', async (req: Request, res: Response) => {
     `);
     
     for (const [key, value] of Object.entries(settings)) {
+      if (typeof value !== 'string' || key.length > 100 || value.length > 100000) {
+        res.status(400).json({ error: `Invalid setting: ${key}` });
+        return;
+      }
+      if (SENSITIVE_KEYS.has(key) && value === '••••••••') continue;
       db.run(
         `INSERT INTO settings (key, value, updated_at) 
          VALUES (?, ?, datetime('now'))
@@ -70,7 +81,7 @@ router.get('/:key', async (req: Request, res: Response) => {
       return;
     }
     
-    res.json({ key, value: result[0].values[0][0] });
+    res.json({ key, value: mask(key as string, String(result[0].values[0][0])) });
   } catch (error) {
     console.error('Failed to get setting:', error);
     res.status(500).json({ error: 'Failed to get setting' });

@@ -4,20 +4,24 @@ import fs from 'fs';
 import * as crypto from 'crypto';
 import { getDb, saveDb, queryAll, queryOne, runSql } from '../db.js';
 import { runProcess, isAndroidRuntime } from '../nativeProc.js';
+import { isProjectTrusted } from '../permissions.js';
 
 const router = Router();
 
 // Execute a command
 router.post('/exec', async (req: Request, res: Response) => {
   try {
-    const { command, projectId, cwd } = req.body;
+    const { command, projectId } = req.body;
 
-    if (!command) {
+    if (!command || typeof command !== 'string' || command.length > 8000) {
       return res.status(400).json({ error: 'Command is required' });
+    }
+    if (!projectId || typeof projectId !== 'string' || !isProjectTrusted(projectId)) {
+      return res.status(403).json({ error: 'Terminal requires an explicitly trusted project' });
     }
 
     // Determine working directory
-    let workingDir = cwd || process.cwd();
+    let workingDir = process.cwd();
 
     // If projectId is provided, use project path
     if (projectId) {

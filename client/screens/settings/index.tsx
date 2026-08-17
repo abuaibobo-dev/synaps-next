@@ -379,8 +379,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [storageSize, setStorageSize] = useState('计算中...');
 
   const fetchSettings = useCallback(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings`);
+      const res = await fetch(`${API_BASE}/api/v1/settings`, { signal: controller.signal });
       if (res.ok) {
         const data = await res.json();
         setSettings({ ...DEFAULT_SETTINGS, ...data });
@@ -388,6 +390,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch (error) {
       console.error('Failed to fetch settings:', error);
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }, []);

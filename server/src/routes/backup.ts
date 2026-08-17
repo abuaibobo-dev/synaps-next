@@ -19,6 +19,7 @@ const BACKUP_TABLES = [
   'agent_contexts',
   'audit_logs',
 ];
+const SENSITIVE_SETTING_KEYS = new Set(['ai_api_key', 'stt_api_key', 'github_token', 'harness_api_key', 'codex_api_key', 'codex_token', 'mcp_token']);
 
 function getTableColumns(db: ReturnType<typeof getDb> extends Promise<infer T> ? T : never, table: string): string[] {
   const info = db.exec(`PRAGMA table_info(${table})`);
@@ -35,12 +36,13 @@ router.get('/export', async (_req: Request, res: Response) => {
     await getDb();
     const tables: Record<string, unknown[]> = {};
     for (const table of BACKUP_TABLES) {
-      tables[table] = queryAll(`SELECT * FROM ${table}`);
+      const rows = queryAll(`SELECT * FROM ${table}`);
+      tables[table] = table === 'settings' ? rows.filter((row) => !SENSITIVE_SETTING_KEYS.has(String(row.key))) : rows;
     }
     res.json({
       meta: {
         app: 'synaps',
-        version: '1.1.0',
+        version: '3.12.0',
         schemaVersion: 1,
         exportedAt: new Date().toISOString(),
       },

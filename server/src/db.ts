@@ -251,6 +251,13 @@ export async function getDb(): Promise<SqlJsDatabase> {
     )
   `);
 
+  // v3.12.0 removes the Telegram collector completely, including credentials,
+  // sessions and historical relay data left by earlier installations.
+  db.run("DELETE FROM settings WHERE key LIKE 'telegram_%'");
+  db.run('DROP TABLE IF EXISTS telegram_items');
+  db.run('DROP TABLE IF EXISTS telegram_cursors');
+  db.run('DROP TABLE IF EXISTS telegram_rules');
+
   saveDb();
   return db;
 }

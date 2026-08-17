@@ -109,7 +109,7 @@ const KeyboardAwareScrollable = ({
   const enhancedContentStyle = [{ ...merged, paddingBottom: currentPB + extraPadding }];
 
   // 基础配置 props，用于传递给 KeyboardAware 组件
-  const commonProps = {
+  const commonProps: any = {
     ...childAttrs,
     contentContainerStyle: enhancedContentStyle,
     keyboardShouldPersistTaps: childAttrs['keyboardShouldPersistTaps'] ?? 'handled',
@@ -133,11 +133,11 @@ const KeyboardAwareScrollable = ({
   }
 
   if (t === FlatList) {
-    return <KeyboardAwareFlatList {...commonProps} />;
+    return <KeyboardAwareFlatList {...commonProps as any} />;
   }
 
   if (t === SectionList) {
-    return <KeyboardAwareSectionList {...commonProps} />;
+    return <KeyboardAwareSectionList {...commonProps as any} />;
   }
 
   // 理论上不应运行到这里，如果是非标准组件则原样返回，仅修改样式

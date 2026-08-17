@@ -39,7 +39,7 @@ export type ModuleKey =
   | 'logs'
   | 'github'
   | 'tasks'
-  | 'collector' | 'settings';
+  | 'settings';
 
 interface SidebarModule {
   key: ModuleKey;
@@ -56,7 +56,6 @@ const MODULES: SidebarModule[] = [
   { key: 'logs', label: '日志', icon: 'file-text' },
   { key: 'github', label: 'GitHub', icon: 'github' },
   { key: 'tasks', label: '任务', icon: 'list-checks' },
-  { key: 'collector', label: '采集', icon: 'satellite-dish' },
   { key: 'settings', label: '设置', icon: 'settings' },
 ];
 

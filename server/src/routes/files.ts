@@ -14,11 +14,24 @@ function resolveProjectPath(projectId: string, relativePath: string): string {
   if (!project) throw new Error('Project not found');
 
   const projectPath = (project as Record<string, string>).path;
-  const resolved = path.resolve(projectPath, relativePath);
+  const root = path.resolve(projectPath);
+  const resolved = path.resolve(root, relativePath);
 
   // Security: ensure resolved path is within project directory
-  if (!resolved.startsWith(path.resolve(projectPath))) {
+  const lexical = path.relative(root, resolved);
+  if (lexical === '..' || lexical.startsWith(`..${path.sep}`) || path.isAbsolute(lexical)) {
     throw new Error('Path traversal not allowed');
+  }
+
+  // Existing files and parents must also remain inside the real project root;
+  // this blocks project-local symlinks that point outside the workspace.
+  const realRoot = fs.existsSync(root) ? fs.realpathSync(root) : root;
+  let existing = resolved;
+  while (!fs.existsSync(existing) && existing !== path.dirname(existing)) existing = path.dirname(existing);
+  const realExisting = fs.existsSync(existing) ? fs.realpathSync(existing) : existing;
+  const physical = path.relative(realRoot, realExisting);
+  if (physical === '..' || physical.startsWith(`..${path.sep}`) || path.isAbsolute(physical)) {
+    throw new Error('Symlink traversal not allowed');
   }
 
   return resolved;
