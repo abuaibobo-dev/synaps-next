@@ -201,7 +201,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
       status TEXT NOT NULL DEFAULT 'idle',
       system_prompt TEXT DEFAULT '',
       tools TEXT DEFAULT '[]',
-      model TEXT DEFAULT 'deepseek-chat',
+      model TEXT DEFAULT 'deepseek-v4-flash',
       temperature REAL DEFAULT 0.7,
       current_project TEXT,
       working_directory TEXT,

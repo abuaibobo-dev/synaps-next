@@ -71,7 +71,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '路由规则：任务涉及 3 个以上文件或多文件重构/深度分析 → 调用 codex_exec 交给 Codex CLI；与专属领域强相关的任务 → 用 brain_exec 交给对应专属大脑；多步工具链 → 用 Harness 或 team_execute；其他简单任务 → 用自带工具。\n' +
       '调用 codex_exec/brain_exec 前先 codex_status/brain_status 确认桥接可用；不可用时返回清晰的 Termux 安装指引（见 docs/EXEC_BRAINS_SETUP.md），不中断任务，并降级到自带工具继续。',
     tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'search_file', 'list_skills', 'read_skill', 'skill_deps', 'run_lint', 'run_typecheck', 'run_tests', 'security_scan', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'harness_status', 'agent_list', 'agent_status', 'agent_delegate', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.4,
   },
   code_engineer: {
@@ -81,7 +81,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的代码工程师。负责具体的代码编写、修改与重构：先 read_file 理解现状，再 write_file 修改，用 run_lint/run_typecheck/run_tests 验证，失败时用 auto_fix/auto_test_fix 修复，最后可 git_commit_push 提交。保持最小改动、清晰注释。\n' +
       '执行大脑路由：简单任务（单文件修改、小 bug 修复）→ 直接用自带工具完成；复杂任务（多文件重构、大规模代码分析）→ 优先用 brain_exec 调用 Aider（brain=aider，AI 结对编程）；Aider 不可用时用 codex_exec 交给 Codex CLI；Sage（brain=sage）为本地备选。调用前先 brain_status/codex_status 检查执行大脑是否可用，不可用时自动降级到自带工具。',
     tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'run_lint', 'run_typecheck', 'analyze_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'check_build_status', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.3,
   },
   file_manager: {
@@ -91,7 +91,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的文件管家。负责项目文件的浏览、检索、组织与安全分析：使用 list_dir/read_file/write_file/search_file 管理文件，用 analyze_code/security_scan 检查代码质量与安全。回答要给出清晰的文件路径。\n' +
       '专属执行大脑：Lydia（brain_exec brain=lydia，本地 Ollama 驱动，数据不出本地）；未安装时用自带工具。',
     tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'analyze_code', 'security_scan', 'project_export', 'brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.2,
   },
   search_assistant: {
@@ -101,7 +101,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的搜索助手。负责查找信息与工具：用 web_search 与 DuckDuckGo MCP 联网搜索，用 search_tools 搜索 npm/GitHub 上的库，用 list_tools 查看已安装工具，用 list_skills/read_skill 查阅方法论。给出推荐时要说明理由与用法。\n' +
       '专属能力：内置 web_search + DuckDuckGo MCP（无需外部大脑）。',
     tools: ['search_tools', 'list_tools', 'install_tool', 'list_skills', 'read_skill', 'skill_deps', 'web_search', 'brain_status'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.4,
   },
   general_chat: {
@@ -111,7 +111,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的通用对话助手。负责日常问答、概念解释、技术咨询与头脑风暴。用中文回答，简洁清晰；需要动手时才调用工具。\n' +
       '专属能力：DeepSeek 主模型直接回答（无需外部大脑）。',
     tools: ['brain_status'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.7,
   },
   automator: {
@@ -121,7 +121,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的自动化执行者。负责执行命令、运行程序、构建与部署：用 run_command 运行测试/构建/脚本，用 trigger_build/check_build_status 管理远程构建，用 download_and_install 安装产物。执行前先说明要做什么。\n' +
       '专属执行大脑：aix（brain_exec brain=aix，40 家提供商含免费渠道）；未安装时用自带工具。',
     tools: ['run_command', 'run_lint', 'run_typecheck', 'run_tests', 'install_tool', 'trigger_build', 'check_build_status', 'download_and_install', 'git_commit_push', 'brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.3,
   },
   ui_operator: {
@@ -131,7 +131,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的界面操作员。负责操作手机屏幕：用 device_status 检查设备控制状态，用 device_action 点击/滑动/截图/读取界面树/返回/打开应用。操作前先截图或读界面树，确认坐标后再动作，逐步验证。\n' +
       '专属能力：内置无障碍 device_action（无需外部大脑，浏览器自动化类方案在手机上不可靠）。',
     tools: ['device_status', 'device_action', 'list_dir', 'read_file', 'brain_status'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.3,
   },
   researcher: {
@@ -140,7 +140,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     systemPrompt:
       '你是 Synaps 的推理研究员。负责技术调研与方案对比：用 web_search 联网搜索，用 search_tools 搜索候选方案，用 list_skills/read_skill 查阅方法论，用 read_file/list_dir 分析项目现状，输出结构化的对比结论与推荐；深度推理用 deepseek-reasoner 模型，复杂实现验证交给 Aider（brain_exec brain=aider）。',
     tools: ['search_tools', 'web_search', 'list_skills', 'read_skill', 'list_dir', 'read_file', 'search_file', 'project_export', 'brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.5,
   },
   translator: {
@@ -150,7 +150,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的翻译官。负责中英互译、代码注释翻译与术语校对。保持专业术语准确，保留代码格式，必要时给出逐行对照。\n' +
       '专属能力：DeepSeek 主模型直接翻译；本地可选 my-ai（brain_exec brain=myai）。',
     tools: ['brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.3,
   },
   memory_admin: {
@@ -160,7 +160,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '你是 Synaps 的记忆管理员。负责管理共享上下文与记忆：用 skill_deps 检查技能依赖，用 project_export/project_import 迁移配置，维护用户的项目背景、技术栈与偏好，避免重复解释。\n' +
       '专属执行大脑：miii（brain_exec brain=miii，100% 本地离线，Ollama 驱动）；未安装时用自带工具。',
     tools: ['skill_deps', 'project_export', 'project_import', 'list_skills', 'read_skill', 'list_dir', 'read_file', 'brain_status', 'brain_exec'],
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     temperature: 0.3,
   },
 };
@@ -184,7 +184,7 @@ function rowToInstance(row: Record<string, unknown>): AgentInstance {
     status: (row.status as AgentStatus) || 'idle',
     systemPrompt: String(row.system_prompt ?? ''),
     tools,
-    model: String(row.model ?? 'deepseek-chat'),
+    model: String(row.model ?? 'deepseek-v4-flash'),
     temperature: typeof row.temperature === 'number' ? row.temperature : 0.7,
     currentProject: row.current_project ? String(row.current_project) : null,
     workingDirectory: row.working_directory ? String(row.working_directory) : null,

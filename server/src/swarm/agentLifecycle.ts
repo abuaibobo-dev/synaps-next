@@ -90,7 +90,7 @@ export function spawnAgent(
     runSql(
       `INSERT INTO agent_instances (id, session_id, agent_type, name, status, tools, model, temperature)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, 'swarm', type, name, 'spawning', '[]', 'deepseek-chat', 0.4]
+      [id, 'swarm', type, name, 'spawning', '[]', 'deepseek-v4-flash', 0.4]
     );
   } catch { /* ignore */ }
 

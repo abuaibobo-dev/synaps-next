@@ -612,7 +612,7 @@ function getAiConfig(): { apiKey: string; baseUrl: string; model: string } {
     model:
       modelRow && typeof modelRow.value === 'string' && modelRow.value
         ? modelRow.value
-        : 'deepseek-chat',
+        : 'deepseek-v4-flash',
   };
 }
 
@@ -1986,7 +1986,7 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       const modelRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_model']);
       const model = modelRow && typeof modelRow.value === 'string' && modelRow.value
         ? modelRow.value
-        : 'deepseek-chat';
+        : 'deepseek-v4-flash';
 
       const cwd = resolveProjectPath(projectId, '');
       const target = toolCall.path ? resolveProjectPath(projectId, toolCall.path) : cwd;
@@ -2702,7 +2702,7 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       const modelRow = queryOne('SELECT value FROM settings WHERE key = ?', ['ai_model']);
       const baseUrl = baseUrlRow && typeof baseUrlRow.value === 'string' && baseUrlRow.value ? baseUrlRow.value : 'https://api.deepseek.com';
       const modelBaseUrl = modelBaseUrlRow && typeof modelBaseUrlRow.value === 'string' && modelBaseUrlRow.value ? modelBaseUrlRow.value : 'https://api.deepseek.com';
-      const model = modelRow && typeof modelRow.value === 'string' && modelRow.value ? modelRow.value : 'deepseek-chat';
+      const model = modelRow && typeof modelRow.value === 'string' && modelRow.value ? modelRow.value : 'deepseek-v4-flash';
       const client = new LLMClient(new Config({ apiKey, baseUrl, modelBaseUrl }));
       let out = '';
       try {
@@ -2854,7 +2854,7 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     const apiKey = getSetting('ai_api_key');
     const baseUrl = getSetting('ai_base_url') || 'https://api.deepseek.com';
     const modelBaseUrl = getSetting('ai_model_base_url') || 'https://api.deepseek.com';
-    const model = getSetting('ai_model') || 'deepseek-chat';
+    const model = getSetting('ai_model') || 'deepseek-v4-flash';
 
     if (!apiKey) {
       res.status(400).json({ error: '未配置 DeepSeek API Key，请到 设置 → AI 模型 中填写' });

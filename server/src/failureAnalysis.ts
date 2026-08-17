@@ -31,7 +31,7 @@ export async function analyzeFailure(tool: string, result: string): Promise<stri
   if (!apiKey) return null;
   const baseUrl = getSetting('ai_base_url') || 'https://api.deepseek.com';
   const modelBaseUrl = getSetting('ai_model_base_url') || 'https://api.deepseek.com';
-  const model = getSetting('ai_model') || 'deepseek-chat';
+  const model = getSetting('ai_model') || 'deepseek-v4-flash';
 
   const client = new LLMClient(new Config({ apiKey, baseUrl, modelBaseUrl }));
   const prompt = `Synaps 的工具 "${tool}" 执行失败，以下是失败输出：\n\n${truncate(result, 2000)}\n\n请用中文只输出以下四行，不要任何多余内容：\n❌ 失败原因：一句话概括\n🔍 具体分析：2-3 句详细说明\n💡 修复建议：一条具体可执行的修复步骤\n🔄 一键修复：如果需要 Agent 自动修复写"需要"，否则写"不需要"`;

@@ -38,7 +38,7 @@ export function runDiagnostics(): Record<string, unknown> {
       nodeVersion: process.version,
     },
     ai: {
-      model: getSetting('ai_model') || 'deepseek-chat',
+      model: getSetting('ai_model') || 'deepseek-v4-flash',
       baseUrl: getSetting('ai_base_url') || 'https://api.deepseek.com',
       apiKeyConfigured: !!aiApiKey,
     },
