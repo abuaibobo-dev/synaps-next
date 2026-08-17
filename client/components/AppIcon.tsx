@@ -13,7 +13,7 @@ export type AppIconName =
   | 'x' | 'rotate-cw' | 'undo' | 'download' | 'chevron-down' | 'chevron-up'
   | 'stop' | 'spinner' | 'file-pen' | 'quote-left' | 'microchip' | 'bars'
   | 'copy' | 'share-2' | 'bolt' | 'file-export' | 'file-import'
-  | 'chevron-left' | 'user' | 'key' | 'info' | 'plug' | 'database'
+  | 'chevron-left' | 'user' | 'key' | 'info' | 'plug' | 'database' | 'satellite-dish'
   | 'refresh-cw' | 'trash-2' | 'lock' | 'palette' | 'plus' | 'chevron-right';
 
 // Feather 线性图标（统一线条风格），缺失的少量图标用 FontAwesome6 兜底
@@ -72,6 +72,7 @@ const FA6_FALLBACK: Partial<Record<AppIconName, React.ComponentProps<typeof Font
   'file-import': 'file-import',
   palette: 'palette',
   plug: 'plug',
+  'satellite-dish': 'satellite-dish',
 };
 
 interface AppIconProps {
