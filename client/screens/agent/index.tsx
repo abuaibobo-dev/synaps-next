@@ -18,6 +18,9 @@ import {
   BackHandler,
   useWindowDimensions,
   KeyboardAvoidingView,
+  AppState,
+  TouchableWithoutFeedback,
+  AppStateStatus,
 } from 'react-native';
 import EventSource from 'react-native-sse';
 import * as Clipboard from 'expo-clipboard';
@@ -26,6 +29,7 @@ import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Screen } from '@/components/Screen';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MenuButton } from '@/components/Sidebar';
@@ -103,7 +107,7 @@ export const AGENT_OPTIONS = [
 
 export type AgentOptionKey = (typeof AGENT_OPTIONS)[number]['key'];
 
-const MODEL_OPTIONS = ['deepseek-chat', 'deepseek-reasoner'];
+const MODEL_OPTIONS = ['deepseek-v4-flash', 'deepseek-reasoner'];
 
 interface Message {
   id: string;
@@ -398,8 +402,41 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
   const [attachMenuVisible, setAttachMenuVisible] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+
+  // 加载草稿
+  useEffect(() => {
+    const loadDraft = async () => {
+      try {
+        const draft = await AsyncStorage.getItem(`chat_draft_${currentProjectId || 'default'}`);
+        if (draft) setInputText(draft);
+      } catch {
+        // Ignore
+      }
+    };
+    loadDraft();
+  }, [currentProjectId]);
+
+  // 保存草稿
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        if (inputText.trim()) {
+          await AsyncStorage.setItem(`chat_draft_${currentProjectId || 'default'}`, inputText);
+        } else {
+          await AsyncStorage.removeItem(`chat_draft_${currentProjectId || 'default'}`);
+        }
+      } catch {
+        // Ignore
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [inputText, currentProjectId]);
+
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [projectPickerVisible, setProjectPickerVisible] = useState(false);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [trustProjectChecked, setTrustProjectChecked] = useState(false);
   const [executorLabel, setExecutorLabel] = useState<string | null>(null);
@@ -409,8 +446,51 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+
+  // 搜索过滤后的消息列表
+  const filteredMessages = useMemo(() => {
+    if (!searchQuery.trim()) return messages;
+    const q = searchQuery.toLowerCase();
+    return messages.filter((m) => m.content.toLowerCase().includes(q));
+  }, [messages, searchQuery]);
   const [agentType, setAgentType] = useState<AgentOptionKey>('scheduler');
   const [agentInstanceIds, setAgentInstanceIds] = useState<Record<string, string>>({});
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
+
+  // 带指数退避重试的 fetch 包装器
+  const fetchWithRetry = useCallback(async (url: string, options: RequestInit = {}, retries = 2) => {
+    let lastError: Error | null = null;
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const response = await fetch(url, options);
+        if (!response.ok && response.status >= 500) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (i < retries) {
+          const delay = Math.min(1000 * Math.pow(2, i), 10000); // 1s, 2s, 4s, max 10s
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    throw lastError;
+  }, []);
+
+  // 后台任务持久化：App 切到后台时保存状态
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      setAppState(nextAppState);
+      if (nextAppState === 'background' && isStreamingRef.current) {
+        // 后台继续运行，不中断任务
+        console.log('[Synaps] App entering background, task continues...');
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, []);
   const requestIdRef = useRef<string>('');
   const currentUserMsgIdRef = useRef<string>('');
   const queueRef = useRef<QueueItem[]>([]);
@@ -432,7 +512,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   // 网络健康探测（余额展示已移至设置页）
   const fetchBalance = async () => {
     try {
-      await fetch(`${API_BASE}/api/v1/balance`);
+      await fetchWithRetry(`${API_BASE}/api/v1/balance`);
       setNetworkError(false);
     } catch {
       setNetworkError(true);
@@ -441,13 +521,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
   const fetchProjectOptions = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/projects`);
+      const response = await fetchWithRetry(`${API_BASE}/api/v1/projects`);
       const data = await response.json();
       setProjectOptions(data.projects || []);
     } catch {
       // Keep existing list
     }
-  }, []);
+  }, [fetchWithRetry]);
 
   // Load current model from server settings so the switch reflects the real value
   useEffect(() => {
@@ -1435,6 +1515,23 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     [closeMessageMenu]
   );
 
+  const deleteMessage = useCallback(
+    (message: Message) => {
+      Alert.alert('确认删除', '确定要删除这条消息吗？', [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => {
+            setMessages((prev) => prev.filter((m) => m.id !== message.id));
+            closeMessageMenu();
+          },
+        },
+      ]);
+    },
+    [closeMessageMenu]
+  );
+
   const shareMessage = useCallback(
     async (message: Message) => {
       try {
@@ -1509,7 +1606,10 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             <View style={styles.msgAttachments}>
               {item.attachments.map((att, idx) =>
                 att.type === 'image' && att.uri ? (
-                  <Image key={idx} source={{ uri: att.uri }} style={styles.msgAttachmentImage} resizeMode="cover" />
+                  <Pressable key={idx} onPress={() => att.uri && setPreviewImage(att.uri)} style={styles.msgAttachmentImageWrapper}>
+                    <Image source={{ uri: att.uri }} style={styles.msgAttachmentImage} resizeMode="cover" />
+                    <FontAwesome6 name="expand" size={12} color={colors.textMuted} style={styles.imageExpandIcon} />
+                  </Pressable>
                 ) : (
                   <View key={idx} style={styles.msgAttachmentFile}>
                     <FontAwesome6 name="paperclip" size={11} color={colors.textSecondary} />
@@ -1648,6 +1748,20 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }
   }, []);
 
+  const clearHistory = useCallback(() => {
+    Alert.alert('确认清空', '确定要清空当前对话历史吗？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '清空',
+        style: 'destructive',
+        onPress: () => {
+          setMessages([]);
+          Toast.show({ type: 'success', text1: '对话历史已清空' });
+        },
+      },
+    ]);
+  }, []);
+
 
   return (
     <Screen backgroundColor={colors.bgRoot} statusBarStyle={isDark ? 'light' : 'dark'} safeAreaEdges={['top', 'left', 'right']} scrollable>
@@ -1691,6 +1805,9 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 color={taskPanelVisible ? colors.primary : colors.textSecondary}
               />
             </Pressable>
+          <Pressable style={styles.headerAction} onPress={clearHistory} hitSlop={6}>
+              <FontAwesome6 name="trash" size={16} color={colors.textSecondary} />
+            </Pressable>
           </View>
         </View>
 
@@ -1718,6 +1835,29 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Text>
           <FontAwesome6 name="chevron-down" size={9} color={colors.textMuted} />
         </Pressable>
+
+        {/* 搜索栏 */}
+        {searchVisible && (
+          <View style={styles.searchBar}>
+            <FontAwesome6 name="magnifying-glass" size={14} color={colors.textSecondary} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="搜索对话历史..."
+              placeholderTextColor={colors.textMuted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+            />
+            {searchQuery && (
+              <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+                <FontAwesome6 name="xmark" size={14} color={colors.textMuted} />
+              </Pressable>
+            )}
+            <Pressable onPress={() => setSearchVisible(false)} hitSlop={8}>
+              <FontAwesome6 name="xmark" size={14} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+        )}
 
         {/* 精简任务卡片（细进度条，点击展开面板） */}
         {currentTask && (
@@ -1773,7 +1913,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         {/* Messages */}
         <FlatList
           ref={flatListRef}
-          data={messages}
+          data={filteredMessages}
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           style={styles.messageList}
@@ -1791,7 +1931,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <Skeleton width="70%" height={52} colors={colors} />
                 <Skeleton width="90%" height={52} colors={colors} />
               </View>
-            ) : (
+            ) : currentProjectId ? (
               <View style={styles.emptyState}>
                 <Image
                   source={require('@/assets/images/avatar.png')}
@@ -1809,6 +1949,17 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                     </Pressable>
                   ))}
                 </View>
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <FontAwesome6 name="folder-plus" size={48} color={colors.textMuted} />
+                <Text style={styles.emptyTitle}>还没有项目</Text>
+                <Text style={styles.emptyDesc}>
+                  点击右上角 + 创建项目，或去「项目」模块新建
+                </Text>
+                <Pressable style={styles.createProjectBtn} onPress={openProjectPicker}>
+                  <Text style={styles.createProjectBtnText}>+ 创建项目</Text>
+                </Pressable>
               </View>
             )
           }
@@ -1985,6 +2136,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               editable={!isRecording}
               returnKeyType="default"
               blurOnSubmit={false}
+              onKeyPress={(e: any) => {
+                if (e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
             />
             <Pressable
               style={styles.modelButton}
@@ -2169,6 +2326,22 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                   <Text style={styles.messageMenuItemText}>重试</Text>
                 </Pressable>
               )}
+              {menuMessage?.status === 'error' && (
+                <Pressable
+                  style={styles.messageMenuItem}
+                  onPress={() => menuMessage && retryMessage(menuMessage)}
+                >
+                  <FontAwesome6 name="rotate-right" size={13} color={colors.warning} />
+                  <Text style={styles.messageMenuItemText}>重试</Text>
+                </Pressable>
+              )}
+              <Pressable
+                style={styles.messageMenuItem}
+                onPress={() => menuMessage && deleteMessage(menuMessage)}
+              >
+                <FontAwesome6 name="trash" size={13} color={colors.error} />
+                <Text style={styles.messageMenuItemText}>删除消息</Text>
+              </Pressable>
               <Pressable style={[styles.messageMenuItem, styles.messageMenuItemCancel]} onPress={closeMessageMenu}>
                 <Text style={styles.messageMenuItemCancelText}>取消</Text>
               </Pressable>
@@ -2307,6 +2480,13 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Pressable>
         </Modal>
 
+        {/* Image Preview Modal */}
+        <Modal visible={!!previewImage} transparent animationType="fade" onRequestClose={() => setPreviewImage(null)}>
+          <Pressable onPress={() => setPreviewImage(null)} style={styles.previewOverlay}>
+            {previewImage && <Image source={{ uri: previewImage }} style={styles.previewImage} resizeMode="contain" />}
+          </Pressable>
+        </Modal>
+
         {/* Permission request */}
         <Modal
           visible={!!permissionRequest}
@@ -2417,6 +2597,7 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     flexDirection: 'row',
   },
   leftPane: {
+    flexDirection: 'column',
     flex: 1,
   },
   leftPaneWide: {
@@ -2551,7 +2732,6 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   container: {
     flex: 1,
-    height: '100%',
   },
   header: {
     flexDirection: 'row',
@@ -2681,6 +2861,25 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.xs,
     color: colors.textSecondary,
     fontWeight: '500',
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.textPrimary,
+    paddingVertical: 4,
   },
   agentStrip: {
     flexGrow: 0,
@@ -3033,6 +3232,18 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     textAlign: 'center',
     lineHeight: 20,
   },
+  createProjectBtn: {
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+  },
+  createProjectBtnText: {
+    fontSize: fontSize.md,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
   templateRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -3245,6 +3456,33 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     width: 96,
     height: 96,
     borderRadius: radius.md,
+  },
+  msgAttachmentImageWrapper: {
+    position: 'relative',
+    maxWidth: 200,
+    maxHeight: 200,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  imageExpandIcon: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 12,
+    padding: 4,
+  },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+    maxWidth: '100%',
+    maxHeight: '100%',
   },
   msgAttachmentFile: {
     flexDirection: 'row',

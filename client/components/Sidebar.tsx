@@ -47,9 +47,16 @@ interface SidebarModule {
   icon: AppIconName;
 }
 
+interface SidebarModule {
+  key: ModuleKey;
+  label: string;
+  icon: AppIconName;
+  unreadCount?: number;
+}
+
 const MODULES: SidebarModule[] = [
   { key: 'projects', label: '项目', icon: 'folder' },
-  { key: 'agent', label: 'Agent', icon: 'bot' },
+  { key: 'agent', label: 'Agent', icon: 'bot', unreadCount: 0 },
   { key: 'code', label: '代码', icon: 'code' },
   { key: 'terminal', label: '终端', icon: 'terminal' },
   { key: 'apk', label: 'APK', icon: 'package' },
@@ -109,6 +116,7 @@ interface SidebarProps {
   activeModule: ModuleKey;
   onModuleChange: (key: ModuleKey) => void;
   onClose: () => void;
+  agentUnreadCount?: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -118,7 +126,7 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-export function Sidebar({ visible, activeModule, onModuleChange, onClose }: SidebarProps) {
+export function Sidebar({ visible, activeModule, onModuleChange, onClose, agentUnreadCount = 0 }: SidebarProps) {
   const { isDark } = useThemeColors();
   const c = useMemo(() => buildSidebarColors(isDark), [isDark]);
   const styles = useMemo(() => createStyles(c), [c]);
@@ -440,6 +448,23 @@ const createStyles = (c: SidebarColors) =>
     moduleLabelActive: {
       color: c.textActive,
       fontWeight: '600',
+    },
+    unreadBadge: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: '#F44336',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    unreadBadgeText: {
+      fontSize: 9,
+      fontWeight: '700',
+      color: '#FFFFFF',
     },
     tooltip: {
       position: 'absolute',
