@@ -314,7 +314,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
         <Modal visible={modalVisible} transparent animationType="slide">
           <KeyboardAvoidingView
             style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>

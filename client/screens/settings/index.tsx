@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput, Image } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
-import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
@@ -1032,7 +1031,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           Alert.alert('安装失败', data?.error || '未知错误');
           return;
         }
-        Toast.show({ type: 'success', text1: `已安装 ${data.name}` });
+        Alert.alert('已安装', `${data.name}`);
         try {
           const r = await fetch(`${API_BASE}/api/v1/skills`);
           const d = await r.json();
@@ -1055,14 +1054,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       const res = await fetch(`${API_BASE}/api/v1/skill-store/maintenance`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        Toast.show({ type: 'error', text1: '检查更新失败', text2: data?.error || '未知错误' });
+        Alert.alert('检查更新失败', data?.error || '未知错误');
         return;
       }
       const parts: string[] = [];
       if (data.updated > 0) parts.push(`更新 ${data.updated} 个`);
       if (data.promoted > 0) parts.push(`转正式 ${data.promoted} 个`);
       if (data.removed > 0) parts.push(`停用 ${data.removed} 个`);
-      Toast.show({ type: 'success', text1: '检查完成', text2: parts.length ? parts.join(' · ') : '已是最新' });
+      Alert.alert('检查完成', parts.length ? parts.join(' · ') : '已是最新');
       try {
         const r = await fetch(`${API_BASE}/api/v1/skills`);
         const d = await r.json();
@@ -1071,7 +1070,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         // 刷新失败不影响
       }
     } catch {
-      Toast.show({ type: 'error', text1: '检查更新失败', text2: '无法连接后端' });
+      Alert.alert('检查更新失败', '无法连接后端');
     } finally {
       setSkillStoreChecking(false);
     }
