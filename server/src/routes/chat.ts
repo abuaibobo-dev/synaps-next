@@ -219,6 +219,17 @@ You have access to tools that let you interact with the project files:
 - goal_set: Create a long-term autonomous goal (args: title, description optional, steps optional array of strings). Persisted per project; use for multi-turn/long-horizon tasks.
 - goal_status: Show the current active goal's progress (args: goalId optional; defaults to latest active goal for the project). Read-only.
 - goal_loop: Advance the current goal (args: note optional, milestone true at key checkpoints, done true to finish, nextStep optional). Medium risk: milestone checkpoints pause and require user approval.
+- swarm_init: Initialize a multi-agent swarm for a complex task (args: query "任务描述", topology optional "flat"|"hierarchical"|"mesh"|"ring"). Analyzes task characteristics and auto-selects the best coordination topology. Returns swarm ID and recommended topology.
+- swarm_status: Show swarm status (args: swarmId). Returns topology, agent list, task progress, and consensus state.
+- swarm_list: List all active swarms for the current project. Read-only.
+- swarm_execute: Execute the next pending task in a swarm (args: swarmId). Assigns task to available agent and returns execution details.
+- swarm_report: Report task result back to swarm (args: swarmId, taskId, success boolean, result). Updates agent metrics and checks if swarm is complete.
+- agent_spawn: Spawn a new swarm agent (args: type, name optional, topology optional). Returns agent ID and status.
+- agent_terminate: Terminate a swarm agent (args: agentId, graceful optional). Cleans up child agents if graceful.
+- consensus_submit: Submit a file change proposal for consensus (args: filePath, content). Other agents vote on the change.
+- consensus_vote: Vote on a proposal (args: proposalId, approve boolean). Majority wins.
+- learning_stats: Show learning statistics (args: projectId optional). Returns success rate, topology performance, and recent insights.
+- learning_suggest: Get optimization suggestions based on historical data. Returns topology/tool/timeout recommendations.
 
 - device_action: Control this phone's screen. Args: type one of "tap" (params x,y), "swipe" (params x1,y1,x2,y2,duration), "screenshot" (no params, returns saved PNG path + size), "ui_dump" (no params, returns the visible UI tree with bounds), "back", "home", "launch_app" (params package). Requires the accessibility service enabled in Settings → 设备控制. Medium risk, requires confirmation.
 - generate_diagram: Create an editorial SVG diagram (no Mermaid). Args: type one of flowchart/architecture/sequence/erd/dependency/roadmap/timeline/swimlane, title, nodes [{id,label,kind?,layer?,lane?,fields?}], edges [{from,to,label?}]. Use when user asks 画架构图/流程图/依赖图/时序图/ER图/路线图/项目规划/调用链/泳道. Returns __SYNAPS_DIAGRAM__ + SVG which MUST be echoed verbatim in your final reply (the chat renders it as an image). Before drawing, read_skill "diagram-design". Medium risk.
@@ -1268,6 +1279,151 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       saveDb();
       logAudit(projectId, 'goal_loop', `推进目标：${goal.title} 至第 ${currentStep} 步`, 'medium', 'auto');
       return formatGoalStatus({ ...goal, current_step: currentStep, notes_json: JSON.stringify(notes) });
+    }
+
+
+    case 'swarm_init': {
+      const tc = toolCall as any;
+      const taskDesc = tc.query || tc.message || '未指定任务';
+      const topology = tc.topology || undefined;
+      const cwd = resolveProjectPath(projectId, '');
+      let structure: string[] = [];
+      try {
+        const entries = fs.readdirSync(cwd, { withFileTypes: true });
+        structure = entries
+          .filter((e) => !e.name.startsWith('.') && !['node_modules', 'dist', 'build', '.git'].includes(e.name))
+          .slice(0, 30)
+          .map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`);
+      } catch { /* ignore */ }
+
+      // 获取历史失败次数
+      const prevFailures = queryOne(
+        `SELECT COUNT(*) as cnt FROM agent_memory WHERE namespace = 'learning' AND value LIKE '%false%'`,
+        []
+      ) as any;
+      const failureCount = prevFailures?.cnt || 0;
+
+      const { initSwarm, populateSwarm, saveSwarmToDb } = await import('../swarm/index.js');
+      const { inferCharacteristics, analyzeAndRecommend } = await import('../swarm/topology.js');
+
+      const chars = inferCharacteristics(taskDesc, structure, failureCount);
+      const rec = topology ? { topology, confidence: 1.0, reasoning: '用户指定', maxConcurrency: 1, agentRoles: [] } : analyzeAndRecommend(chars);
+
+      const swarm = initSwarm(projectId || '', taskDesc, structure, failureCount, topology);
+      
+      logAudit(projectId, 'swarm_init', `初始化蜂群：${taskDesc.slice(0, 80)}（拓扑: ${rec.topology}，置信度: ${rec.confidence}）`, 'none', 'auto');
+      
+      return `🐝 Swarm 初始化完成\n\n拓扑: ${rec.topology}\n置信度: ${(rec.confidence * 100).toFixed(0)}%\n原因: ${rec.reasoning}\n最大并发: ${rec.maxConcurrency}\n\n建议角色: ${rec.agentRoles.join(', ')}\n\n使用 swarm_execute 推进任务，team_plan 先制定步骤。`;
+    }
+
+    case 'swarm_status': {
+      const tc = toolCall as any;
+      const { getSwarmStatus, listSwarms } = await import('../swarm/index.js');
+      const swarmId = tc.swarmId || tc.query;
+      if (swarmId) {
+        const swarm = getSwarmStatus(swarmId);
+        if (!swarm) return 'Swarm not found: ' + swarmId;
+        return `🐝 Swarm ${swarm.id}\n拓扑: ${swarm.topology}\n状态: ${swarm.status}\n任务: ${swarm.tasks.length} 个（${swarm.tasks.filter(t => t.status === 'done').length} 完成）\nAgent: ${swarm.agentIds.length} 个`;
+      }
+      const swarms = listSwarms(projectId || undefined);
+      if (swarms.length === 0) return '当前项目没有活跃的 Swarm。使用 swarm_init 创建。';
+      return swarms.map(s => `🐝 ${s.id} | ${s.topology} | ${s.status} | ${s.tasks.length} tasks`).join('\n');
+    }
+
+    case 'swarm_list': {
+      const { listSwarms } = await import('../swarm/index.js');
+      const swarms = listSwarms(projectId || undefined);
+      if (swarms.length === 0) return '当前项目没有活跃的 Swarm。';
+      return swarms.map(s => `🐝 ${s.id}\n  拓扑: ${s.topology} | 状态: ${s.status}\n  任务: ${s.tasks.filter(t => t.status === 'done').length}/${s.tasks.length} 完成\n  Agent: ${s.agentIds.length} 个`).join('\n\n');
+    }
+
+    case 'swarm_execute': {
+      const tc = toolCall as any;
+      const { executeNextTask, getSwarmStatus } = await import('../swarm/index.js');
+      const swarmId = tc.swarmId || tc.query;
+      if (!swarmId) return 'Error: swarmId required';
+      const task = executeNextTask(swarmId);
+      if (!task) return '没有待执行的任务，或没有可用的 Agent。';
+      return `⚡ 执行任务 #${task.step}: ${task.title}\n分配给: ${task.assignedAgentId}\n文件: ${task.files.join(', ') || '-'}`;
+    }
+
+    case 'swarm_report': {
+      const tc = toolCall as any;
+      const { reportTaskResult, getSwarmStatus, saveSwarmToDb } = await import('../swarm/index.js');
+      const { recordExecution } = await import('../swarm/learning.js');
+      const swarmId = tc.swarmId;
+      const taskId = tc.taskId;
+      const success = tc.success !== false;
+      const result = tc.result || tc.query || '';
+      if (!swarmId || !taskId) return 'Error: swarmId and taskId required';
+      reportTaskResult(swarmId, taskId, success, result);
+      const swarm = getSwarmStatus(swarmId);
+      if (swarm) {
+        if (swarm) saveSwarmToDb(swarm);
+        if (swarm.status === 'completed' || swarm.status === 'failed') {
+          recordExecution(projectId || '', swarm.objective, swarm.topology, swarm.status === 'completed', {
+            complexity: 0, fileCount: 0, steps: swarm.tasks.length, responseTimeMs: 0, retryCount: 0, toolsUsed: [],
+          }, swarm.status === 'completed' ? 'Swarm 任务全部完成' : 'Swarm 部分任务失败');
+        }
+      }
+      return `✅ 结果已报告。Swarm 状态: ${swarm?.status || 'unknown'}`;
+    }
+
+    case 'agent_spawn': {
+      const tc = toolCall as any;
+      const { spawnAgent } = await import('../swarm/agentLifecycle.js');
+      const type = (tc.type || 'code_engineer') as any;
+      const name = tc.name || 'Swarm-Agent';
+      const topo = tc.topology || 'flat';
+      const agent = spawnAgent(type, name, topo);
+      logAudit(projectId, 'agent_spawn', `Spawn Agent: ${name} (${type}, ${topo})`, 'none', 'auto');
+      return `🤖 Agent spawned: ${agent.id}\n类型: ${agent.type}\n名称: ${agent.name}\n拓扑: ${agent.topology}\n状态: ${agent.status}`;
+    }
+
+    case 'agent_terminate': {
+      const tc = toolCall as any;
+      const { terminateAgent } = await import('../swarm/agentLifecycle.js');
+      const agentId = tc.agentId || tc.query;
+      if (!agentId) return 'Error: agentId required';
+      const graceful = tc.graceful !== false;
+      const ok = terminateAgent(agentId, graceful);
+      return ok ? `🔴 Agent ${agentId} terminated` : `Agent ${agentId} not found`;
+    }
+
+    case 'consensus_submit': {
+      const tc = toolCall as any;
+      const { submitProposal } = await import('../swarm/consensus.js');
+      const filePath = tc.filePath || tc.path;
+      const contentVal = tc.content || tc.query || '';
+      if (!filePath) return 'Error: filePath required';
+      const proposal = submitProposal('current', 'scheduler', 'file_write', filePath, contentVal);
+      logAudit(projectId, 'consensus_submit', `提交变更提案: ${filePath}`, 'medium', 'auto');
+      return `📋 提案已提交: ${proposal.id}\n文件: ${filePath}\n状态: ${proposal.state}`;
+    }
+
+    case 'consensus_vote': {
+      const tc = toolCall as any;
+      const { vote } = await import('../swarm/consensus.js');
+      const proposalId = tc.proposalId;
+      const approve = tc.approve !== false;
+      if (!proposalId) return 'Error: proposalId required';
+      const result = vote(proposalId, 'scheduler', approve);
+      return `🗳️ 投票结果: ${result.accepted ? '✅ 通过' : '⏳ 等待更多投票'}\n票数: ${result.totalVotes}/${result.requiredVotes}`;
+    }
+
+    case 'learning_stats': {
+      const tc = toolCall as any;
+      const { getLearningStats } = await import('../swarm/learning.js');
+      const pid = tc.projectId || projectId;
+      const stats = getLearningStats(pid);
+      return `📊 学习统计\n总执行: ${stats.totalExecutions}\n成功率: ${(stats.successRate * 100).toFixed(1)}%\n平均响应: ${(stats.avgResponseTime / 1000).toFixed(1)}s\n拓扑分布: ${JSON.stringify(stats.topologies)}\n最近洞察: ${stats.recentInsights.join('; ') || '暂无'}`;
+    }
+
+    case 'learning_suggest': {
+      const { analyzeAndSuggest } = await import('../swarm/learning.js');
+      const suggestions = analyzeAndSuggest(projectId || undefined);
+      if (suggestions.length === 0) return '暂无优化建议（需要更多执行数据）';
+      return suggestions.map(s => `💡 [${s.type}] ${s.suggestion} (置信度: ${(s.confidence * 100).toFixed(0)}%, 基于 ${s.basedOn} 条记录)`).join('\n');
     }
 
     case 'run_command': {
