@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput, Image } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
+import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { MenuButton } from '@/components/Sidebar';
 import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
@@ -1731,7 +1732,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <SettingRow
           label="CocoLoop 技能商店"
           value="17 万+ 免费技能 · 搜索安装"
-          icon="store"
+          icon="database"
           iconColor={ACCENT}
           sc={sc}
           onPress={openSkillStore}
@@ -2227,7 +2228,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               <View style={styles.skillStoreHeader}>
                 <Text style={styles.modalTitle}>技能商店</Text>
                 <Pressable onPress={() => setSkillStoreVisible(false)} hitSlop={8} style={styles.skillStoreClose}>
-                  <AppIcon name="xmark" size={18} color={colors.textSecondary} />
+                  <AppIcon name="x" size={18} color={colors.textSecondary} />
                 </Pressable>
               </View>
               <View style={styles.skillStoreSearchRow}>
@@ -2242,7 +2243,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                   autoCapitalize="none"
                 />
                 <Pressable style={styles.skillStoreSearchBtn} onPress={() => fetchStoreSkills(skillStoreQuery)}>
-                  <AppIcon name="magnifying-glass" size={16} color="#FFFFFF" />
+                  <AppIcon name="search" size={16} color="#FFFFFF" />
                 </Pressable>
               </View>
               <View style={styles.skillStoreMetaRow}>

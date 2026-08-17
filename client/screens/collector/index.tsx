@@ -4,6 +4,7 @@ import {
   ScrollView, RefreshControl, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { getApiBase } from '@/utils';
 import { useThemeColors } from '@/components/ThemeProvider';
@@ -11,6 +12,7 @@ import { spacing, radius, fontSize } from '@/utils/theme';
 import type { ModuleKey } from '@/components/Sidebar';
 
 const API_BASE = getApiBase();
+const ACCENT = '#3A3A3A';
 type TabKey = 'overview' | 'rules' | 'logs' | 'memory';
 
 interface CollectorProps {
@@ -23,7 +25,7 @@ function OverviewTab() {
   const [overview, setOverview] = useState<any>(null);
   const [rules, setRules] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const colors = useThemeColors();
+  const { colors } = useThemeColors();
 
   const fetchOverview = useCallback(async () => {
     try {
@@ -108,7 +110,7 @@ function RulesTab() {
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
   const [captionMode, setCaptionMode] = useState('keep');
-  const colors = useThemeColors();
+  const { colors } = useThemeColors();
 
   const fetchRules = useCallback(async () => {
     try {
@@ -205,7 +207,7 @@ function RulesTab() {
         keyExtractor={(item: any) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} />}
         ListHeaderComponent={
-          <Pressable style={[styles.createBtn, { backgroundColor: colors.accent }]} onPress={openCreate}>
+          <Pressable style={[styles.createBtn, { backgroundColor: ACCENT }]} onPress={openCreate}>
             <Feather name="plus" size={14} color="#fff" />
             <Text style={styles.createBtnText}>新建采集规则</Text>
           </Pressable>
@@ -302,7 +304,7 @@ function RulesTab() {
                 <Text style={{ color: colors.textSecondary }}>取消</Text>
               </Pressable>
               <Pressable
-                style={[styles.modalBtn, { backgroundColor: colors.accent, opacity: (!newName.trim() || selectedSources.length === 0 || selectedTargets.length === 0) ? 0.5 : 1 }]}
+                style={[styles.modalBtn, { backgroundColor: ACCENT, opacity: (!newName.trim() || selectedSources.length === 0 || selectedTargets.length === 0) ? 0.5 : 1 }]}
                 onPress={createRule}
               >
                 <Text style={{ color: '#fff' }}>创建</Text>
@@ -320,7 +322,7 @@ function RulesTab() {
 function LogsTab() {
   const [logs, setLogs] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const colors = useThemeColors();
+  const { colors } = useThemeColors();
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -378,7 +380,7 @@ function MemoryTab() {
   const [query, setQuery] = useState('');
   const [memory, setMemory] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
-  const colors = useThemeColors();
+  const { colors } = useThemeColors();
 
   const search = useCallback(async () => {
     if (!query.trim()) return;
@@ -402,11 +404,11 @@ function MemoryTab() {
           onSubmitEditing={search}
           returnKeyType="search"
         />
-        <Pressable style={[styles.searchBtn, { backgroundColor: colors.accent }]} onPress={search}>
+        <Pressable style={[styles.searchBtn, { backgroundColor: ACCENT }]} onPress={search}>
           <Feather name="search" size={16} color="#fff" />
         </Pressable>
       </View>
-      {searching && <ActivityIndicator style={{ marginTop: 20 }} color={colors.accent} />}
+      {searching && <ActivityIndicator style={{ marginTop: 20 }} color={ACCENT} />}
       <FlatList
         data={memory}
         keyExtractor={(item: any) => item.id}
@@ -428,7 +430,7 @@ function MemoryTab() {
 export default function CollectorScreen({ onOpenSidebar }: CollectorProps) {
   const [tab, setTab] = useState<TabKey>('overview');
   const [loginStatus, setLoginStatus] = useState<any>(null);
-  const colors = useThemeColors();
+  const { colors } = useThemeColors();
 
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/telegram/status`)
@@ -441,7 +443,7 @@ export default function CollectorScreen({ onOpenSidebar }: CollectorProps) {
     { key: 'overview', label: '总览', icon: 'layout' },
     { key: 'rules', label: '规则', icon: 'sliders' },
     { key: 'logs', label: '日志', icon: 'file-text' },
-    { key: 'memory', label: '记忆', icon: 'brain' },
+    { key: 'memory', label: '记忆', icon: 'database' },
   ];
 
   const renderContent = () => {
@@ -455,6 +457,7 @@ export default function CollectorScreen({ onOpenSidebar }: CollectorProps) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.bgRoot }]} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.separator }]}>
         <Pressable onPress={onOpenSidebar} hitSlop={8} style={styles.backBtn}>
@@ -474,11 +477,11 @@ export default function CollectorScreen({ onOpenSidebar }: CollectorProps) {
         {tabs.map(t => (
           <Pressable
             key={t.key}
-            style={[styles.tabItem, tab === t.key && { borderBottomColor: colors.accent }]}
+            style={[styles.tabItem, tab === t.key && { borderBottomColor: ACCENT }]}
             onPress={() => setTab(t.key)}
           >
-            <Feather name={t.icon} size={14} color={tab === t.key ? colors.accent : colors.textMuted} />
-            <Text style={[styles.tabLabel, { color: tab === t.key ? colors.accent : colors.textMuted }]}>{t.label}</Text>
+            <Feather name={t.icon} size={14} color={tab === t.key ? ACCENT : colors.textMuted} />
+            <Text style={[styles.tabLabel, { color: tab === t.key ? ACCENT : colors.textMuted }]}>{t.label}</Text>
           </Pressable>
         ))}
       </View>
@@ -495,13 +498,13 @@ export default function CollectorScreen({ onOpenSidebar }: CollectorProps) {
           </Text>
         </View>
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 // ==================== Styles ====================
 
-import { StyleSheet } from 'react-native';
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
