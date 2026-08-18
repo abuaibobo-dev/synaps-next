@@ -34,18 +34,21 @@ export function getHarnessConfig(projectPath?: string): HarnessConfig {
 export function harnessStatus(): Record<string, unknown> {
   const cfg = getHarnessConfig();
   const nodeVersion = process.version;
-  const nodeMajor = parseInt(nodeVersion.replace('v', '').split('.')[0] || '0', 10);
+  const nodeParts = nodeVersion.replace('v', '').split('.');
+  const nodeMajor = parseInt(nodeParts[0] || '0', 10);
+  const nodeMinor = parseInt(nodeParts[1] || '0', 10);
+  const nodeSatisfied = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 19);
   return {
     enabled: cfg.enabled,
     nodeVersion,
-    nodeSatisfied: nodeMajor >= 22,
+    nodeSatisfied,
     dshConfigured: !!cfg.dshPath,
     model: cfg.model,
     baseUrl: cfg.baseUrl,
     apiKeyConfigured: !!cfg.apiKey,
     workDir: cfg.workDir,
-    note: nodeMajor < 22
-      ? '当前 Node 版本过低，Harness 需要 Node 22.19+。请在 Termux 安装新版 Node 并配置 harness_node_path'
+    note: !nodeSatisfied
+      ? `当前 Node ${nodeVersion}，Harness 需要 Node 22.19+。请升级 Node`
       : 'OK',
   };
 }
@@ -62,9 +65,13 @@ export async function runHarnessTask(task: string, projectPath?: string): Promis
   }
 
   const nodeBin = cfg.nodePath || process.execPath;
-  const nodeMajor = parseInt(nodeBin === process.execPath ? process.version.replace('v', '').split('.')[0] || '0' : '0', 10);
-  if (nodeBin === process.execPath && nodeMajor < 22) {
-    throw new Error(`内置 Node 为 ${process.version}，Harness 需要 Node 22.19+。请在 Termux 安装新版 Node 并配置路径`);
+  if (nodeBin === process.execPath) {
+    const parts = process.version.replace('v', '').split('.');
+    const maj = parseInt(parts[0] || '0', 10);
+    const min = parseInt(parts[1] || '0', 10);
+    if (maj < 22 || (maj === 22 && min < 19)) {
+      throw new Error(`内置 Node ${process.version}，Harness 需要 Node 22.19+。请升级 Node`);
+    }
   }
 
   let args: string[];
