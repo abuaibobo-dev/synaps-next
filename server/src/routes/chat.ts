@@ -384,6 +384,15 @@ interface TeamPlan {
   tasks: TeamTask[];
 }
 
+/**
+ * 从模型回复中提取纯文本（排除 ```tool / ```json 代码块）
+ */
+function extractPlainText(response: string): string {
+  return response
+    .replace(/```(?:tool|json)\s*\n?[\s\S]*?\n?```/g, '')
+    .trim();
+}
+
 function parseToolCalls(response: string): ToolCall[] {
   const results: ToolCall[] = [];
   const seen = new Set<string>();
@@ -3048,6 +3057,12 @@ All file operations should use paths relative to the project root.`;
       // 工具轮次：思考片段已实时转发，这里收尾，去掉残留的工具 JSON 块
       res.write(`data: ${JSON.stringify({ thinking_end: true })}\n\n`);
 
+      // 提取模型推理文本（排除工具调用块），作为 content 事件发送给客户端
+      const reasoningText = extractPlainText(fullResponse);
+      if (reasoningText) {
+        res.write(`data: ${JSON.stringify({ content: reasoningText })}\n\n`);
+      }
+
       // 逐个执行本轮的全部工具调用
       for (const toolCall of toolCalls) {
       // 工具白名单检查（独立 Agent 只允许模板内工具；调度员临时执行权限除外）
@@ -3278,6 +3293,11 @@ All file operations should use paths relative to the project root.`;
       task_end: { id: taskId, status: cancelled ? 'cancelled' : 'done', durationMs: Date.now() - taskStartedAt },
     })}\n\n`);
     finishTask(taskId, cancelled ? 'cancelled' : 'done', Date.now());
+    // 在结束前转发最后一轮的推理文本（如果有）
+    const lastReasoning = extractPlainText(lastFullResponse || '');
+    if (lastReasoning) {
+      res.write(`data: ${JSON.stringify({ content: lastReasoning })}\n\n`);
+    }
     res.write(`data: ${JSON.stringify({
       content: cancelled
         ? '\n\n[任务已取消]'

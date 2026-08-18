@@ -914,14 +914,16 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     const finish = (userStatus: Message['status']) => {
       clearInterval(watchdog);
       clearInterval(typeTimer);
-      setDisplayedText(typewriterRef.current);
+      // 同步清空流式状态，避免空白气泡残留
+      const finalText = typewriterRef.current || accumulated || '';
+      setDisplayedText(finalText);
       settleUser(userStatus);
       setStreamingContent('');
       setRunningTool(null);
       setIsStreaming(false);
       isStreamingRef.current = false;
       setCurrentToolCalls([]);
-      es.close();
+      try { es.close(); } catch {}
       esRef.current = null;
       fetchBalance();
       dequeueNext();
@@ -941,6 +943,17 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
           };
           setMessages((prev) => [...prev, assistantMessage]);
+        } else if (executedToolCalls.length > 0) {
+          // 有工具调用但没有文本回复：生成摘要消息
+          const toolNames = executedToolCalls.map((tc) => tc.name).join(', ');
+          const summaryMsg: Message = {
+            id: `assist-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+            role: 'assistant',
+            content: `[已完成] 执行了 ${executedToolCalls.length} 个工具操作：${toolNames}`,
+            timestamp: Date.now(),
+            toolCalls: executedToolCalls,
+          };
+          setMessages((prev) => [...prev, summaryMsg]);
         }
         patchTask((t) => ({ ...t, status: t.status === 'running' ? 'done' : t.status, endedAt: Date.now() }));
         setDisplayedText(accumulated || typewriterRef.current);
@@ -1054,16 +1067,29 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           body: JSON.stringify({ requestId }),
         }).catch(() => {});
       } catch {}
-      setDisplayedText(accumulated);
-      if (accumulated) {
+      const errorContent = accumulated || typewriterRef.current || '';
+      setDisplayedText(errorContent);
+      if (errorContent.trim()) {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: accumulated + '\n\n[连接中断]',
+          content: errorContent + '\n\n[连接中断]',
           timestamp: Date.now(),
           status: 'error',
+          toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
+      } else if (executedToolCalls.length > 0) {
+        const toolNames = executedToolCalls.map((tc) => tc.name).join(', ');
+        const summaryMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `[已完成] 执行了 ${executedToolCalls.length} 个工具操作：${toolNames}\n\n[连接中断]`,
+          timestamp: Date.now(),
+          status: 'error',
+          toolCalls: executedToolCalls,
+        };
+        setMessages((prev) => [...prev, summaryMsg]);
       } else {
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
@@ -1076,22 +1102,36 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         setNetworkError(true);
       }
       patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
-      finish(accumulated ? 'sent' : 'error');
+      finish(errorContent || executedToolCalls.length > 0 ? 'sent' : 'error');
     });
 
     // 连接意外关闭（未收到 [DONE]）：结算消息状态，避免一直显示「发送中」
     es.addEventListener('close', () => {
       if (settled) return;
-      setDisplayedText(typewriterRef.current);
-      if (accumulated) {
+      const closeContent = accumulated || typewriterRef.current || '';
+      setDisplayedText(closeContent);
+      if (closeContent.trim()) {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: accumulated + '\n\n[连接已断开，未收到完整回复]',
+          content: closeContent + '\n\n[连接已断开，未收到完整回复]',
           timestamp: Date.now(),
           status: 'error',
+          toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
+      } else if (executedToolCalls.length > 0) {
+        // 有工具调用但无文本：仍然生成摘要，避免消息消失
+        const toolNames = executedToolCalls.map((tc) => tc.name).join(', ');
+        const summaryMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `[已完成] 执行了 ${executedToolCalls.length} 个工具操作：${toolNames}\n\n[连接已断开，未收到完整回复]`,
+          timestamp: Date.now(),
+          status: 'error',
+          toolCalls: executedToolCalls,
+        };
+        setMessages((prev) => [...prev, summaryMsg]);
       }
       patchTask((t) => ({ ...t, status: 'error', endedAt: Date.now() }));
       finish('sent');
