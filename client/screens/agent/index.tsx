@@ -2096,48 +2096,6 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               ))}
             </ScrollView>
           )}
-          {/* Agent 选择条（10 个 Agent，收进输入框） */}
-          <View style={styles.agentStrip}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.agentStripContent}
-              keyboardShouldPersistTaps="handled"
-            >
-              {AGENT_OPTIONS.map((opt) => {
-                const active = agentType === opt.key;
-                return (
-                  <Pressable
-                    key={opt.key}
-                    style={[styles.agentStripChip, active && styles.agentStripChipActive]}
-                    onPress={() => switchAgent(opt.key)}
-                  >
-                    <FontAwesome6 name={opt.icon} size={9} color={active ? '#FFFFFF' : colors.textSecondary} />
-                    <Text style={[styles.agentStripText, active && styles.agentStripTextActive]}>{opt.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {/* Model pill */}
-          <View style={styles.inputTopBar}>
-            <Pressable
-              style={styles.inputModelPill}
-              onPress={switchModel}
-              disabled={isStreaming || isRecording}
-            >
-              <FontAwesome6 name="microchip" size={9} color={colors.textMuted} />
-              <Text style={styles.inputModelText} numberOfLines={1}>{modelLabel}</Text>
-            </Pressable>
-            {isRecording && (
-              <View style={[styles.inputModelPill, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
-                <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: '#EF4444' }} />
-                <Text style={[styles.inputModelText, { color: '#EF4444' }]}>录音中</Text>
-              </View>
-            )}
-          </View>
-
           <View style={styles.inputRow}>
             <Text style={styles.inputPromptPrefix}>{'>'}</Text>
             <TextInput
@@ -2159,42 +2117,77 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 }
               }}
             />
-            <View style={styles.inputActions}>
-              <Pressable style={styles.inputIconBtn} onPress={() => setAttachMenuVisible(true)} hitSlop={6}>
-                <FontAwesome6 name="paperclip" size={13} color={colors.textMuted} />
+            <Pressable
+              style={[styles.sendButton, inputText.trim() ? styles.sendButtonActive : styles.sendButtonDisabled]}
+              onPress={handleSend}
+              disabled={!inputText.trim()}
+            >
+              <FontAwesome6
+                name={isStreaming ? 'spinner' : 'paper-plane'}
+                size={13}
+                color={(!inputText.trim() || isStreaming) ? colors.textMuted : (isDark ? '#0D0D0D' : '#FFFFFF')}
+                spin={isStreaming}
+                weight={400}
+              />
+            </Pressable>
+          </View>
+
+          {/* Bottom toolbar: model + agent + actions */}
+          <View style={styles.inputBottomBar}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.inputBottomBarContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Model switcher */}
+              <Pressable
+                style={styles.inputBottomPill}
+                onPress={switchModel}
+                disabled={isStreaming || isRecording}
+              >
+                <FontAwesome6 name="microchip" size={8} color={colors.textMuted} />
+                <Text style={styles.inputBottomPillText} numberOfLines={1}>{modelLabel}</Text>
+              </Pressable>
+
+              {AGENT_OPTIONS.map((opt) => {
+                const active = agentType === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    style={[styles.inputBottomChip, active && styles.inputBottomChipActive]}
+                    onPress={() => switchAgent(opt.key)}
+                  >
+                    <FontAwesome6 name={opt.icon} size={8} color={active ? (isDark ? '#0D0D0D' : '#FFFFFF') : colors.textMuted} />
+                    <Text style={[styles.inputBottomChipText, active && styles.inputBottomChipTextActive]}>{opt.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.inputBottomActions}>
+              <Pressable style={styles.inputBottomIconBtn} onPress={() => setAttachMenuVisible(true)} hitSlop={6}>
+                <FontAwesome6 name="paperclip" size={12} color={colors.textMuted} />
               </Pressable>
               <Pressable
-                style={styles.inputIconBtn}
+                style={styles.inputBottomIconBtn}
                 onPress={isRecording ? stopRecording : startRecording}
                 disabled={isStreaming}
               >
                 <FontAwesome6
                   name={isRecording ? 'stop' : 'microphone'}
-                  size={13}
+                  size={12}
                   color={isRecording ? '#EF4444' : colors.textMuted}
                 />
               </Pressable>
               <Pressable
-                style={styles.inputIconBtn}
+                style={styles.inputBottomIconBtn}
                 onPress={toggleAutoSpeak}
               >
                 <FontAwesome6
                   name={autoSpeak ? 'volume-high' : 'volume-xmark'}
-                  size={13}
+                  size={12}
                   color={autoSpeak ? colors.textPrimary : colors.textMuted}
-                />
-              </Pressable>
-              <Pressable
-                style={[styles.sendButton, inputText.trim() ? styles.sendButtonActive : styles.sendButtonDisabled]}
-                onPress={handleSend}
-                disabled={!inputText.trim()}
-              >
-                <FontAwesome6
-                  name={isStreaming ? 'spinner' : 'paper-plane'}
-                  size={13}
-                  color={(!inputText.trim() || isStreaming) ? colors.textMuted : (isDark ? '#0D0D0D' : '#FFFFFF')}
-                  spin={isStreaming}
-                  weight={400}
                 />
               </Pressable>
             </View>
@@ -2889,33 +2882,23 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     paddingVertical: 4,
   },
   agentStrip: {
-    flexGrow: 0,
-    marginBottom: 2,
+    display: 'none',
   },
   agentStripContent: {
     gap: 3,
     paddingRight: 4,
   },
   agentStripChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 7,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    display: 'none',
   },
   agentStripChipActive: {
-    backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+    display: 'none',
   },
   agentStripText: {
-    fontSize: 9,
-    color: colors.textMuted,
-    fontWeight: '500',
+    display: 'none',
   },
   agentStripTextActive: {
-    color: colors.textPrimary,
-    fontWeight: '600',
+    display: 'none',
   },
   messageList: {
     flex: 1,
@@ -3278,26 +3261,13 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     backgroundColor: colors.bgRoot,
   },
   inputTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 2,
-    marginBottom: 4,
+    display: 'none',
   },
   inputModelPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+    display: 'none',
   },
   inputModelText: {
-    fontSize: 10,
-    color: colors.textMuted,
-    fontWeight: '600',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    display: 'none',
   },
   replyBar: {
     flexDirection: 'row',
@@ -3364,18 +3334,10 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     paddingHorizontal: 2,
   },
   inputActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    paddingBottom: 8,
-    paddingLeft: 4,
+    display: 'none',
   },
   inputIconBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
+    display: 'none',
   },
   sendButton: {
     width: 30,
@@ -3390,6 +3352,70 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   sendButtonDisabled: {
     backgroundColor: 'transparent',
+  },
+  inputBottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 6,
+  },
+  inputBottomBarContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingRight: 4,
+  },
+  inputBottomPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+    flexShrink: 0,
+  },
+  inputBottomPillText: {
+    fontSize: 9,
+    color: colors.textMuted,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  inputBottomChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    flexShrink: 0,
+  },
+  inputBottomChipActive: {
+    backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.10)',
+  },
+  inputBottomChipText: {
+    fontSize: 8,
+    color: colors.textMuted,
+    fontWeight: '500',
+  },
+  inputBottomChipTextActive: {
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  inputBottomActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    flexShrink: 0,
+  },
+  inputBottomIconBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inputHint: {
     fontSize: 10,
