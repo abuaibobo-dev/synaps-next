@@ -1608,7 +1608,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 att.type === 'image' && att.uri ? (
                   <Pressable key={idx} onPress={() => att.uri && setPreviewImage(att.uri)} style={styles.msgAttachmentImageWrapper}>
                     <Image source={{ uri: att.uri }} style={styles.msgAttachmentImage} resizeMode="cover" />
-                    <FontAwesome6 name="expand" size={12} color={colors.textMuted} style={styles.imageExpandIcon} />
+                    <FontAwesome6 name="expand" size={13} color={colors.textMuted} style={styles.imageExpandIcon} />
                   </Pressable>
                 ) : (
                   <View key={idx} style={styles.msgAttachmentFile}>
@@ -1814,7 +1814,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         {/* API Key 引导条 */}
         {hasApiKey === false && (
           <Pressable style={styles.onboardBar} onPress={onOpenSidebar}>
-            <FontAwesome6 name="circle-exclamation" size={12} color="#FFFFFF" />
+            <FontAwesome6 name="circle-exclamation" size={13} color="#FFFFFF" />
             <Text style={styles.onboardBarText} numberOfLines={2}>
               尚未配置 API Key，Agent 无法工作 → 去设置填写
             </Text>
@@ -1825,7 +1825,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         <Pressable style={styles.contextBar} onPress={openProjectPicker} hitSlop={4}>
           <FontAwesome6
             name="folder-open"
-            size={12}
+            size={13}
             color={currentProjectId ? colors.primary : colors.warning}
           />
           <Text style={styles.contextProjectText} numberOfLines={1}>
@@ -1864,7 +1864,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           <Animated.View {...cardEntry}>
             <PressableScale style={styles.taskCard} onPress={() => setTaskPanelVisible(true)}>
               <View style={styles.taskCardHeader}>
-                <AppIcon name="list-checks" size={12} color={colors.textSecondary} />
+                <AppIcon name="list-checks" size={13} color={colors.textSecondary} />
                 <Text style={styles.taskCardName} numberOfLines={1}>{currentTask.name}</Text>
                 <View style={[styles.taskCardStatusPill, currentTask.status === 'error' && styles.taskCardStatusPillError]}>
                   {currentTask.status === 'running' ? (
@@ -2003,7 +2003,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                             typeof tc.args?.command === 'string' ? tc.args.command : '';
                           return (
                             <View key={idx} style={styles.toolCallBadge}>
-                              <ToolSpinner size={12} color={colors.primary} />
+                              <ToolSpinner size={13} color={colors.primary} />
                               <Text style={styles.toolCallText} numberOfLines={1}>
                                 {tc.name}
                                 {command ? `: ${command}` : ''}
@@ -2020,7 +2020,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble, styles.streamBubble]}>
                     {runningTool ? (
                       <>
-                        <ToolSpinner size={12} color={colors.primary} />
+                        <ToolSpinner size={13} color={colors.primary} />
                         <Text style={styles.thinkingText} numberOfLines={1}>
                           正在执行：{runningTool}
                         </Text>
@@ -2065,7 +2065,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 onPress={() => setReplyingTo(null)}
                 hitSlop={8}
               >
-                <FontAwesome6 name="xmark" size={12} color={colors.textSecondary} />
+                <FontAwesome6 name="xmark" size={13} color={colors.textSecondary} />
               </Pressable>
             </View>
           )}
@@ -2120,14 +2120,30 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </ScrollView>
           </View>
 
-          <View style={styles.inputWrapper}>
-            <Pressable style={styles.attachButton} onPress={() => setAttachMenuVisible(true)} hitSlop={6}>
-              <FontAwesome6 name="plus" size={14} color={colors.textSecondary} />
+          {/* Model pill */}
+          <View style={styles.inputTopBar}>
+            <Pressable
+              style={styles.inputModelPill}
+              onPress={switchModel}
+              disabled={isStreaming || isRecording}
+            >
+              <FontAwesome6 name="microchip" size={9} color={colors.textMuted} />
+              <Text style={styles.inputModelText} numberOfLines={1}>{modelLabel}</Text>
             </Pressable>
+            {isRecording && (
+              <View style={[styles.inputModelPill, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
+                <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: '#EF4444' }} />
+                <Text style={[styles.inputModelText, { color: '#EF4444' }]}>录音中</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.inputRow}>
+            <Text style={styles.inputPromptPrefix}>{'>'}</Text>
             <TextInput
               style={styles.textInput}
-              placeholder="Describe your development task..."
-              placeholderTextColor={colors.textMuted}
+              placeholder="输入指令..."
+              placeholderTextColor={isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)'}
               value={inputText}
               onChangeText={setInputText}
               multiline
@@ -2143,54 +2159,45 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 }
               }}
             />
-            <Pressable
-              style={styles.modelButton}
-              onPress={switchModel}
-              disabled={isStreaming || isRecording}
-              hitSlop={4}
-            >
-              <FontAwesome6 name="microchip" size={12} color={colors.textSecondary} />
-              <Text style={styles.modelButtonText} numberOfLines={1}>
-                {modelLabel}
-              </Text>
-            </Pressable>
-            <Pressable onPress={toggleAutoSpeak} style={styles.footerIconBtn} hitSlop={6}>
-              <FontAwesome6
-                name={autoSpeak ? 'volume-high' : 'volume-xmark'}
-                size={14}
-                color={autoSpeak ? colors.primary : colors.textMuted}
-              />
-            </Pressable>
-            <Pressable
-              style={[styles.voiceButton, isRecording && styles.voiceButtonActive]}
-              onPress={isRecording ? stopRecording : startRecording}
-              disabled={isStreaming}
-            >
-              <FontAwesome6
-                name={isRecording ? 'stop' : 'microphone'}
-                size={14}
-                color={isRecording ? colors.error : colors.textSecondary}
-              />
-            </Pressable>
-            <Pressable
-              style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-              onPress={handleSend}
-              disabled={!inputText.trim()}
-            >
-              <FontAwesome6
-                name={isStreaming ? 'spinner' : 'arrow-up'}
-                size={14}
-                color={(!inputText.trim() || isStreaming) ? colors.textMuted : (isDark ? '#0D0D0D' : '#FFFFFF')}
-                spin={isStreaming}
-                weight={400}
-              />
-            </Pressable>
-            {isRecording && (
-              <View style={styles.recordingOverlay} pointerEvents="none">
-                <View style={styles.recordingDot} />
-                <Text style={styles.recordingText}>录音中...</Text>
-              </View>
-            )}
+            <View style={styles.inputActions}>
+              <Pressable style={styles.inputIconBtn} onPress={() => setAttachMenuVisible(true)} hitSlop={6}>
+                <FontAwesome6 name="paperclip" size={13} color={colors.textMuted} />
+              </Pressable>
+              <Pressable
+                style={styles.inputIconBtn}
+                onPress={isRecording ? stopRecording : startRecording}
+                disabled={isStreaming}
+              >
+                <FontAwesome6
+                  name={isRecording ? 'stop' : 'microphone'}
+                  size={13}
+                  color={isRecording ? '#EF4444' : colors.textMuted}
+                />
+              </Pressable>
+              <Pressable
+                style={styles.inputIconBtn}
+                onPress={toggleAutoSpeak}
+              >
+                <FontAwesome6
+                  name={autoSpeak ? 'volume-high' : 'volume-xmark'}
+                  size={13}
+                  color={autoSpeak ? colors.textPrimary : colors.textMuted}
+                />
+              </Pressable>
+              <Pressable
+                style={[styles.sendButton, inputText.trim() ? styles.sendButtonActive : styles.sendButtonDisabled]}
+                onPress={handleSend}
+                disabled={!inputText.trim()}
+              >
+                <FontAwesome6
+                  name={isStreaming ? 'spinner' : 'paper-plane'}
+                  size={13}
+                  color={(!inputText.trim() || isStreaming) ? colors.textMuted : (isDark ? '#0D0D0D' : '#FFFFFF')}
+                  spin={isStreaming}
+                  weight={400}
+                />
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -2466,7 +2473,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                     </Text>
                   </View>
                   {project.id === currentProjectId && (
-                    <FontAwesome6 name="check" size={12} color={colors.success} />
+                    <FontAwesome6 name="check" size={13} color={colors.success} />
                   )}
                 </Pressable>
               ))}
@@ -2883,34 +2890,32 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   agentStrip: {
     flexGrow: 0,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   agentStripContent: {
-    gap: 4,
-    paddingRight: 8,
+    gap: 3,
+    paddingRight: 4,
   },
   agentStripChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    paddingHorizontal: 8,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingHorizontal: 7,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
   },
   agentStripChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
   },
   agentStripText: {
-    fontSize: 10,
-    color: colors.textSecondary,
-    fontWeight: '600',
+    fontSize: 9,
+    color: colors.textMuted,
+    fontWeight: '500',
   },
   agentStripTextActive: {
-    color: '#FFFFFF',
+    color: colors.textPrimary,
+    fontWeight: '600',
   },
   messageList: {
     flex: 1,
@@ -3265,140 +3270,165 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '600',
   },
   inputContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+    paddingTop: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     backgroundColor: colors.bgRoot,
+  },
+  inputTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 2,
+    marginBottom: 4,
+  },
+  inputModelPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  },
+  inputModelText: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   replyBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: 'rgba(85,85,85,0.08)',
-    borderWidth: 1,
-    borderColor: colors.primaryBorder,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.sm,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginBottom: spacing.xs,
   },
   replyBarLine: {
-    width: 3,
+    width: 2,
     alignSelf: 'stretch',
-    borderRadius: 2,
-    backgroundColor: colors.primary,
+    borderRadius: 1,
+    backgroundColor: colors.textMuted,
   },
   replyBarContent: {
     flex: 1,
   },
   replyBarLabel: {
-    fontSize: fontSize.xs,
+    fontSize: 9,
     fontWeight: '700',
-    color: colors.primary,
-    letterSpacing: 1,
+    color: colors.textMuted,
+    letterSpacing: 0.5,
   },
   replyBarText: {
-    fontSize: fontSize.sm,
+    fontSize: fontSize.xs,
     color: colors.textSecondary,
-    marginTop: 2,
+    marginTop: 1,
   },
   replyBarClose: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  inputWrapper: {
+  inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 2,
+    gap: 0,
+  },
+  inputPromptPrefix: {
+    fontSize: 15,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: colors.textMuted,
+    lineHeight: 22,
+    paddingTop: 12,
+    paddingLeft: 4,
+    paddingRight: 2,
+    includeFontPadding: false,
   },
   textInput: {
     flex: 1,
     color: colors.textPrimary,
-    fontSize: 17,
-    paddingVertical: 12,
-    maxHeight: 120,
+    fontSize: 15,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    paddingVertical: 10,
+    maxHeight: 140,
     minHeight: 44,
     textAlignVertical: 'top',
+    lineHeight: 22,
+    paddingHorizontal: 2,
+  },
+  inputActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingBottom: 8,
+    paddingLeft: 4,
+  },
+  inputIconBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: isDark ? '#FFFFFF' : '#1A1A1A',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
-    marginLeft: spacing.sm,
+  },
+  sendButtonActive: {
+    backgroundColor: isDark ? '#FFFFFF' : '#1A1A1A',
   },
   sendButtonDisabled: {
-    backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
+    backgroundColor: 'transparent',
   },
   inputHint: {
-    fontSize: fontSize.xs,
+    fontSize: 10,
     color: colors.textMuted,
     textAlign: 'center',
-    marginTop: spacing.sm,
+    marginTop: 4,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   voiceButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
-    marginLeft: spacing.sm,
   },
   voiceButtonActive: {
     backgroundColor: 'rgba(239,68,68,0.15)',
-    borderWidth: 1,
-    borderColor: colors.error,
   },
   modelButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    height: 32,
-    borderRadius: radius.md,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    gap: 4,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
     paddingHorizontal: 8,
-    maxWidth: 84,
-    marginBottom: 4,
+    display: 'none',
   },
   modelButtonText: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
+    fontSize: 10,
+    color: colors.textMuted,
     fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   footerIconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
+    display: 'none',
   },
   attachButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
+    display: 'none',
   },
   attachChips: {
     marginBottom: spacing.sm,
