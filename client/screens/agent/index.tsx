@@ -437,6 +437,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [trustProjectChecked, setTrustProjectChecked] = useState(false);
   const [executorLabel, setExecutorLabel] = useState<string | null>(null);
@@ -1779,37 +1780,53 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             <Text style={styles.headerTitle}>Agent</Text>
           </View>
           <View style={styles.headerRight}>
-            <Pressable
-              style={styles.backendChip}
-              onPress={showBackendInfo}
-              hitSlop={6}
-            >
-              <View
-                style={[
-                  styles.backendChipDot,
-                  backendOnline === null
-                    ? styles.backendStatusDotConnecting
-                    : backendOnline
-                      ? styles.backendStatusDotOnline
-                      : styles.backendStatusDotOffline,
-                ]}
-              />
-              <Text style={styles.backendChipText} numberOfLines={1}>
-                {backendOnline === null ? '后端' : backendOnline ? '后端' : '离线'}
+            <Pressable style={styles.headerProjectBtn} onPress={openProjectPicker} hitSlop={6}>
+              <FontAwesome6 name="folder" size={12} color={currentProjectId ? colors.textPrimary : colors.textMuted} />
+              <Text style={styles.headerProjectBtnText} numberOfLines={1}>
+                {currentProjectId ? (currentProjectName || '已绑定') : '选择项目'}
               </Text>
+              <FontAwesome6 name="chevron-down" size={8} color={colors.textMuted} />
             </Pressable>
-            <Pressable style={styles.headerAction} onPress={() => setTaskPanelVisible(!taskPanelVisible)}>
-              <PanelToggleIcon
-                open={taskPanelVisible}
-                sideBySide={isSideBySide}
-                color={taskPanelVisible ? colors.primary : colors.textSecondary}
-              />
-            </Pressable>
-          <Pressable style={styles.headerAction} onPress={clearHistory} hitSlop={6}>
-              <FontAwesome6 name="trash" size={16} color={colors.textSecondary} />
+            <Pressable style={styles.headerAction} onPress={() => setHeaderMenuVisible(!headerMenuVisible)} hitSlop={6}>
+              <FontAwesome6 name="ellipsis-vertical" size={16} color={colors.textSecondary} />
             </Pressable>
           </View>
         </View>
+
+        {/* Header dropdown menu */}
+        {headerMenuVisible && (
+          <View style={styles.headerMenu}>
+            <Pressable
+              style={styles.headerMenuItem}
+              onPress={() => { setHeaderMenuVisible(false); setTaskPanelVisible(true); }}
+            >
+              <FontAwesome6 name="list-checks" size={13} color={colors.textSecondary} />
+              <Text style={styles.headerMenuItemText}>任务面板</Text>
+            </Pressable>
+            <Pressable
+              style={styles.headerMenuItem}
+              onPress={() => { setHeaderMenuVisible(false); openProjectPicker(); }}
+            >
+              <FontAwesome6 name="folder-plus" size={13} color={colors.textSecondary} />
+              <Text style={styles.headerMenuItemText}>新建/选择项目</Text>
+            </Pressable>
+            <Pressable
+              style={styles.headerMenuItem}
+              onPress={() => { setHeaderMenuVisible(false); setSearchVisible(!searchVisible); }}
+            >
+              <FontAwesome6 name="magnifying-glass" size={13} color={colors.textSecondary} />
+              <Text style={styles.headerMenuItemText}>搜索对话</Text>
+            </Pressable>
+            <View style={styles.headerMenuDivider} />
+            <Pressable
+              style={styles.headerMenuItem}
+              onPress={() => { setHeaderMenuVisible(false); clearHistory(); }}
+            >
+              <FontAwesome6 name="trash" size={13} color={colors.error} />
+              <Text style={[styles.headerMenuItemText, { color: colors.error }]}>清空历史</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* API Key 引导条 */}
         {hasApiKey === false && (
@@ -1821,20 +1838,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           </Pressable>
         )}
 
-        {/* 项目行（绑定项目用） */}
-        <Pressable style={styles.contextBar} onPress={openProjectPicker} hitSlop={4}>
-          <FontAwesome6
-            name="folder-open"
-            size={13}
-            color={currentProjectId ? colors.primary : colors.warning}
-          />
-          <Text style={styles.contextProjectText} numberOfLines={1}>
-            {currentProjectId
-              ? currentProjectName || '项目已绑定'
-              : '选择项目'}
-          </Text>
-          <FontAwesome6 name="chevron-down" size={9} color={colors.textMuted} />
-        </Pressable>
+        {/* project picker moved to header */}
 
         {/* 搜索栏 */}
         {searchVisible && (
@@ -2130,7 +2134,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             </Pressable>
           </View>
 
-          {/* Bottom toolbar: model + agent + actions */}
+          {/* Bottom toolbar: model + backend */}
           <View style={styles.inputBottomBar}>
             <ScrollView
               horizontal
@@ -2148,19 +2152,23 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                 <Text style={styles.inputBottomPillText} numberOfLines={1}>{modelLabel}</Text>
               </Pressable>
 
-              {AGENT_OPTIONS.map((opt) => {
-                const active = agentType === opt.key;
-                return (
-                  <Pressable
-                    key={opt.key}
-                    style={[styles.inputBottomChip, active && styles.inputBottomChipActive]}
-                    onPress={() => switchAgent(opt.key)}
-                  >
-                    <FontAwesome6 name={opt.icon} size={8} color={active ? (isDark ? '#0D0D0D' : '#FFFFFF') : colors.textMuted} />
-                    <Text style={[styles.inputBottomChipText, active && styles.inputBottomChipTextActive]}>{opt.label}</Text>
-                  </Pressable>
-                );
-              })}
+              {/* Backend status */}
+              <Pressable style={styles.inputBottomPill} onPress={showBackendInfo}>
+                <View
+                  style={[
+                    styles.inputBackendDot,
+                    backendOnline === null
+                      ? styles.inputBackendDotConnecting
+                      : backendOnline
+                        ? styles.inputBackendDotOnline
+                        : styles.inputBackendDotOffline,
+                  ]}
+                />
+                <Text style={styles.inputBottomPillText} numberOfLines={1}>
+                  {backendOnline === null ? '检测中' : backendOnline ? '已连接' : '离线'}
+                </Text>
+              </Pressable>
+
             </ScrollView>
 
             <View style={styles.inputBottomActions}>
@@ -2793,33 +2801,68 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.primary,
   },
   headerAction: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.md,
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backendChip: {
+  headerProjectBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    borderRadius: radius.sm,
+    gap: 4,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  },
+  headerProjectBtnText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '500',
+    maxWidth: 80,
+  },
+  headerMenu: {
+    position: 'absolute',
+    top: 50,
+    right: spacing.md,
     backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
+    paddingVertical: 4,
+    minWidth: 160,
+    zIndex: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  headerMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  headerMenuItemText: {
+    fontSize: fontSize.sm,
+    color: colors.textPrimary,
+    fontWeight: '500',
+  },
+  headerMenuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginVertical: 2,
+  },
+  backendChip: {
+    display: 'none',
   },
   backendChipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    display: 'none',
   },
   backendChipText: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    fontWeight: '600',
-    maxWidth: 48,
+    display: 'none',
   },
 
   onboardBar: {
@@ -3376,27 +3419,31 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontWeight: '600',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
+  inputBackendDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+  },
+  inputBackendDotOnline: {
+    backgroundColor: '#4ADE80',
+  },
+  inputBackendDotConnecting: {
+    backgroundColor: '#FBBF24',
+  },
+  inputBackendDotOffline: {
+    backgroundColor: '#F87171',
+  },
   inputBottomChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
-    flexShrink: 0,
+    display: 'none',
   },
   inputBottomChipActive: {
-    backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.10)',
+    display: 'none',
   },
   inputBottomChipText: {
-    fontSize: 8,
-    color: colors.textMuted,
-    fontWeight: '500',
+    display: 'none',
   },
   inputBottomChipTextActive: {
-    color: colors.textPrimary,
-    fontWeight: '600',
+    display: 'none',
   },
   inputBottomActions: {
     flexDirection: 'row',
