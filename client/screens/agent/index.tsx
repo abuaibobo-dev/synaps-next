@@ -3330,8 +3330,8 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textPrimary,
     fontSize: 17,
     paddingVertical: 12,
-    maxHeight: 168,
-    minHeight: 76,
+    maxHeight: 120,
+    minHeight: 44,
     textAlignVertical: 'top',
   },
   sendButton: {
