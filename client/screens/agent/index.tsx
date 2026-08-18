@@ -1967,23 +1967,23 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             isStreaming ? (
               <>
               {thinking ? (
-                <View style={styles.thinkingPanel}>
-                  <Pressable style={styles.thinkingHeader} onPress={() => setThinkingOpen(!thinkingOpen)}>
+                <View style={styles.thinkingInline}>
+                  <Pressable style={styles.thinkingInlineHeader} onPress={() => setThinkingOpen(!thinkingOpen)}>
                     <Animated.View style={thinkingPulseStyle}>
-                      <FontAwesome6 name="brain" size={11} color={colors.primary} />
+                      <FontAwesome6 name="brain" size={10} color={colors.textMuted} />
                     </Animated.View>
-                    <Text style={styles.thinkingHeaderText}>🧠 思考过程</Text>
-                    <Text style={styles.thinkingHeaderMeta} numberOfLines={1}>
-                      {thinkingOpen ? '' : thinking.replace(/\n/g, ' ').slice(0, 40) + '…'}
+                    <Text style={styles.thinkingInlineLabel}>思考</Text>
+                    <Text style={styles.thinkingInlinePreview} numberOfLines={1}>
+                      {thinkingOpen ? '' : thinking.replace(/\n/g, ' ').slice(0, 50) + '…'}
                     </Text>
                     <FontAwesome6
                       name={thinkingOpen ? 'chevron-up' : 'chevron-down'}
-                      size={10}
+                      size={9}
                       color={colors.textMuted}
                     />
                   </Pressable>
                   {thinkingOpen && (
-                    <Text style={styles.thinkingBody} numberOfLines={14} selectable>
+                    <Text style={styles.thinkingInlineBody} numberOfLines={20} selectable>
                       {thinking}
                     </Text>
                   )}
@@ -2015,21 +2015,19 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
                     )}
                   </View>
                 </View>
-              ) : (
+              ) : thinking ? null : (
                 <View style={[styles.messageRow, styles.messageRowAssistant]}>
-                  <View style={[styles.messageBubble, styles.assistantBubble, styles.thinkingBubble, styles.streamBubble]}>
+                  <View style={[styles.messageBubble, styles.assistantBubble, styles.streamBubble]}>
                     {runningTool ? (
-                      <>
-                        <ToolSpinner size={13} color={colors.primary} />
-                        <Text style={styles.thinkingText} numberOfLines={1}>
-                          正在执行：{runningTool}
-                        </Text>
-                      </>
+                      <View style={styles.thinkingInlineHeader}>
+                        <ToolSpinner size={12} color={colors.primary} />
+                        <Text style={styles.thinkingInlineLabel}>执行：{runningTool}</Text>
+                      </View>
                     ) : (
-                      <>
-                        <ThinkingDots color={colors.primary} size={6} />
-                        <Text style={styles.thinkingText}>Agent 思考中...</Text>
-                      </>
+                      <View style={styles.thinkingInlineHeader}>
+                        <ThinkingDots color={colors.primary} size={5} />
+                        <Text style={styles.thinkingInlineLabel}>思考中...</Text>
+                      </View>
                     )}
                   </View>
                 </View>
@@ -2947,14 +2945,10 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderBottomLeftRadius: 4,
   },
   thinkingBubble: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    minWidth: 120,
+    display: 'none',
   },
   thinkingText: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
+    display: 'none',
   },
   messageContent: {
     fontSize: fontSize.md,
@@ -3555,41 +3549,42 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     fontSize: fontSize.xs,
     color: colors.textSecondary,
   },
-  thinkingPanel: {
-    marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.primaryBorder,
+  thinkingInline: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xs,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     overflow: 'hidden',
   },
-  thinkingHeader: {
+  thinkingInlineHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
-  thinkingHeaderText: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  thinkingHeaderMeta: {
-    flex: 1,
+  thinkingInlineLabel: {
     fontSize: 10,
+    fontWeight: '600',
     color: colors.textMuted,
   },
-  thinkingBody: {
-    fontSize: fontSize.xs,
+  thinkingInlinePreview: {
+    flex: 1,
+    fontSize: 9,
+    color: colors.textMuted,
+    opacity: 0.7,
+  },
+  thinkingInlineBody: {
+    fontSize: 11,
     color: colors.textSecondary,
-    lineHeight: 18,
+    lineHeight: 17,
     paddingHorizontal: spacing.sm,
     paddingBottom: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
-    paddingTop: spacing.sm,
+    paddingTop: 5,
   },
   queueBar: {
     flexDirection: 'row',
