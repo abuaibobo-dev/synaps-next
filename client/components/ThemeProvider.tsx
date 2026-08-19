@@ -7,8 +7,8 @@ import type { ThemeColors, AccentKey } from '@/utils/theme';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-const MODE_KEY = 'synaps.theme.mode';
-const ACCENT_KEY = 'synaps.theme.accent';
+const MODE_KEY = 'miaobi.theme.mode';
+const ACCENT_KEY = 'miaobi.theme.accent';
 
 interface ThemeContextValue {
   mode: ThemeMode;

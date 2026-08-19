@@ -98,8 +98,8 @@ const DEFAULT_SETTINGS: Settings = {
   codex_base_url: '',
   codex_wire_api: 'responses',
   default_exec_brain: 'auto',
-  account_name: 'Synaps 用户',
-  project_root: '/storage/emulated/0/Synaps',
+  account_name: '妙笔 用户',
+  project_root: '/storage/emulated/0/妙笔',
   font_scale: 'medium',
 };
 
@@ -1226,7 +1226,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             <Text style={[styles.fieldLabel, { color: sc.label }]}>账户名</Text>
             <UnderlineInput
               value={settings.account_name}
-              placeholder="Synaps 用户"
+              placeholder="妙笔 用户"
               sc={sc}
               focusColor={INTERACTIVE}
               onChangeText={trackDraft('account_name')}
@@ -1542,7 +1542,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <FieldRow styles={styles} label="项目目录" sc={sc}>
           <UnderlineInput
             value={settings.project_root}
-            placeholder="/storage/emulated/0/Synaps"
+            placeholder="/storage/emulated/0/妙笔"
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"

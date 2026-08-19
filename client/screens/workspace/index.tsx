@@ -27,10 +27,10 @@ export default function WorkspaceScreen() {
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem('synaps.onboarded')
+    AsyncStorage.getItem('miaobi.onboarded')
       .then((v) => setOnboarded(v === '1'))
       .catch(() => setOnboarded(true));
-    AsyncStorage.getItem('synaps.lastModule')
+    AsyncStorage.getItem('miaobi.lastModule')
       .then((v) => {
         if (v === 'projects' || v === 'agent' || v === 'code' || v === 'terminal' || v === 'apk' || v === 'logs' || v === 'github' || v === 'tasks' || v === 'settings') {
           setActiveModule(v);
@@ -40,7 +40,7 @@ export default function WorkspaceScreen() {
   }, []);
 
   const finishOnboarding = useCallback((module?: ModuleKey) => {
-    AsyncStorage.setItem('synaps.onboarded', '1').catch(() => undefined);
+    AsyncStorage.setItem('miaobi.onboarded', '1').catch(() => undefined);
     setOnboarded(true);
     if (module) setActiveModule(module);
   }, []);
@@ -55,7 +55,7 @@ export default function WorkspaceScreen() {
 
   const handleModuleChange = useCallback((key: ModuleKey) => {
     setActiveModule(key);
-    AsyncStorage.setItem('synaps.lastModule', key).catch(() => undefined);
+    AsyncStorage.setItem('miaobi.lastModule', key).catch(() => undefined);
   }, []);
 
   const renderModule = () => {
@@ -106,7 +106,7 @@ export default function WorkspaceScreen() {
                 <View style={styles.onboardingLogo}>
                   <FontAwesome6 name="bolt" size={26} color="#FFFFFF" />
                 </View>
-                <Text style={styles.onboardingTitle}>Synaps</Text>
+                <Text style={styles.onboardingTitle}>妙笔</Text>
                 <Text style={styles.onboardingSubtitle}>你手机上的 AI 开发工作台</Text>
                 <Text style={styles.onboardingDesc}>
                   Agent 能读写代码、执行命令、管理 Git、控制手机，在手机上完成开发闭环。
