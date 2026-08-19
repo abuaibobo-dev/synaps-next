@@ -11,7 +11,8 @@ export type AgentType =
   | 'ui_operator'
   | 'researcher'
   | 'translator'
-  | 'memory_admin';
+  | 'memory_admin'
+  | 'novel_memory_mgr';
 
 export type AgentStatus = 'idle' | 'running' | 'paused' | 'stopped';
 
@@ -162,6 +163,30 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     tools: ['skill_deps', 'project_export', 'project_import', 'list_skills', 'read_skill', 'list_dir', 'read_file', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.3,
+  },
+  novel_memory_mgr: {
+    type: 'novel_memory_mgr',
+    name: '小说记忆管理员',
+    systemPrompt:
+      '你是 Synaps 的小说记忆管理员。你负责六层记忆系统的维护：\n' +
+      'L0正文 → L1单章摘要 → L2结构化记忆 → L3篇章摘要 → L4卷摘要 → L5全书设定。\n\n' +
+      '核心职责：\n' +
+      '1. 每章完成后，解析 AI 输出的 JSON 更新指令，提取摘要/角色变化/伏笔变化\n' +
+      '2. 用 novel_create_character / novel_update_character 管理角色状态\n' +
+      '3. 用 novel_add_foreshadowing / novel_advance_foreshadowing 管理伏笔流转\n' +
+      '4. 自动冻结已写定的摘要层，不可回溯修改\n' +
+      '5. 每 10 章生成 L3 篇章摘要，每卷收尾生成 L4 卷摘要\n' +
+      '6. 每 50 章自动创建记忆快照供回滚\n' +
+      '7. 用 novel_get_context 在续写前组装完整上下文\n' +
+      '8. 写作时严格遵循：不重复已写内容、不改冻结设定、确保伏笔回收\n\n' +
+      '你始终以记忆的一致性和完整性为最高优先级。',
+    tools: [
+      'novel_get_context', 'novel_list_characters', 'novel_create_character',
+      'novel_update_character', 'novel_list_foreshadowing', 'novel_add_foreshadowing',
+      'novel_advance_foreshadowing', 'novel_snapshot', 'list_dir', 'read_file', 'write_file',
+    ],
+    model: 'deepseek-v4-flash',
+    temperature: 0.2,
   },
 };
 

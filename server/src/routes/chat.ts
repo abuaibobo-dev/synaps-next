@@ -48,6 +48,17 @@ import {
   AGENT_TYPES,
   type AgentType,
 } from '../agentInstance.js';
+import {
+  getStoryBible, createNovelProject, updateStoryBible, ensureNovelTables,
+  assembleNovelContext, novelContextToSystemPrompt,
+  addChapter, updateChapterSummary, getRecentChapters, getChapterByNumber,
+  upsertCharacter, getCharacters, getActiveCharacters, recordCharacterDiff,
+  addForeshadowing, advanceForeshadowing, getActiveForeshadowing, getAllForeshadowing,
+  addPartSummary, addVolumeSummary, createMemorySnapshot, getLatestSnapshot,
+  processPostWrite,
+  toolGetNovelContext, toolCreateCharacter, toolUpdateCharacter,
+  toolListCharacters, toolAddForeshadowing, toolListForeshadowing, toolSnapshot,
+} from '../novelMemory.js';
 
 const router = express.Router();
 
@@ -204,7 +215,7 @@ You have access to tools that let you interact with the project files:
 - device_status: Check whether device control is enabled (Settings → 设备控制) and how many actions are queued. Read-only.
 - system_diagnostics: Run a full self-check of the Synaps environment (Node version, AI API key, Termux path, device control, MCP servers, Harness, DB stats). Read-only, returns a summary with recommended fixes.
 - agent_list: List agent instances for the current session (id/type/name/status/context length). Read-only.
-- agent_create: Create a new agent instance (args: type one of scheduler/code_engineer/file_manager/search_assistant/general_chat/automator/ui_operator/researcher/translator/memory_admin, name optional). Medium risk, requires confirmation.
+- agent_create: Create a new agent instance (args: type one of scheduler/code_engineer/file_manager/search_assistant/general_chat/automator/ui_operator/researcher/translator/memory_admin/novel_memory_mgr, name optional). Medium risk, requires confirmation.
 - agent_delegate: Delegate a task to a sub-agent by type (args: type + task). The sub-agent answers with its own role prompt; useful for specialized opinions (review, research, translation). Medium risk.
 - agent_status: Show the status of all agent instances (idle/running/paused/stopped) and their context summaries. Read-only.
 - agent_clear: Clear an agent instance's independent context (args: id). Medium risk.
@@ -234,6 +245,18 @@ You have access to tools that let you interact with the project files:
 - device_action: Control this phone's screen. Args: type one of "tap" (params x,y), "swipe" (params x1,y1,x2,y2,duration), "screenshot" (no params, returns saved PNG path + size), "ui_dump" (no params, returns the visible UI tree with bounds), "back", "home", "launch_app" (params package). Requires the accessibility service enabled in Settings → 设备控制. Medium risk, requires confirmation.
 - generate_diagram: Create an editorial SVG diagram (no Mermaid). Args: type one of flowchart/architecture/sequence/erd/dependency/roadmap/timeline/swimlane, title, nodes [{id,label,kind?,layer?,lane?,fields?}], edges [{from,to,label?}]. Use when user asks 画架构图/流程图/依赖图/时序图/ER图/路线图/项目规划/调用链/泳道. Returns __SYNAPS_DIAGRAM__ + SVG which MUST be echoed verbatim in your final reply (the chat renders it as an image). Before drawing, read_skill "diagram-design". Medium risk.
 - spec_kit: Spec-Driven Development (github.com/github/spec-kit). Args: action one of status/init/spec/plan/tasks/implement/test, requirement, title. Flow for feature requests: 1) spec_kit spec → show the generated docs/specs/*.md to the user and WAIT for confirmation; 2) after confirmation spec_kit plan → implement → spec_kit test (generates tests from acceptance criteria). Store specs under docs/specs/. Medium risk.
+
+- novel_init: Initialize a novel project for the current project (args: title, genre, synopsis, styleGuide optional, totalVolumes optional). Creates the 6-layer memory structure. Auto-executed when user wants to write a novel.
+- novel_get_context: Get the full writing context assembled from 6 memory layers (args: chapterNumber optional). Returns story bible, volume summary, recent chapter summaries, last chapter ending, active characters, foreshadowing, and memory chunks.
+- novel_add_chapter: Save a completed chapter (args: chapterNumber, title, body, summary optional). Automatically triggers post-write memory update (character diffs, foreshadowing flow, chunk freezing).
+- novel_list_characters: List all characters in the novel. Read-only.
+- novel_create_character: Create a new character (args: name, traits, backstory, currentState).
+- novel_update_character: Update a character's state/trait/status (args: name, field, newValue). Only records the diff, does not overwrite the full card.
+- novel_list_foreshadowing: List all foreshadowing with their current status. Read-only.
+- novel_add_foreshadowing: Plant a new foreshadowing (args: title, description, chapterNumber optional).
+- novel_advance_foreshadowing: Advance foreshadowing status (args: id, newStatus one of developing|resolving|resolved|abandoned, resolvedChapter optional).
+- novel_snapshot: Create a memory snapshot for rollback (args: label optional).
+- novel_update_bible: Update story bible settings (args: title, genre, synopsis, styleGuide, totalVolumes).
 
 ## Working Style
 1. **Understand First**: Always analyze the project structure before making changes
@@ -1202,6 +1225,127 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       rememberMemory(projectId, toolCall.pattern, toolCall.solution, toolCall.context || '');
       logAudit(projectId, 'memory_remember', `存入经验记忆：${toolCall.pattern.slice(0, 80)}`, 'none', 'auto');
       return `Memory saved. 情境：${toolCall.pattern.slice(0, 120)}\n做法：${toolCall.solution.slice(0, 200)}`;
+    }
+
+    case 'novel_init': {
+      const tc = toolCall as any;
+      const novelTitle = tc.title || '未命名小说';
+      const novelGenre = tc.genre || '未知';
+      const novelSyn = tc.synopsis || '';
+      const novelStyle = tc.styleGuide || '';
+      const novelVols = Number(tc.totalVolumes) || 1;
+      ensureNovelTables();
+      createNovelProject(projectId!, novelTitle, novelGenre, novelSyn, novelStyle, novelVols);
+      logAudit(projectId, 'novel_init', `创建小说项目：${novelTitle}（${novelGenre}）`, 'none', 'auto');
+      return `✅ 小说项目「${novelTitle}」已创建（类型：${novelGenre}，卷数：${novelVols}）。六层记忆系统已就绪，可以开始写作。使用 novel_get_context 获取写作上下文。`;
+    }
+
+    case 'novel_get_context': {
+      const tc = toolCall as any;
+      const bible = getStoryBible(projectId!);
+      if (!bible) return '❌ 该项目尚未创建小说项目。请先使用 novel_init 初始化。';
+      const nextCh = Number(tc.chapterNumber) || bible.totalChapters + 1;
+      const ctx = novelContextToSystemPrompt(projectId!, bible.id, nextCh, bible.currentVolume);
+      return ctx || '暂无记忆数据，这是全新开始。';
+    }
+
+    case 'novel_add_chapter': {
+      const tc = toolCall as any;
+      const novelBible = getStoryBible(projectId!);
+      if (!novelBible) return '❌ 未创建小说项目。';
+      const chNum = Number(tc.chapterNumber) || novelBible.totalChapters + 1;
+      const chTitle = tc.title || `第${chNum}章`;
+      const chBody = tc.body || '';
+      const chSummary = tc.summary || '';
+      const chRec = addChapter(projectId!, novelBible.id, novelBible.currentVolume, chNum, chTitle, chBody, chSummary);
+      if (chSummary) updateChapterSummary(projectId!, chRec.id, chSummary);
+      // 自动处理写后更新（角色变化 + 伏笔流转由 AI 在下次调用时触发）
+      logAudit(projectId, 'novel_add_chapter', `新增章节：${chTitle}（${chBody.length}字）`, 'none', 'auto');
+      return `✅ 第${chNum}章「${chTitle}」已保存（${chBody.length}字）。请使用 novel_update_character / novel_advance_foreshadowing 更新角色和伏笔状态。`;
+    }
+
+    case 'novel_list_characters': {
+      const tc = toolCall as any;
+      const chars = getCharacters(projectId!, (() => { const b = getStoryBible(projectId!); return b ? b.id : ''; })());
+      if (chars.length === 0) return '暂无角色。使用 novel_create_character 创建。';
+      return chars.map(c => `**${c.name}** [${c.status}] 性格：${c.traits} | 当前：${c.currentState} | 出场：ch${c.firstAppearance}-${c.lastAppearance}`).join('\n');
+    }
+
+    case 'novel_create_character': {
+      const tc = toolCall as any;
+      if (!tc.name) return 'Error: name is required';
+      const novelB2 = getStoryBible(projectId!);
+      if (!novelB2) return '❌ 未创建小说项目。';
+      upsertCharacter(projectId!, novelB2.id, tc.name, tc.traits || '', tc.backstory || '', tc.currentState || '', novelB2.totalChapters + 1);
+      logAudit(projectId, 'novel_create_character', `创建角色：${tc.name}`, 'none', 'auto');
+      return `✅ 角色「${tc.name}」已创建。`;
+    }
+
+    case 'novel_update_character': {
+      const tc = toolCall as any;
+      if (!tc.name || !tc.field || !tc.newValue) return 'Error: name, field, newValue are required';
+      const novelB3 = getStoryBible(projectId!);
+      if (!novelB3) return '❌ 未创建小说项目。';
+      const field = tc.field;
+      recordCharacterDiff(projectId!, novelB3.id, tc.name, novelB3.totalChapters, field, tc.oldValue || '', tc.newValue);
+      logAudit(projectId, 'novel_update_character', `角色变化：${tc.name} ${field} → ${tc.newValue}`, 'none', 'auto');
+      return `✅ 角色「${tc.name}」的 ${field} 已记录变化。`;
+    }
+
+    case 'novel_list_foreshadowing': {
+      const tc = toolCall as any;
+      const novelB4 = getStoryBible(projectId!);
+      if (!novelB4) return '暂无小说项目。';
+      const fs = getAllForeshadowing(projectId!, novelB4.id);
+      if (fs.length === 0) return '暂无伏笔。使用 novel_add_foreshadowing 埋下。';
+      return fs.map(f => {
+        const e: Record<string, string> = { planted: '🌱', developing: '🌿', resolving: '🔄', resolved: '✅', abandoned: '❌' };
+        return `${e[f.status] || '❓'} **${f.title}** [${f.status}] ch${f.plantedChapter}${f.resolvedChapter ? `→ch${f.resolvedChapter}` : ''} — ${f.description}`;
+      }).join('\n');
+    }
+
+    case 'novel_add_foreshadowing': {
+      const tc = toolCall as any;
+      if (!tc.title || !tc.description) return 'Error: title and description are required';
+      const novelB5 = getStoryBible(projectId!);
+      if (!novelB5) return '❌ 未创建小说项目。';
+      addForeshadowing(projectId!, novelB5.id, tc.title, tc.description, Number(tc.chapterNumber) || novelB5.totalChapters + 1, tc.relatedCharacters || []);
+      logAudit(projectId, 'novel_add_foreshadowing', `埋下伏笔：${tc.title}`, 'none', 'auto');
+      return `✅ 伏笔「${tc.title}」已埋下。`;
+    }
+
+    case 'novel_advance_foreshadowing': {
+      const tc = toolCall as any;
+      if (!tc.id || !tc.newStatus) return 'Error: id and newStatus are required';
+      const novelB6 = getStoryBible(projectId!);
+      if (!novelB6) return '❌ 未创建小说项目。';
+      advanceForeshadowing(projectId!, novelB6.id, tc.id, tc.newStatus, tc.resolvedChapter ? Number(tc.resolvedChapter) : undefined);
+      logAudit(projectId, 'novel_advance_foreshadowing', `伏笔状态变更：${tc.id} → ${tc.newStatus}`, 'none', 'auto');
+      return `✅ 伏笔状态已更新为 ${tc.newStatus}。`;
+    }
+
+    case 'novel_snapshot': {
+      const tc = toolCall as any;
+      const novelB7 = getStoryBible(projectId!);
+      if (!novelB7) return '❌ 未创建小说项目。';
+      const snap = createMemorySnapshot(projectId!, novelB7.id, tc.label || `手动快照-ch${novelB7.totalChapters}`, novelB7.totalChapters, novelB7.currentVolume);
+      logAudit(projectId, 'novel_snapshot', `创建记忆快照：${snap.label}`, 'none', 'auto');
+      return `✅ 快照已创建：${snap.label}（ID: ${snap.id.slice(0, 8)}）`;
+    }
+
+    case 'novel_update_bible': {
+      const tc = toolCall as any;
+      const novelB8 = getStoryBible(projectId!);
+      if (!novelB8) return '❌ 未创建小说项目。';
+      const updates: Record<string, unknown> = {};
+      if (tc.title) updates.title = tc.title;
+      if (tc.genre) updates.genre = tc.genre;
+      if (tc.synopsis) updates.synopsis = tc.synopsis;
+      if (tc.styleGuide) updates.styleGuide = tc.styleGuide;
+      if (tc.totalVolumes) updates.totalVolumes = Number(tc.totalVolumes);
+      updateStoryBible(projectId!, updates as any);
+      logAudit(projectId, 'novel_update_bible', `更新全书设定`, 'none', 'auto');
+      return '✅ 全书设定已更新。';
     }
 
     case 'memory_recall': {
@@ -2928,6 +3072,16 @@ router.post('/', async (req: express.Request, res: express.Response) => {
 
     // 注入跨会话共享上下文
     const sharedCtx = getSharedContext();
+    // ★ 小说写作上下文：自动检测项目是否为小说项目，注入六层记忆
+    const novelBible = projectId ? getStoryBible(projectId) : null;
+    if (novelBible) {
+      const nextChapter = novelBible.totalChapters + 1;
+      const novelCtx = novelContextToSystemPrompt(projectId!, novelBible.id, nextChapter, novelBible.currentVolume);
+      if (novelCtx) {
+        systemPrompt += novelCtx;
+      }
+    }
+
     const sharedCtxText = sharedContextToText(sharedCtx);
     if (sharedCtxText) {
       systemPrompt += `\n\n## Shared Context (跨会话记忆)\n用户之前告知的上下文，默认遵循，无需重复询问：\n${sharedCtxText}\n当用户说“更新上下文：xxx”时，记住新信息；说“查看上下文”时展示当前记忆。`;
@@ -3558,6 +3712,8 @@ router.post('/approval', (req: express.Request, res: express.Response) => {
  * 调度员主动巡检：每 5 分钟检查一次各项目的状态（git 改动/构建/设备），
  * 发现问题写入审计日志，减少信息滞后。仅在有调度员 Agent 的项目上执行。
  */
+ensureNovelTables();
+
 export function startProactiveMonitor(): void {
   const CHECK_INTERVAL_MS = 5 * 60 * 1000;
   const timer = setInterval(async () => {
