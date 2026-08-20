@@ -24,6 +24,7 @@ import {
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
+import { isOllamaAvailable, callOllama, detectIntent, OLLAMA_MODELS } from '../ollama.js';
 import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable, rememberMemory, recallMemories } from '../rag.js';
 import {
   createTask,
@@ -648,7 +649,7 @@ function getAiConfig(): { apiKey: string; baseUrl: string; model: string } {
   };
 }
 
-async function aiComplete(
+async function deepseekComplete(
   apiKey: string,
   baseUrl: string,
   model: string,
@@ -680,6 +681,31 @@ async function aiComplete(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// 智能路由：Ollama 优先 → DeepSeek 兜底
+async function aiComplete(
+  apiKey: string,
+  baseUrl: string,
+  model: string,
+  system: string,
+  user: string
+): Promise<string> {
+  const ollamaOk = await isOllamaAvailable();
+  
+  if (ollamaOk) {
+    const intent = detectIntent(user);
+    const ollamaModel = intent === 'reasoning' ? OLLAMA_MODELS.REASONING : OLLAMA_MODELS.CHAT;
+    const result = await callOllama(
+      ollamaModel,
+      [{ role: 'system', content: system }, { role: 'user', content: user }],
+      0.7, 4096
+    );
+    if (!result.error && result.content) return result.content;
+    console.log('[Ollama] 本地模型失败，降级到 DeepSeek:', result.error);
+  }
+  
+  return deepseekComplete(apiKey, baseUrl, model, system, user);
 }
 
 /**
