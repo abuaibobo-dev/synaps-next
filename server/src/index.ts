@@ -21,6 +21,7 @@ import backupRouter from "./routes/backup.js";
 import diagnosticsRouter from "./routes/diagnostics.js";
 import capabilityKernelRouter from "./routes/capabilityKernel.js";
 import proactiveRouter from "./routes/proactive.js";
+import { startProactiveMonitor as startSuggestionMonitor } from "./proactive.js";
 import tasksRouter from "./routes/tasks.js";
 import brainsRouter from "./routes/brains.js";
 import bridgeRouter from "./routes/bridge.js";
@@ -98,6 +99,7 @@ app.listen(Number(port), '127.0.0.1', () => {
   seedImpeccableSkills().catch(() => {});
   seedDiagramSkill();
   startProactiveMonitor();
+  startSuggestionMonitor();
   startAutonomousLoop().catch((error) => console.error('[autonomous-loop] startup failed:', error));
   // 技能商店后台维护：自动更新 + 测试通道转正/停用（启动 15s 后执行一次，之后每 24h 一次）
   setTimeout(() => {

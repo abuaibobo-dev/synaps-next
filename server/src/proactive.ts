@@ -166,6 +166,16 @@ export async function generateProactiveSuggestions(): Promise<void> {
   await addSuggestions(items);
 }
 
+export function startProactiveMonitor(): void {
+  const run = () => {
+    generateProactiveSuggestions().catch((error) => {
+      console.error('[proactive-monitor] failed:', error);
+    });
+  };
+  setTimeout(run, 20000);
+  setInterval(run, 30 * 60 * 1000);
+}
+
 export async function listProactiveSuggestions(includeCompleted = false): Promise<ProactiveSuggestion[]> {
   await getDb();
   ensureTable();

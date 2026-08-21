@@ -1,4 +1,5 @@
-import { queryAll, runSql } from './db.js';
+import { queryAll, queryOne, runSql } from './db.js';
+import { recordTaskLearning } from './learning.js';
 
 export type TaskStatus = 'running' | 'done' | 'cancelled' | 'error';
 
@@ -65,7 +66,10 @@ export function saveTaskProgress(
 
 export function finishTask(taskId: string, status: TaskStatus, endedAt: number): void {
   try {
+    const startedAt = Number(queryOne('SELECT started_at FROM tasks WHERE id = ?', [taskId])?.started_at || endedAt);
     runSql(`UPDATE tasks SET status = ?, ended_at = ? WHERE id = ?`, [status, endedAt, taskId]);
+    const meaningful = status !== 'done' || endedAt - startedAt > 5000;
+    if (meaningful) recordTaskLearning(taskId, status, endedAt);
   } catch (err) {
     console.error('Failed to finish task record:', err);
   }
