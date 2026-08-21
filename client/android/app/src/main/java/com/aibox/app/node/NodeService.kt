@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 
 /**
  * Runs the embedded Node server in its own process (":node") so a native
@@ -19,12 +20,36 @@ import android.os.IBinder
  * starts are always permitted and specialUse has no time limit.
  */
 class NodeService : Service() {
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         startAsForeground()
+        acquireWakeLock()
         NodeBridge.start(applicationContext)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startAsForeground()
+        acquireWakeLock()
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
+        super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Synaps::NodeBackend").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
     }
 
     private fun startAsForeground() {

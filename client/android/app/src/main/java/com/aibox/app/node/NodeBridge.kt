@@ -46,12 +46,12 @@ object NodeBridge {
             started = true
             val appContext = context.applicationContext
             this.appContext = appContext
-            // 原生进程执行器：绕开 nodejs-mobile 不支持的 child_process（Android 权限限制）
             NativeProcRunner.start(appContext)
             Executors.newSingleThreadExecutor().submit {
                 var attempt = 0
-                while (attempt < 20) {
+                while (true) {
                     attempt++
+                    var startedAt = System.currentTimeMillis()
                     try {
                         log("Starting embedded Node... (attempt $attempt)")
                         ensureLoaded()
@@ -65,26 +65,26 @@ object NodeBridge {
                             val msg = "entry missing: ${entry.absolutePath}"
                             log(msg)
                             lastError = msg
-                            return@submit
+                            continue
                         }
                         log("Launching: node ${entry.absolutePath}")
                         val code = startNodeWithArguments(arrayOf("node", entry.absolutePath))
+                        lastError = "Node exited with code $code"
                         log("Node exited with code $code (attempt $attempt)")
-                        lastError = "Node exited with code $code (attempt $attempt)"
                     } catch (t: Throwable) {
                         lastError = t.toString()
                         log("Node startup failed (attempt $attempt)", t)
                     }
-                    // 崩溃/退出后自动重启：线性退避，最多 20 次
-                    if (attempt >= 20) break
+
+                    // 长时间稳定运行后重置退避；异常退出则持续自动恢复。
+                    if (System.currentTimeMillis() - startedAt > 5 * 60 * 1000L) attempt = 0
                     try {
-                        Thread.sleep(2000L * attempt)
+                        Thread.sleep(if (attempt < 8) 2000L * attempt else 60000L)
                     } catch (e: InterruptedException) {
                         log("Node supervisor interrupted")
                         break
                     }
                 }
-                log("Node supervisor stopped after $attempt attempts")
             }
         }
     }
