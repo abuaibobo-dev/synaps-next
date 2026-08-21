@@ -106,7 +106,7 @@ export default function WorkspaceScreen() {
                 <View style={styles.onboardingLogo}>
                   <FontAwesome6 name="bolt" size={26} color="#FFFFFF" />
                 </View>
-                <Text style={styles.onboardingTitle}>妙笔</Text>
+                <Text style={styles.onboardingTitle}>Synaps</Text>
                 <Text style={styles.onboardingSubtitle}>你手机上的 AI 开发工作台</Text>
                 <Text style={styles.onboardingDesc}>
                   Agent 能读写代码、执行命令、管理 Git、控制手机，在手机上完成开发闭环。

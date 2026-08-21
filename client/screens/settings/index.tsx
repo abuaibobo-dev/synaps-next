@@ -99,8 +99,8 @@ const DEFAULT_SETTINGS: Settings = {
   codex_base_url: '',
   codex_wire_api: 'responses',
   default_exec_brain: 'auto',
-  account_name: '妙笔 用户',
-  project_root: '/storage/emulated/0/妙笔',
+  account_name: 'Synaps 用户',
+  project_root: '/storage/emulated/0/Synaps',
   font_scale: 'medium',
 };
 
@@ -353,6 +353,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [skillStoreQuery, setSkillStoreQuery] = useState('');
   const [skillStoreItems, setSkillStoreItems] = useState<StoreSkillItem[]>([]);
   const [skillStoreLoading, setSkillStoreLoading] = useState(false);
+  const [skillStorePage, setSkillStorePage] = useState(1);
+  const [skillStorePages, setSkillStorePages] = useState(0);
   const [skillStoreInstalling, setSkillStoreInstalling] = useState<number | null>(null);
   const [skillStoreChecking, setSkillStoreChecking] = useState(false);
   const [skillStoreTotal, setSkillStoreTotal] = useState(0);
@@ -992,24 +994,30 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     }
   }, []);
 
-  const fetchStoreSkills = useCallback(async (keyword: string) => {
+  const fetchStoreSkills = useCallback(async (keyword: string, page = 1) => {
     setSkillStoreLoading(true);
     try {
       const url = keyword.trim()
-        ? `${API_BASE}/api/v1/skill-store/search?keyword=${encodeURIComponent(keyword.trim())}&page_size=20&sort=downloads`
-        : `${API_BASE}/api/v1/skill-store/featured?page_size=20`;
+        ? `${API_BASE}/api/v1/skill-store/search?keyword=${encodeURIComponent(keyword.trim())}&page=${page}&page_size=20&sort=downloads`
+        : `${API_BASE}/api/v1/skill-store/featured?page=${page}&page_size=20`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) {
         setSkillStoreItems([]);
         setSkillStoreTotal(0);
+        setSkillStorePage(1);
+        setSkillStorePages(0);
         return;
       }
       setSkillStoreItems(data.items || []);
       setSkillStoreTotal(data.total || 0);
+      setSkillStorePage(data.page || page);
+      setSkillStorePages(data.pages || Math.ceil((data.total || 0) / 20));
     } catch {
       setSkillStoreItems([]);
       setSkillStoreTotal(0);
+      setSkillStorePage(1);
+      setSkillStorePages(0);
     } finally {
       setSkillStoreLoading(false);
     }
@@ -1227,7 +1235,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             <Text style={[styles.fieldLabel, { color: sc.label }]}>账户名</Text>
             <UnderlineInput
               value={settings.account_name}
-              placeholder="妙笔 用户"
+              placeholder="Synaps 用户"
               sc={sc}
               focusColor={INTERACTIVE}
               onChangeText={trackDraft('account_name')}
@@ -1543,7 +1551,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <FieldRow styles={styles} label="项目目录" sc={sc}>
           <UnderlineInput
             value={settings.project_root}
-            placeholder="/storage/emulated/0/妙笔"
+            placeholder="/storage/emulated/0/Synaps"
             sc={sc}
             focusColor={INTERACTIVE}
             autoCapitalize="none"
@@ -2241,11 +2249,11 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                   placeholderTextColor={colors.textMuted}
                   value={skillStoreQuery}
                   onChangeText={setSkillStoreQuery}
-                  onSubmitEditing={() => fetchStoreSkills(skillStoreQuery)}
+                  onSubmitEditing={() => fetchStoreSkills(skillStoreQuery, 1)}
                   returnKeyType="search"
                   autoCapitalize="none"
                 />
-                <Pressable style={styles.skillStoreSearchBtn} onPress={() => fetchStoreSkills(skillStoreQuery)}>
+                <Pressable style={styles.skillStoreSearchBtn} onPress={() => fetchStoreSkills(skillStoreQuery, 1)}>
                   <AppIcon name="search" size={16} color="#FFFFFF" />
                 </Pressable>
               </View>
@@ -2298,6 +2306,25 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                   </View>
                 ))}
               </ScrollView>
+              {skillStorePages > 1 && (
+                <View style={styles.skillStorePagination}>
+                  <Pressable
+                    style={[styles.skillStorePageBtn, (skillStoreLoading || skillStorePage <= 1) && styles.skillStorePageBtnDisabled]}
+                    onPress={() => fetchStoreSkills(skillStoreQuery, skillStorePage - 1)}
+                    disabled={skillStoreLoading || skillStorePage <= 1}
+                  >
+                    <Text style={styles.skillStorePageText}>上一页</Text>
+                  </Pressable>
+                  <Text style={styles.skillStorePageLabel}>{skillStorePage} / {skillStorePages}</Text>
+                  <Pressable
+                    style={[styles.skillStorePageBtn, (skillStoreLoading || skillStorePage >= skillStorePages) && styles.skillStorePageBtnDisabled]}
+                    onPress={() => fetchStoreSkills(skillStoreQuery, skillStorePage + 1)}
+                    disabled={skillStoreLoading || skillStorePage >= skillStorePages}
+                  >
+                    <Text style={styles.skillStorePageText}>下一页</Text>
+                  </Pressable>
+                </View>
+              )}
               <Pressable style={[styles.modalBtn, styles.modalBtnSave, styles.modalBtnFull]} onPress={() => setSkillStoreVisible(false)}>
                 <Text style={[styles.modalBtnText, styles.modalBtnTextSave]}>关闭</Text>
               </Pressable>
@@ -2730,6 +2757,30 @@ const createStyles = (colors: ThemeColors) =>
       color: '#FFFFFF',
       fontSize: fontSize.xs,
       fontWeight: '600',
+    },
+    skillStorePagination: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: spacing.sm,
+    },
+    skillStorePageBtn: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: 7,
+      borderRadius: radius.md,
+      backgroundColor: colors.bgElevated,
+    },
+    skillStorePageBtnDisabled: {
+      opacity: 0.4,
+    },
+    skillStorePageText: {
+      fontSize: fontSize.xs,
+      color: ACCENT,
+      fontWeight: '600',
+    },
+    skillStorePageLabel: {
+      fontSize: fontSize.xs,
+      color: colors.textMuted,
     },
     modalBtnFull: {
       alignSelf: 'stretch',

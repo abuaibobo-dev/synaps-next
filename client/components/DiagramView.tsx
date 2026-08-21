@@ -27,7 +27,7 @@ export default function DiagramView({ svg, colors }: { svg: string; colors: Them
 
   const exportSvg = useCallback(async () => {
     try {
-      await Share.share({ message: svg, title: '妙笔 图表 (SVG)' });
+      await Share.share({ message: svg, title: 'Synaps 图表 (SVG)' });
     } catch {
       Toast.show({ type: 'error', text1: '导出失败' });
     }
