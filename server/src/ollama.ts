@@ -4,6 +4,8 @@
  * - 失败时自动降级到 DeepSeek 云端
  */
 
+import * as crypto from 'crypto';
+
 const OLLAMA_BASE = 'http://127.0.0.1:11434';
 
 // 本地模型配置
@@ -111,16 +113,161 @@ export async function getOllamaStatus() {
     if (!res.ok) {
       return { available: false, base: OLLAMA_BASE, installed: [], configured };
     }
-    const data = (await res.json()) as { models?: Array<{ name?: string }> };
-    const installed = (data.models || []).map((model) => model.name || '').filter(Boolean);
+    const data = (await res.json()) as { models?: Array<{ name?: string; size?: number; modified_at?: string }> };
+    const models = (data.models || []).map((model) => ({
+      name: model.name || '',
+      size: Number(model.size || 0),
+      modifiedAt: model.modified_at || null,
+    })).filter((model) => model.name);
+    const installed = models.map((model) => model.name);
     return {
       available: true,
       base: OLLAMA_BASE,
+      models,
       installed,
       configured: configured.map((item) => ({ ...item, installed: installed.includes(item.name) })),
     };
   } catch {
-    return { available: false, base: OLLAMA_BASE, installed: [], configured };
+      return { available: false, base: OLLAMA_BASE, installed: [], configured };
+  }
+}
+
+export interface OllamaModelInfo {
+  name: string;
+  size: number;
+  modifiedAt?: string | null;
+}
+
+export interface OllamaPullJob {
+  id: string;
+  model: string;
+  status: 'pulling' | 'success' | 'error' | 'cancelled';
+  statusText: string;
+  percent: number;
+  bytesDone: number;
+  bytesTotal: number;
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
+const pullJobs = new Map<string, { job: OllamaPullJob; abort: AbortController }>();
+
+function normalizeOllamaModel(model: string): string {
+  return model.trim().replace(/\s+/g, '');
+}
+
+export function getOllamaPullJobs(): OllamaPullJob[] {
+  return [...pullJobs.values()].map((entry) => ({ ...entry.job }));
+}
+
+export function cancelOllamaPullJob(id: string): boolean {
+  const entry = pullJobs.get(id);
+  if (!entry || entry.job.status !== 'pulling') return false;
+  entry.job.status = 'cancelled';
+  entry.job.statusText = '已取消';
+  entry.job.updatedAt = Date.now();
+  entry.abort.abort();
+  return true;
+}
+
+export async function pullOllamaModel(rawModel: string): Promise<OllamaPullJob> {
+  const model = normalizeOllamaModel(rawModel);
+  if (!model) throw new Error('模型名称不能为空');
+  if ([...pullJobs.values()].some((entry) => entry.job.model === model && entry.job.status === 'pulling')) {
+    throw new Error(`模型 ${model} 正在下载`);
+  }
+
+  const id = crypto.randomUUID();
+  const abort = new AbortController();
+  const job: OllamaPullJob = {
+    id,
+    model,
+    status: 'pulling',
+    statusText: '连接 Ollama...',
+    percent: 0,
+    bytesDone: 0,
+    bytesTotal: 0,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  pullJobs.set(id, { job, abort });
+
+  void (async () => {
+    try {
+      const res = await fetch(`${OLLAMA_BASE}/api/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, stream: true }),
+        signal: abort.signal,
+      });
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Ollama ${res.status}: ${text || '下载请求失败'}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines.filter(Boolean)) {
+          let event: any;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (event.error) throw new Error(String(event.error));
+          const total = Number(event.total || 0);
+          const completed = Number(event.completed || 0);
+          job.statusText = String(event.status || job.statusText);
+          if (total > 0) {
+            job.bytesTotal = total;
+            job.bytesDone = completed;
+            job.percent = Math.max(job.percent, Math.min(100, Math.round((completed / total) * 100)));
+          }
+          job.updatedAt = Date.now();
+        }
+      }
+
+      if (job.status === 'pulling') {
+        job.status = 'success';
+        job.statusText = '下载完成';
+        job.percent = 100;
+        job.updatedAt = Date.now();
+      }
+    } catch (error) {
+      if (job.status !== 'cancelled') {
+        job.status = 'error';
+        job.error = (error as Error).message || String(error);
+        job.statusText = '下载失败';
+      }
+      job.updatedAt = Date.now();
+    } finally {
+      setTimeout(() => pullJobs.delete(id), 10 * 60 * 1000).unref?.();
+    }
+  })();
+
+  return { ...job };
+}
+
+export async function deleteOllamaModel(rawModel: string): Promise<void> {
+  const model = normalizeOllamaModel(rawModel);
+  if (!model) throw new Error('模型名称不能为空');
+  const res = await fetch(`${OLLAMA_BASE}/api/delete`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`删除失败（${res.status}）：${text || '未知错误'}`);
   }
 }
 
