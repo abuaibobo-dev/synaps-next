@@ -8,6 +8,7 @@ const OLLAMA_BASE = 'http://127.0.0.1:11434';
 
 // 本地模型配置
 export const OLLAMA_MODELS = {
+  WRITING: 'dqnwrite',
   CHAT: 'qwen2.5:1.5b',
   REASONING: 'deepseek-r1:1.5b',
   EMBEDDING: 'nomic-embed-text',
@@ -55,7 +56,7 @@ export async function callOllama(
       const err = await res.text();
       return { content: '', error: `Ollama ${res.status}: ${err}` };
     }
-    const data = await res.json();
+    const data = (await res.json()) as { message?: { content?: string } };
     return { content: data.message?.content || '' };
   } catch (e: any) {
     return { content: '', error: `Ollama 连接失败: ${e.message}` };

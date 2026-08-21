@@ -4,6 +4,7 @@ import { ComponentProps } from 'react';
 import { LogBox, Text, View } from 'react-native';
 import Toast, { ToastConfigParams } from 'react-native-toast-message';
 import { Provider } from '@/components/Provider';
+import { RoundedAlertHost } from '@/components/RoundedAlert';
 import { useThemeColors } from '@/components/ThemeProvider';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { installCrashReporter } from '@/utils/crashReporter';
@@ -96,6 +97,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ title: "" }} />
       </Stack>
+      <RoundedAlertHost />
       <ToastView />
     </Provider>
   );

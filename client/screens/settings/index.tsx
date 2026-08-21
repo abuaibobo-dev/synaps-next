@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, Platform, Linking, TextInput, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Modal, Platform, Linking, TextInput, Image } from 'react-native';
 import Animated, { SlideInRight, FadeOutLeft, FadeIn, Easing } from 'react-native-reanimated';
 import { Screen } from '@/components/Screen';
+import { showRoundedAlert } from '@/components/RoundedAlert';
 import { MenuButton } from '@/components/Sidebar';
 import { spacing, radius, fontSize, ACCENTS } from '@/utils/theme';
 import type { ThemeColors, AccentKey } from '@/utils/theme';
@@ -532,7 +533,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       const timer = setInterval(() => fetchCodexLocal(), 2000);
       setTimeout(() => clearInterval(timer), 60 * 60 * 1000);
     } catch {
-      Alert.alert('下载失败', '无法启动下载，请检查网络');
+      showRoundedAlert('下载失败', '无法启动下载，请检查网络');
     }
   }, [fetchCodexLocal]);
 
@@ -612,7 +613,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       return false;
     } catch (error) {
       console.error('Failed to update setting:', error);
-      Alert.alert('错误', '保存设置失败');
+      showRoundedAlert('错误', '保存设置失败');
       return false;
     }
   }, []);
@@ -690,10 +691,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const handleShowCrashLogs = useCallback(async () => {
     const logs = await getCrashLogs();
     if (logs.length === 0) {
-      Alert.alert('崩溃日志', '暂无崩溃日志');
+      showRoundedAlert('崩溃日志', '暂无崩溃日志');
       return;
     }
-    Alert.alert('崩溃日志', logs.join('\n\n---\n\n'), [
+    showRoundedAlert('崩溃日志', logs.join('\n\n---\n\n'), [
       { text: '清空', style: 'destructive', onPress: () => clearCrashLogs() },
       { text: '关闭', style: 'cancel' },
     ]);
@@ -720,13 +721,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         // 保存文件失败不影响复制
       }
     } catch (err) {
-      Alert.alert('导出失败', String(err));
+      showRoundedAlert('导出失败', String(err));
     }
   }, []);
 
   const copyBackup = useCallback(async () => {
     await Clipboard.setStringAsync(backupJson);
-    Alert.alert('已复制', '备份 JSON 已复制到剪贴板，可在另一台设备上「导入备份」');
+    showRoundedAlert('已复制', '备份 JSON 已复制到剪贴板，可在另一台设备上「导入备份」');
   }, [backupJson]);
 
   const exportLogs = useCallback(async () => {
@@ -747,13 +748,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         // 保存文件失败不影响复制
       }
     } catch (err) {
-      Alert.alert('导出失败', String(err));
+      showRoundedAlert('导出失败', String(err));
     }
   }, []);
 
   const importBackup = useCallback(async () => {
     if (!importText.trim()) {
-      Alert.alert('提示', '请粘贴备份 JSON 内容');
+      showRoundedAlert('提示', '请粘贴备份 JSON 内容');
       return;
     }
     setImporting(true);
@@ -772,9 +773,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         .join('  ');
       setImportModalVisible(false);
       setImportText('');
-      Alert.alert('导入成功', `已恢复数据：${counts}`);
+      showRoundedAlert('导入成功', `已恢复数据：${counts}`);
     } catch (err) {
-      Alert.alert('导入失败', String(err));
+      showRoundedAlert('导入失败', String(err));
     } finally {
       setImporting(false);
     }
@@ -805,7 +806,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           body: JSON.stringify({ trusted_projects: JSON.stringify(next) }),
         });
       } catch {
-        Alert.alert('错误', '保存失败');
+        showRoundedAlert('错误', '保存失败');
       }
     },
     [trustedProjects]
@@ -818,12 +819,12 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       setAuditLogs(data.logs || []);
       setAuditModalVisible(true);
     } catch {
-      Alert.alert('错误', '加载审计日志失败');
+      showRoundedAlert('错误', '加载审计日志失败');
     }
   }, []);
 
   const resetPermissions = useCallback(() => {
-    Alert.alert('重置授权', '将清除所有项目的可信标记。确定继续？', [
+    showRoundedAlert('重置授权', '将清除所有项目的可信标记。确定继续？', [
       { text: '取消', style: 'cancel' },
       {
         text: '重置',
@@ -836,9 +837,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
               body: JSON.stringify({ trusted_projects: '[]' }),
             });
             setTrustedProjects([]);
-            Alert.alert('完成', '已重置所有授权');
+            showRoundedAlert('完成', '已重置所有授权');
           } catch {
-            Alert.alert('错误', '重置失败');
+            showRoundedAlert('错误', '重置失败');
           }
         },
       },
@@ -846,13 +847,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }, []);
 
   const clearAllData = useCallback(() => {
-    Alert.alert('清除所有数据', '将清除所有设置、可信授权、MCP 配置与本地缓存，且无法恢复。确定继续？', [
+    showRoundedAlert('清除所有数据', '将清除所有设置、可信授权、MCP 配置与本地缓存，且无法恢复。确定继续？', [
       { text: '取消', style: 'cancel' },
       {
         text: '继续',
         style: 'destructive',
         onPress: () => {
-          Alert.alert('再次确认', '此操作不可撤销，将重置所有数据。', [
+          showRoundedAlert('再次确认', '此操作不可撤销，将重置所有数据。', [
             { text: '取消', style: 'cancel' },
             {
               text: '确认清除',
@@ -872,9 +873,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                   setTrustedProjects([]);
                   setMcpServers([]);
                   setBalance(null);
-                  Alert.alert('完成', '所有数据已清除');
+                  showRoundedAlert('完成', '所有数据已清除');
                 } catch {
-                  Alert.alert('错误', '清除失败');
+                  showRoundedAlert('错误', '清除失败');
                 }
               },
             },
@@ -906,20 +907,20 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const saveMcpServer = useCallback(async () => {
     if (!mcpFormName.trim()) {
-      Alert.alert('提示', '请输入服务器名称');
+      showRoundedAlert('提示', '请输入服务器名称');
       return;
     }
     const server: McpServer = { name: mcpFormName.trim(), transport: mcpFormTransport };
     if (server.transport === 'stdio') {
       if (!mcpFormCommand.trim()) {
-        Alert.alert('提示', 'stdio 需要填写启动命令');
+        showRoundedAlert('提示', 'stdio 需要填写启动命令');
         return;
       }
       server.command = mcpFormCommand.trim();
       server.args = mcpFormArgs.split(',').map((x) => x.trim()).filter(Boolean);
     } else {
       if (!mcpFormUrl.trim()) {
-        Alert.alert('提示', 'sse 需要填写 URL');
+        showRoundedAlert('提示', 'sse 需要填写 URL');
         return;
       }
       server.url = mcpFormUrl.trim();
@@ -934,13 +935,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         body: JSON.stringify({ mcp_servers: JSON.stringify(next) }),
       });
     } catch {
-      Alert.alert('错误', '保存失败');
+      showRoundedAlert('错误', '保存失败');
     }
   }, [mcpFormName, mcpFormTransport, mcpFormCommand, mcpFormArgs, mcpFormUrl, mcpServers]);
 
   const removeMcpServer = useCallback(
     (name: string) => {
-      Alert.alert('删除 MCP 服务器', `确定删除 "${name}"？`, [
+      showRoundedAlert('删除 MCP 服务器', `确定删除 "${name}"？`, [
         { text: '取消', style: 'cancel' },
         {
           text: '删除',
@@ -955,7 +956,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 body: JSON.stringify({ mcp_servers: JSON.stringify(next) }),
               });
             } catch {
-              Alert.alert('错误', '保存失败');
+              showRoundedAlert('错误', '保存失败');
             }
           },
         },
@@ -973,7 +974,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         body: JSON.stringify({ enabled }),
       });
     } catch {
-      Alert.alert('错误', '保存失败');
+      showRoundedAlert('错误', '保存失败');
     }
   }, []);
 
@@ -981,13 +982,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     try {
       const res = await fetch(`${API_BASE}/api/v1/skills/${encodeURIComponent(name)}`);
       const data = await res.json();
-      Alert.alert(
+      showRoundedAlert(
         data.name,
         `${data.description || '无描述'}\n\n${(data.content || '').slice(0, 2000)}`,
         [{ text: '关闭', style: 'cancel' }]
       );
     } catch {
-      Alert.alert('错误', '加载技能失败');
+      showRoundedAlert('错误', '加载技能失败');
     }
   }, []);
 
@@ -1031,10 +1032,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
-          Alert.alert('安装失败', data?.error || '未知错误');
+          showRoundedAlert('安装失败', data?.error || '未知错误');
           return;
         }
-        Alert.alert('已安装', `${data.name}`);
+        showRoundedAlert('已安装', `${data.name}`);
         try {
           const r = await fetch(`${API_BASE}/api/v1/skills`);
           const d = await r.json();
@@ -1043,7 +1044,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
           // 技能列表刷新失败不影响
         }
       } catch {
-        Alert.alert('安装失败', '无法连接后端');
+        showRoundedAlert('安装失败', '无法连接后端');
       } finally {
         setSkillStoreInstalling(null);
       }
@@ -1057,14 +1058,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       const res = await fetch(`${API_BASE}/api/v1/skill-store/maintenance`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        Alert.alert('检查更新失败', data?.error || '未知错误');
+        showRoundedAlert('检查更新失败', data?.error || '未知错误');
         return;
       }
       const parts: string[] = [];
       if (data.updated > 0) parts.push(`更新 ${data.updated} 个`);
       if (data.promoted > 0) parts.push(`转正式 ${data.promoted} 个`);
       if (data.removed > 0) parts.push(`停用 ${data.removed} 个`);
-      Alert.alert('检查完成', parts.length ? parts.join(' · ') : '已是最新');
+      showRoundedAlert('检查完成', parts.length ? parts.join(' · ') : '已是最新');
       try {
         const r = await fetch(`${API_BASE}/api/v1/skills`);
         const d = await r.json();
@@ -1073,16 +1074,16 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         // 刷新失败不影响
       }
     } catch {
-      Alert.alert('检查更新失败', '无法连接后端');
+      showRoundedAlert('检查更新失败', '无法连接后端');
     } finally {
       setSkillStoreChecking(false);
     }
   }, []);
 
   const handleClearCache = useCallback(() => {
-    Alert.alert('清除缓存', '确定要清除所有缓存数据吗？', [
+    showRoundedAlert('清除缓存', '确定要清除所有缓存数据吗？', [
       { text: '取消', style: 'cancel' },
-      { text: '确定', style: 'destructive', onPress: () => Alert.alert('完成', '缓存已清除') },
+      { text: '确定', style: 'destructive', onPress: () => showRoundedAlert('完成', '缓存已清除') },
     ]);
   }, []);
 
@@ -1110,10 +1111,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const openAccessibilitySettings = useCallback(() => {
     if (Platform.OS === 'android') {
       Linking.openURL('intent:#Intent;action=android.settings.ACCESSIBILITY_SETTINGS;end').catch(() => {
-        Alert.alert('提示', '请在系统设置 → 无障碍 中开启 Synaps 设备控制');
+        showRoundedAlert('提示', '请在系统设置 → 无障碍 中开启 Synaps 设备控制');
       });
     } else {
-      Alert.alert('提示', '设备控制仅支持 Android');
+      showRoundedAlert('提示', '设备控制仅支持 Android');
     }
   }, []);
 
@@ -1154,7 +1155,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       ? `https://github.com/abuaibobo-dev/synaps-next/releases/tag/${latestRelease}`
       : 'https://github.com/abuaibobo-dev/synaps-next/releases';
     Linking.openURL(url).catch(() => {
-      Alert.alert('提示', '无法打开浏览器，请访问 GitHub Releases 页面');
+      showRoundedAlert('提示', '无法打开浏览器，请访问 GitHub Releases 页面');
     });
   }, [latestRelease]);
 
@@ -1165,7 +1166,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         FileSystem.documentDirectory + `synaps-crash-${new Date().toISOString().slice(0, 10)}.txt`;
       const body = logs.length > 0 ? logs.join('\n\n---\n\n') : '暂无崩溃日志';
       await FileSystem.writeAsStringAsync(uri, body);
-      Alert.alert('导出完成', `崩溃日志已保存到：\n${uri}\n\n可复制后分享给开发者排查。`, [
+      showRoundedAlert('导出完成', `崩溃日志已保存到：\n${uri}\n\n可复制后分享给开发者排查。`, [
         {
           text: '复制',
           onPress: () => {
@@ -1175,7 +1176,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         { text: '关闭', style: 'cancel' },
       ]);
     } catch {
-      Alert.alert('错误', '导出失败');
+      showRoundedAlert('错误', '导出失败');
     }
   }, []);
 

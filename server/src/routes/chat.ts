@@ -371,6 +371,7 @@ interface ToolCall {
   workflowId?: string;
   url?: string;
   keyword?: string;
+  page?: number;
   install?: boolean;
   auto_install?: boolean;
   manager?: string;

@@ -8,7 +8,6 @@ import {
   FlatList,
   ScrollView,
   Platform,
-  Alert,
   Keyboard,
   Linking,
   Modal,
@@ -31,6 +30,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Screen } from '@/components/Screen';
+import { showRoundedAlert, showRoundedMessage } from '@/components/RoundedAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MenuButton } from '@/components/Sidebar';
 
@@ -1213,7 +1213,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('需要相册权限', '请在系统设置中允许 Synaps 访问相册');
+        showRoundedAlert('需要相册权限', '请在系统设置中允许 Synaps 访问相册');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -1232,7 +1232,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         size: asset.fileSize,
       });
     } catch (err) {
-      Alert.alert('选择图片失败', String(err));
+      showRoundedAlert('选择图片失败', String(err));
     }
   };
 
@@ -1255,14 +1255,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         size: asset.size,
       });
     } catch (err) {
-      Alert.alert('选择文件失败', String(err));
+      showRoundedAlert('选择文件失败', String(err));
     }
   };
 
   const addAttachment = (att: PendingAttachment) => {
     setAttachments((prev) => {
       if (prev.length >= 6) {
-        Alert.alert('提示', '每条消息最多附带 6 个附件');
+        showRoundedAlert('提示', '每条消息最多附带 6 个附件');
         return prev;
       }
       return [...prev, att];
@@ -1320,7 +1320,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       startTask(prompt, msgAttachments);
       setAttachments([]);
     } catch (err) {
-      Alert.alert('发送失败', err instanceof Error ? err.message : String(err));
+      showRoundedAlert('发送失败', err instanceof Error ? err.message : String(err));
     }
   }, [inputText, replyingTo, attachments, currentProjectId, startTask]);
 
@@ -1372,7 +1372,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       const listData = await listRes.json();
       const snaps = Array.isArray(listData.snapshots) ? listData.snapshots : [];
       if (snaps.length === 0) {
-        alert('没有可用快照');
+        showRoundedMessage('没有可用快照');
         return;
       }
       const latest = snaps[snaps.length - 1] || snaps[0];
@@ -1386,19 +1386,19 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, rollbackMsg]);
-        alert('已恢复到任务前快照');
+        showRoundedMessage('已恢复到任务前快照');
       } else {
-        alert(data.error || '回滚失败');
+        showRoundedMessage(data.error || '回滚失败');
       }
     } catch {
-      alert('回滚失败');
+      showRoundedMessage('回滚失败');
     }
   }, [currentTask, currentProjectId]);
 
   const rollbackTask = useCallback(async () => {
     const task = currentTask;
     if (!task || !currentProjectId) return;
-    Alert.alert('确认回滚', `将恢复任务「${task.name}」开始前的最新快照，确定吗？`, [
+    showRoundedAlert('确认回滚', `将恢复任务「${task.name}」开始前的最新快照，确定吗？`, [
       { text: '取消', style: 'cancel' },
       { text: '回滚', style: 'destructive', onPress: doRollback },
     ]);
@@ -1409,7 +1409,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     try {
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Microphone permission is needed for voice input');
+        showRoundedAlert('Permission Required', 'Microphone permission is needed for voice input');
         return;
       }
 
@@ -1558,7 +1558,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
 
   const deleteMessage = useCallback(
     (message: Message) => {
-      Alert.alert('确认删除', '确定要删除这条消息吗？', [
+      showRoundedAlert('确认删除', '确定要删除这条消息吗？', [
         { text: '取消', style: 'cancel' },
         {
           text: '删除',
@@ -1783,14 +1783,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         `Node：${b.nodeVersion || '-'}`,
         `架构：${b.arch || '-'}`,
       ].join('\n');
-      Alert.alert('后端状态', detail);
+      showRoundedAlert('后端状态', detail);
     } catch {
-      Alert.alert('后端状态', `未连接（${API_BASE}）\n请确认本地后端服务已启动，或到设置查看诊断`);
+      showRoundedAlert('后端状态', `未连接（${API_BASE}）\n请确认本地后端服务已启动，或到设置查看诊断`);
     }
   }, []);
 
   const clearHistory = useCallback(() => {
-    Alert.alert('确认清空', '确定要清空当前对话历史吗？', [
+    showRoundedAlert('确认清空', '确定要清空当前对话历史吗？', [
       { text: '取消', style: 'cancel' },
       {
         text: '清空',

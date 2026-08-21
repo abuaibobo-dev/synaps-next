@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, TextInput, Modal, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, FlatList, TextInput, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import { Screen } from '@/components/Screen';
+import { showRoundedAlert } from '@/components/RoundedAlert';
 import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
@@ -157,7 +158,7 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
   };
 
   const handleDelete = (project: Project) => {
-    Alert.alert(
+    showRoundedAlert(
       '删除项目',
       `确定要删除「${project.name}」吗？\n此操作不会删除实际文件。`,
       [
@@ -217,13 +218,13 @@ export default function ProjectsScreen({ onOpenSidebar }: ProjectsScreenProps) {
         } catch {
           // 保留默认错误信息
         }
-        Alert.alert('保存失败', msg);
+        showRoundedAlert('保存失败', msg);
         return;
       }
       setModalVisible(false);
       fetchProjects();
     } catch {
-      Alert.alert('保存失败', '无法连接后端，请确认 App 后端服务已启动');
+      showRoundedAlert('保存失败', '无法连接后端，请确认 App 后端服务已启动');
     } finally {
       setLoading(false);
     }

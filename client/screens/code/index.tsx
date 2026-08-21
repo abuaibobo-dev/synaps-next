@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
+import { showRoundedMessage } from '@/components/RoundedAlert';
 import { MenuButton } from '@/components/Sidebar';
 
 import { getApiBase } from '@/utils';
@@ -141,11 +142,11 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
         fetchFiles(currentPath);
       } else {
         setSaveState('dirty');
-        alert(data.error || '保存失败');
+        showRoundedMessage(data.error || '保存失败');
       }
     } catch (err) {
       setSaveState('dirty');
-      alert('保存失败：' + String(err));
+      showRoundedMessage('保存失败：' + String(err));
     }
   }, [projectId, selectedFile, draftContent, currentPath, fetchFiles]);
 
@@ -225,13 +226,13 @@ export default function CodeScreen({ onOpenSidebar }: CodeScreenProps) {
       );
       const data = await response.json();
       if (data.success) {
-        alert('快照已恢复');
+        showRoundedMessage('快照已恢复');
         setViewMode('files');
         fetchFiles('');
       }
     } catch (err) {
       console.error('Failed to restore snapshot:', err);
-      alert('恢复失败');
+      showRoundedMessage('恢复失败');
     } finally {
       setLoading(false);
     }
