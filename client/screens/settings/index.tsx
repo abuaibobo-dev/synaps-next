@@ -119,6 +119,38 @@ interface BrainItem {
   note: string;
 }
 
+interface KernelCapability {
+  id: string;
+  name: string;
+  layer: 'perception' | 'memory' | 'reflection' | 'planning' | 'orchestration' | 'execution' | 'evolution';
+  status: 'ready' | 'partial' | 'unavailable';
+  score: number;
+  summary: string;
+  nextUpgrade: string;
+}
+
+interface ProactiveSuggestion {
+  id: string;
+  kind: string;
+  title: string;
+  reason: string;
+  action: string;
+  priority: number;
+  safety: 'safe' | 'canary' | 'gated';
+  status: 'pending' | 'accepted' | 'dismissed' | 'snoozed';
+}
+
+interface CapabilityRegistry {
+  version: string;
+  generatedAt: string;
+  readiness: number;
+  capabilities: KernelCapability[];
+  evolution: {
+    policy: string[];
+    steps: Array<{ id: string; title: string; reason: string; trigger: 'automatic' | 'approval'; expectedGain: number; safety: 'safe' | 'canary' | 'gated' }>;
+  };
+}
+
 interface BrainStatus {
   codex: { enabled: boolean; bridgeUrl: string; reachable: boolean; version: string | null; note: string };
   brains: BrainItem[];
@@ -157,7 +189,7 @@ interface StoreSkillItem {
   is_featured: boolean;
 }
 
-type SectionKey = 'account' | 'ai' | 'dev' | 'appearance' | 'security' | 'skills' | 'storage' | 'about';
+type SectionKey = 'account' | 'ai' | 'capability' | 'dev' | 'appearance' | 'security' | 'skills' | 'storage' | 'about';
 type ProviderKey = 'deepseek' | 'openai' | 'custom';
 type FontKey = 'small' | 'medium' | 'large';
 
@@ -232,6 +264,7 @@ const SECTION_KEYS: Record<SectionKey, Array<keyof Settings>> = {
   skills: [],
   storage: [],
   about: [],
+  capability: [],
 };
 
 function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; label: string; detail: string }> {
@@ -353,6 +386,9 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [appVersion, setAppVersion] = useState('1.0.0');
+  const [kernel, setKernel] = useState<CapabilityRegistry | null>(null);
+  const [kernelLoading, setKernelLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<ProactiveSuggestion[]>([]);
   const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [trustedProjects, setTrustedProjects] = useState<string[]>([]);
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; detail: string; risk_level: string; decision: string; created_at: string }>>([]);
@@ -421,6 +457,28 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       if (info && info.versionName) setAppVersion(info.versionName);
     });
   }, []);
+
+  useEffect(() => {
+    if (section !== 'capability') return;
+    const controller = new AbortController();
+    setKernelLoading(true);
+    Promise.all([
+      fetch(`${API_BASE}/api/v1/kernel/capabilities`, { signal: controller.signal }),
+      fetch(`${API_BASE}/api/v1/proactive`, { signal: controller.signal }),
+    ])
+      .then(async ([kernelRes, suggestionRes]) => {
+        const registryData = await kernelRes.json();
+        const suggestionData = await suggestionRes.json();
+        setKernel(registryData as CapabilityRegistry);
+        setSuggestions(suggestionData.suggestions || []);
+      })
+      .catch(() => {
+        setKernel(null);
+        setSuggestions([]);
+      })
+      .finally(() => setKernelLoading(false));
+    return () => controller.abort();
+  }, [section]);
 
   const fetchPermissionData = useCallback(async () => {
     try {
@@ -1353,11 +1411,102 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     return '⚠️ 未连接';
   }, [brains]);
 
+  const updateSuggestion = async (id: string, action: 'accept' | 'dismiss' | 'snooze') => {
+    setSuggestions((prev) => prev.filter((item) => item.id !== id || action === 'snooze'));
+    try {
+      await fetch(`${API_BASE}/api/v1/proactive/${id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+    } catch {}
+  };
+
+  const capabilityPage = (
+    <>
+      <SettingsGroup title="整体状态" sc={sc} bar={ACCENT}>
+        {kernelLoading && !kernel ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>正在分析七层能力...</Text>
+        ) : !kernel ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>无法加载能力注册表。</Text>
+        ) : (
+          <>
+            <Text style={[styles.kernelReadiness, { color: sc.label }]}>{kernel.readiness}%</Text>
+            <Text style={[styles.kernelSummary, { color: sc.value }]}>
+              {kernel.version} · {kernel.capabilities.filter(item => item.status === 'ready').length}/{kernel.capabilities.length} 项就绪
+            </Text>
+          </>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title="能力矩阵" sc={sc} bar={ACCENT} collapsible defaultOpen={true}>
+        {(kernel?.capabilities || []).map((item) => (
+          <View key={item.id} style={styles.kernelCard}>
+            <View style={styles.kernelCardTop}>
+              <Text style={[styles.kernelName, { color: sc.label }]} numberOfLines={1}>{item.name}</Text>
+              <Text style={[styles.kernelScore, { color: item.score >= 80 ? colors.success : item.score >= 40 ? colors.warning : colors.error }]}>{item.score}%</Text>
+            </View>
+            <Text style={[styles.kernelSummary, { color: sc.value }]}>{item.summary}</Text>
+            <Text style={[styles.kernelNext, { color: sc.value }]}>下一步：{item.nextUpgrade}</Text>
+          </View>
+        ))}
+      </SettingsGroup>
+
+      <SettingsGroup title="主动建议" sc={sc} bar={ACCENT} collapsible defaultOpen={true}>
+        {kernelLoading && !suggestions.length ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>正在分析项目信号...</Text>
+        ) : !suggestions.length ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>当前没有待处理建议。</Text>
+        ) : (
+          suggestions.map((item) => (
+            <View key={item.id} style={styles.kernelCard}>
+              <Text style={[styles.kernelName, { color: sc.label }]}>{item.title}</Text>
+              <Text style={[styles.kernelSummary, { color: sc.value }]}>{item.reason}</Text>
+              <Text style={[styles.kernelNext, { color: sc.value }]}>{item.action}</Text>
+              <View style={styles.suggestionActions}>
+                <Pressable style={[styles.suggestionButton, { backgroundColor: colors.success }]} onPress={() => updateSuggestion(item.id, 'accept')}>
+                  <Text style={styles.suggestionButtonText}>采纳</Text>
+                </Pressable>
+                <Pressable style={[styles.suggestionButton, { backgroundColor: sc.cardBorder }]} onPress={() => updateSuggestion(item.id, 'snooze')}>
+                  <Text style={[styles.suggestionButtonText, { color: sc.value }]}>稍后</Text>
+                </Pressable>
+                <Pressable style={[styles.suggestionButton, { backgroundColor: sc.cardBorder }]} onPress={() => updateSuggestion(item.id, 'dismiss')}>
+                  <Text style={[styles.suggestionButtonText, { color: sc.value }]}>忽略</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title="自动升级计划" sc={sc} bar={ACCENT} collapsible defaultOpen={true}>
+        {(kernel?.evolution.steps || []).map((step) => (
+          <View key={step.id} style={styles.kernelCard}>
+            <View style={styles.kernelCardTop}>
+              <Text style={[styles.kernelName, { color: sc.label }]} numberOfLines={1}>{step.title}</Text>
+              <Text style={[styles.kernelSafety, { color: step.safety === 'safe' ? colors.success : step.safety === 'canary' ? colors.warning : colors.primary }]}>
+                {step.trigger === 'automatic' ? '自动' : '审批'} · +{step.expectedGain}
+              </Text>
+            </View>
+            <Text style={[styles.kernelSummary, { color: sc.value }]}>{step.reason}</Text>
+          </View>
+        ))}
+      </SettingsGroup>
+
+      <SettingsGroup title="进化安全策略" sc={sc} bar={ACCENT} collapsible defaultOpen={false}>
+        {(kernel?.evolution.policy || []).map((item, index) => (
+          <Text key={index} style={[styles.kernelPolicy, { color: sc.value }]}>• {item}</Text>
+        ))}
+      </SettingsGroup>
+    </>
+  );
+
   const mainPage = (
     <>
       <SettingsGroup sc={sc} bar={ACCENT}>
         <SettingRow label="账户与安全" icon="user" iconColor={ACCENT} sc={sc} onPress={() => setSection('account')} />
         <SettingRow label="AI 模型" icon="bot" iconColor={ACCENT} sc={sc} onPress={() => setSection('ai')} />
+        <SettingRow label="认知内核" icon="microchip" iconColor={ACCENT} sc={sc} onPress={() => setSection('capability')} />
         <SettingRow label="开发环境" icon="terminal" iconColor={ACCENT} sc={sc} onPress={() => setSection('dev')} />
         <SettingRow label="外观" icon="palette" iconColor={ACCENT} sc={sc} onPress={() => setSection('appearance')} />
         <SettingRow label="安全" icon="shield" iconColor={ACCENT} sc={sc} onPress={() => setSection('security')} />
@@ -2158,6 +2307,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   }
 
   const sectionTitle: Record<SectionKey, string> = {
+    capability: '认知内核',
     account: '账户与安全',
     ai: 'AI 模型',
     dev: '开发环境',
@@ -2210,6 +2360,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 }
               />
               {section === 'account' && accountPage}
+              {section === 'capability' && capabilityPage}
               {section === 'ai' && aiPage}
               {section === 'dev' && devPage}
               {section === 'appearance' && appearancePage}
@@ -3314,7 +3465,69 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: 2,
       lineHeight: 15,
     },
-    guideSection: {
+    kernelReadiness: {
+    fontSize: 34,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  kernelCard: {
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.separator,
+  },
+  kernelCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  kernelName: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+  },
+  kernelScore: {
+    fontSize: fontSize.sm,
+    fontWeight: '800',
+  },
+  kernelSafety: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+  },
+  kernelSummary: {
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    marginTop: 3,
+  },
+  kernelNext: {
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    marginTop: 4,
+    opacity: 0.75,
+  },
+  suggestionActions: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  suggestionButton: {
+    minHeight: 28,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  suggestionButtonText: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  kernelPolicy: {
+    fontSize: fontSize.xs,
+    lineHeight: 18,
+    paddingVertical: 3,
+  },
+  guideSection: {
       fontSize: fontSize.sm,
       color: colors.primary,
       fontWeight: '700',
