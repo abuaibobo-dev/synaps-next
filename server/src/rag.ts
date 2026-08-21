@@ -2,14 +2,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { getDb, queryAll, queryOne, runSql, saveDb } from './db.js';
+import { getOllamaBase, OLLAMA_MODELS } from './ollama.js';
 
-// 纯 JS 检索（sql.js 无法加载 sqlite-vss 原生扩展，故用 BM25 + 中文字形分词实现）
-// 把项目文档/历史对话/用户备注切块入库，rag_search 检索后带出处引用。
+// 持久向量检索：SQLite 保存 nomic-embed-text 向量，检索时余弦相似度 + BM25 混合排序。
+// 向量服务不可用时自动回退到 BM25，保证知识库始终可用。
 
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 120;
 const MAX_FILES = 200;
 const MAX_FILE_KB = 300;
+const MAX_CHUNKS = 800;
+const EMBED_BATCH_SIZE = 16;
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.expo', 'android', 'ios', 'Pods', 'vendor']);
 const TEXT_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.mdx', '.txt', '.py', '.yml', '.yaml', '.toml', '.css', '.scss', '.html', '.xml', '.sql', '.sh', '.env', '.ini', '.cfg']);
 
@@ -75,6 +78,66 @@ function walkFiles(dir: string, out: string[], depth: number): void {
   }
 }
 
+let vectorColumnsReady = false;
+
+async function ensureVectorColumns(): Promise<void> {
+  if (vectorColumnsReady) return;
+  await getDb();
+  const info = queryAll('PRAGMA table_info(knowledge_chunks)') as Array<Record<string, unknown>>;
+  const names = new Set(info.map((row) => String(row.name)));
+  if (!names.has('embedding')) runSql("ALTER TABLE knowledge_chunks ADD COLUMN embedding TEXT NOT NULL DEFAULT ''");
+  if (!names.has('embedding_model')) runSql("ALTER TABLE knowledge_chunks ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''");
+  vectorColumnsReady = true;
+}
+
+async function embedBatch(texts: string[]): Promise<number[][] | null> {
+  if (!texts.length) return [];
+  const model = OLLAMA_MODELS.EMBEDDING;
+  try {
+    const res = await fetch(`${getOllamaBase()}/api/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input: texts }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (res.ok) {
+      const data = await res.json() as { embeddings?: number[][] };
+      if (Array.isArray(data.embeddings) && data.embeddings.length === texts.length) return data.embeddings;
+    }
+  } catch {}
+
+  try {
+    const vectors: number[][] = [];
+    for (const text of texts) {
+      const res = await fetch(`${getOllamaBase()}/api/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: text }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { embedding?: number[] };
+      if (!Array.isArray(data.embedding)) return null;
+      vectors.push(data.embedding);
+    }
+    return vectors;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeVector(vector: number[]): number[] {
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  return magnitude > 0 ? vector.map((value) => value / magnitude) : vector;
+}
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  const length = Math.min(left.length, right.length);
+  let score = 0;
+  for (let i = 0; i < length; i++) score += left[i] * right[i];
+  return score;
+}
+
 function bm25(queryTokens: string[], docs: { id: string; chunk: string }[], topK: number): Array<{ id: string; score: number; snippet: string }> {
   const N = docs.length;
   const docTokens = docs.map((d) => tokenize(d.chunk));
@@ -104,21 +167,25 @@ function bm25(queryTokens: string[], docs: { id: string; chunk: string }[], topK
     .slice(0, topK);
 }
 
-// 索引项目文件
-export function indexProjectFiles(projectId: string, rootDir: string): number {
+// 索引项目文件（持久向量 + 关键词兜底）
+export async function indexProjectFiles(projectId: string, rootDir: string): Promise<number> {
+  await ensureVectorColumns();
   const files: string[] = [];
   walkFiles(rootDir, files, 0);
   let inserted = 0;
   runSql('DELETE FROM knowledge_chunks WHERE project_id = ? AND doc_type = ?', [projectId, 'file']);
   for (const full of files) {
+    if (inserted >= MAX_CHUNKS) break;
     try {
       const rel = path.relative(rootDir, full).replace(/\\/g, '/');
       const content = fs.readFileSync(full, 'utf-8');
       const chunks = chunkText(content, rel, 'file', rel);
       for (const c of chunks) {
+        if (inserted >= MAX_CHUNKS) break;
+        const id = crypto.randomUUID();
         runSql(
-          'INSERT INTO knowledge_chunks (id, project_id, doc_type, source, title, chunk, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [crypto.randomUUID(), projectId, c.docType, c.source, c.title, c.chunk, Date.now()]
+          'INSERT INTO knowledge_chunks (id, project_id, doc_type, source, title, chunk, embedding, embedding_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, projectId, c.docType, c.source, c.title, c.chunk, '', '', Date.now()]
         );
         inserted++;
       }
@@ -126,12 +193,28 @@ export function indexProjectFiles(projectId: string, rootDir: string): number {
       // skip binary/unreadable
     }
   }
+
+  const rows = queryAll(
+    'SELECT id, chunk FROM knowledge_chunks WHERE project_id = ? AND doc_type = ? AND embedding = \'\' ORDER BY created_at DESC LIMIT ?',
+    [projectId, 'file', MAX_CHUNKS]
+  ) as Array<Record<string, unknown>>;
+  for (let i = 0; i < rows.length; i += EMBED_BATCH_SIZE) {
+    const batch = rows.slice(i, i + EMBED_BATCH_SIZE);
+    const vectors = await embedBatch(batch.map((row) => String(row.chunk || '')));
+    if (!vectors) break;
+    for (let j = 0; j < batch.length; j++) {
+      runSql('UPDATE knowledge_chunks SET embedding = ?, embedding_model = ? WHERE id = ?', [
+        JSON.stringify(normalizeVector(vectors[j])), OLLAMA_MODELS.EMBEDDING, String(batch[j].id),
+      ]);
+    }
+  }
   saveDb();
   return inserted;
 }
 
-// 索引历史对话
-export function indexChatHistory(projectId: string, limit = 200): number {
+// 索引历史对话（持久向量 + 关键词兜底）
+export async function indexChatHistory(projectId: string, limit = 200): Promise<number> {
+  await ensureVectorColumns();
   const rows = queryAll(
     `SELECT m.id, m.role, m.content, m.created_at, s.project_id
      FROM chat_messages m JOIN chat_sessions s ON m.session_id = s.id
@@ -142,15 +225,32 @@ export function indexChatHistory(projectId: string, limit = 200): number {
   runSql('DELETE FROM knowledge_chunks WHERE project_id = ? AND doc_type = ?', [projectId, 'chat']);
   let inserted = 0;
   for (const row of rows.reverse()) {
+    if (inserted >= MAX_CHUNKS) break;
     const source = `chat:${String(row.id).slice(0, 8)}:${String(row.created_at || '')}`;
     const title = `${row.role === 'user' ? '用户' : 'Agent'} ${String(row.created_at || '')}`;
     const chunks = chunkText(String(row.content || ''), source, 'chat', title);
     for (const c of chunks) {
+      if (inserted >= MAX_CHUNKS) break;
       runSql(
-        'INSERT INTO knowledge_chunks (id, project_id, doc_type, source, title, chunk, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [crypto.randomUUID(), projectId, c.docType, c.source, c.title, c.chunk, Date.now()]
+        'INSERT INTO knowledge_chunks (id, project_id, doc_type, source, title, chunk, embedding, embedding_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [crypto.randomUUID(), projectId, c.docType, c.source, c.title, c.chunk, '', '', Date.now()]
       );
       inserted++;
+    }
+  }
+
+  const pending = queryAll(
+    'SELECT id, chunk FROM knowledge_chunks WHERE project_id = ? AND doc_type = ? AND embedding = \'\' ORDER BY created_at DESC LIMIT ?',
+    [projectId, 'chat', MAX_CHUNKS]
+  ) as Array<Record<string, unknown>>;
+  for (let i = 0; i < pending.length; i += EMBED_BATCH_SIZE) {
+    const batch = pending.slice(i, i + EMBED_BATCH_SIZE);
+    const vectors = await embedBatch(batch.map((row) => String(row.chunk || '')));
+    if (!vectors) break;
+    for (let j = 0; j < batch.length; j++) {
+      runSql('UPDATE knowledge_chunks SET embedding = ?, embedding_model = ? WHERE id = ?', [
+        JSON.stringify(normalizeVector(vectors[j])), OLLAMA_MODELS.EMBEDDING, String(batch[j].id),
+      ]);
     }
   }
   saveDb();
@@ -158,40 +258,87 @@ export function indexChatHistory(projectId: string, limit = 200): number {
 }
 
 // 用户备注入库
-export function rememberNote(projectId: string | null, title: string, content: string): number {
+export async function rememberNote(projectId: string | null, title: string, content: string): Promise<number> {
+  await ensureVectorColumns();
   const chunks = chunkText(content, `note:${Date.now()}`, 'note', title);
+  const ids: string[] = [];
   for (const c of chunks) {
+    const id = crypto.randomUUID();
+    ids.push(id);
     runSql(
-      'INSERT INTO knowledge_chunks (id, project_id, doc_type, source, title, chunk, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [crypto.randomUUID(), projectId || null, c.docType, c.source, c.title, c.chunk, Date.now()]
+      'INSERT INTO knowledge_chunks (id, project_id, doc_type, source, title, chunk, embedding, embedding_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, projectId || null, c.docType, c.source, c.title, c.chunk, '', '', Date.now()]
     );
+  }
+  const vectors = await embedBatch(chunks.map((chunk) => chunk.chunk));
+  if (vectors) {
+    for (let i = 0; i < ids.length; i++) {
+      runSql('UPDATE knowledge_chunks SET embedding = ?, embedding_model = ? WHERE id = ?', [
+        JSON.stringify(normalizeVector(vectors[i])), OLLAMA_MODELS.EMBEDDING, ids[i],
+      ]);
+    }
   }
   saveDb();
   return chunks.length;
 }
 
-// 检索
-export function searchKnowledge(projectId: string | null, query: string, topK = 5): string {
+// 混合检索：向量优先，BM25 补充和兜底
+export async function searchKnowledge(projectId: string | null, query: string, topK = 5): Promise<string> {
+  await ensureVectorColumns();
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return 'No searchable tokens in query.';
   const rows = queryAll(
-    'SELECT id, chunk FROM knowledge_chunks WHERE project_id = ? ORDER BY created_at DESC LIMIT 3000',
+    'SELECT id, chunk, source, doc_type, title, embedding FROM knowledge_chunks WHERE project_id = ? ORDER BY created_at DESC LIMIT 3000',
     [projectId || null]
   ) as Array<Record<string, unknown>>;
   if (rows.length === 0) return 'Knowledge base is empty. Run rag_index first (scope: project/chat/all).';
-  const docs = rows.map((r) => ({ id: String(r.id), chunk: String(r.chunk || '') }));
-  const top = bm25(qTokens, docs, topK);
-  if (top.length === 0) return 'No relevant results found. Try rag_index to rebuild the index.';
-  const meta = new Map<string, { source: string; docType: string; title: string }>();
-  for (const r of queryAll('SELECT id, source, doc_type, title FROM knowledge_chunks WHERE id IN (SELECT id FROM knowledge_chunks WHERE project_id = ? LIMIT 3000)', [projectId || null]) as Array<Record<string, unknown>>) {
-    meta.set(String(r.id), { source: String(r.source || ''), docType: String(r.doc_type || ''), title: String(r.title || '') });
+
+  const keywordScores = new Map<string, number>();
+  for (const item of bm25(qTokens, rows.map((row) => ({ id: String(row.id), chunk: String(row.chunk || '') })), rows.length)) {
+    keywordScores.set(item.id, item.score);
   }
+  const maxKeywordScore = Math.max(0, ...keywordScores.values());
+
+  let queryVector: number[] | null = null;
+  const embeddedRows = rows.filter((row) => String(row.embedding || ''));
+  if (embeddedRows.length > 0) {
+    const vectors = await embedBatch([query]);
+    if (vectors?.[0]) queryVector = normalizeVector(vectors[0]);
+  }
+
+  interface ScoredResult { id: string; score: number; snippet: string; vectorScore: number; keywordScore: number }
+  const scored: ScoredResult[] = rows.map((row) => {
+    const id = String(row.id);
+    const keyword = maxKeywordScore > 0 ? (keywordScores.get(id) || 0) / maxKeywordScore : 0;
+    let vector = 0;
+    if (queryVector && row.embedding) {
+      try {
+        vector = Math.max(0, cosineSimilarity(queryVector, JSON.parse(String(row.embedding))));
+      } catch {}
+    }
+    return {
+      id,
+      snippet: String(row.chunk || ''),
+      vectorScore: vector,
+      keywordScore: keyword,
+      score: queryVector ? vector * 0.78 + keyword * 0.22 : keyword,
+    };
+  });
+
+  const top = scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
+  if (top.length === 0) return 'No relevant results found. Try rag_index to rebuild the index.';
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  const mode = queryVector ? '向量+关键词' : '关键词回退';
   return top
-    .map((r, i) => {
-      const m = meta.get(r.id);
-      const cite = m ? `【来源：${m.docType === 'chat' ? '历史对话' : m.docType === 'note' ? '用户备注' : '文件'} ${m.source}】` : '';
-      const snippet = r.snippet.replace(/\s+/g, ' ').slice(0, 180);
-      return `[${i + 1}] (相关度 ${r.score.toFixed(3)}) ${snippet}...\n${cite}`;
+    .map((item, index) => {
+      const row = byId.get(item.id) || {};
+      const docType = String(row.doc_type || '');
+      const cite = `【来源：${docType === 'chat' ? '历史对话' : docType === 'note' ? '用户备注' : '文件'} ${String(row.source || '')}】`;
+      const snippet = item.snippet.replace(/\s+/g, ' ').slice(0, 180);
+      return `[${index + 1}] (${mode} ${item.score.toFixed(3)}) ${snippet}...\n${cite}`;
     })
     .join('\n\n');
 }

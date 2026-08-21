@@ -1252,10 +1252,10 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       let chatCount = 0;
       if (projectId && (scope === 'all' || scope === 'project')) {
         const root = resolveProjectPath(projectId, '');
-        if (fs.existsSync(root)) projectCount = indexProjectFiles(projectId, root);
+        if (fs.existsSync(root)) projectCount = await indexProjectFiles(projectId, root);
       }
       if (projectId && (scope === 'all' || scope === 'chat')) {
-        chatCount = indexChatHistory(projectId);
+        chatCount = await indexChatHistory(projectId);
       }
       return `Knowledge index rebuilt (scope: ${scope}):\n- 项目文档：${projectCount} 块\n- 历史对话：${chatCount} 块\n\n使用 rag_search 检索知识库。`;
     }

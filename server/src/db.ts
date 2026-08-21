@@ -141,10 +141,21 @@ export async function getDb(): Promise<SqlJsDatabase> {
       source TEXT NOT NULL,
       title TEXT DEFAULT '',
       chunk TEXT NOT NULL,
+      embedding TEXT NOT NULL DEFAULT '',
+      embedding_model TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     )
   `);
+
+  const knowledgeColumns = db.exec('PRAGMA table_info(knowledge_chunks)');
+  const knowledgeColumnNames = knowledgeColumns[0]?.values.map((row) => String(row[1])) || [];
+  if (!knowledgeColumnNames.includes('embedding')) {
+    db.run("ALTER TABLE knowledge_chunks ADD COLUMN embedding TEXT NOT NULL DEFAULT ''");
+  }
+  if (!knowledgeColumnNames.includes('embedding_model')) {
+    db.run("ALTER TABLE knowledge_chunks ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''");
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS goals (
