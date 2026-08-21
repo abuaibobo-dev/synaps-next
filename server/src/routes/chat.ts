@@ -3241,6 +3241,82 @@ All file operations should use paths relative to the project root.`;
       })),
     ];
 
+    // Lightweight local chat bypasses the full agent/tool prompt. This keeps
+    // normal conversation usable on phone-sized Ollama models.
+    const taskKeywords = [
+      '写代码', '写一个', '写个', '做一个', '做个', '创建项目', '新建项目', '修复', '编译', '构建',
+      '运行命令', '执行命令', '分析项目', '代码审查', '安全扫描', '生成图表', '流程图', '架构图',
+      '依赖图', '时序图', '调用工具', '搜索', '查一下', '读取文件', '写入文件', '修改文件',
+      '删除文件', 'git', 'github', '终端',
+    ];
+    const lightweightLocalChat = Boolean(preferredLocalModel)
+      && lastUserContent.length <= 800
+      && !taskKeywords.some(keyword => lastUserContent.toLowerCase().includes(keyword));
+
+    if (lightweightLocalChat && preferredLocalModel) {
+      let lightweightProvider: 'local' | 'cloud' = 'local';
+      let lightweightModel = preferredLocalModel;
+      res.write(`data: ${JSON.stringify({ model_start: { provider: 'local', model: lightweightModel, reason: 'lightweight_chat' } })}\n\n`);
+      let localOutput = '';
+      try {
+        const result = await callOllamaStream(
+          preferredLocalModel,
+          [
+            { role: 'system', content: '你是 Synaps。用简体中文自然对话：先直接回答，再最多补充两句话。不要调用工具，不要输出 JSON，不要输出思考标签。' },
+            ...messages.slice(-6).map(message => ({ role: message.role as 'user' | 'assistant' | 'system', content: message.content.slice(0, 1200) })),
+          ],
+          {
+            onContent: delta => {
+              localOutput += delta;
+              if (delta) res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+            },
+            onThinking: delta => {
+              if (delta) res.write(`data: ${JSON.stringify({ thinking_chunk: delta })}\n\n`);
+            },
+          },
+          agentInstance?.temperature ?? 0.5,
+          512
+        );
+        if (!result.error && localOutput.trim()) {
+          res.write('data: {"thinking_clear":true}\n\n');
+          saveChatMessageWithModel(sessionId, 'assistant', localOutput.trim(), lightweightProvider, lightweightModel);
+          finishTask(taskId, 'done', Date.now());
+          res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'done', durationMs: Date.now() - taskStartedAt } })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          abortRegistry.delete(taskId);
+          res.end();
+          return;
+        }
+        console.log('[Ollama] lightweight chat failed:', result.error || 'empty response');
+      } catch (error: any) {
+        console.log('[Ollama] lightweight chat error:', error?.message || error);
+      }
+
+      if (!apiKey) throw new Error('本地模型无响应，且未配置 DeepSeek 兜底');
+      lightweightProvider = 'cloud';
+      lightweightModel = agentInstance?.model || model;
+      res.write(`data: ${JSON.stringify({ model_start: { provider: 'cloud', model: lightweightModel, reason: 'local_failed' } })}\n\n`);
+      const fallbackText = await streamWithForwarding(
+        client,
+        [
+          { role: 'system', content: '你是 Synaps。用简体中文自然对话，直接回答。' },
+          ...messages.slice(-6).map(message => ({ role: message.role as 'user' | 'assistant' | 'system', content: message.content })),
+        ],
+        { temperature: 0.5, ...(lightweightModel ? { model: lightweightModel } : {}) },
+        res,
+        undefined,
+        undefined,
+        taskId
+      );
+      saveChatMessageWithModel(sessionId, 'assistant', fallbackText, lightweightProvider, lightweightModel);
+      finishTask(taskId, 'done', Date.now());
+      res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'done', durationMs: Date.now() - taskStartedAt } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      abortRegistry.delete(taskId);
+      res.end();
+      return;
+    }
+
     // Agent loop: execute tools and continue conversation
     const maxIterations = 10;
     let iteration = 0;
@@ -3285,7 +3361,7 @@ All file operations should use paths relative to the project root.`;
                 },
               },
               agentInstance?.temperature ?? 0.3,
-              4096
+              1536
             );
             if (!localResult.error && localResult.content.trim()) {
               fullResponse = localResult.content;

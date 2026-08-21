@@ -123,6 +123,15 @@ export async function isOllamaAvailable(): Promise<boolean> {
   }
 }
 
+function ollamaRuntimeOptions(temperature: number, maxTokens: number) {
+  return {
+    temperature,
+    num_predict: Math.min(maxTokens, 1536),
+    num_ctx: 2048,
+    num_batch: 128,
+  };
+}
+
 // 调用 Ollama 本地模型
 export async function callOllama(
   model: string,
@@ -215,7 +224,8 @@ export async function callOllamaStream(
         model,
         messages,
         stream: true,
-        options: { temperature, num_predict: maxTokens },
+        keep_alive: '10m',
+        options: ollamaRuntimeOptions(temperature, maxTokens),
       }),
       signal: AbortSignal.timeout(300000),
     });
