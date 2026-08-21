@@ -191,6 +191,14 @@ const BRAIN_OPTIONS: Array<{ key: 'auto' | 'codex' | 'local'; label: string }> =
   { key: 'local', label: '本地' },
 ];
 
+const SKILL_STORE_CATEGORIES = ['全部', 'AI 增强', '专业技能', '开发', '效率', '办公', '安全工具'];
+const SKILL_STORE_SORTS = [
+  { key: 'downloads', label: '下载' },
+  { key: 'stars', label: '星标' },
+  { key: 'rating', label: '评分' },
+  { key: 'recommend', label: '推荐' },
+];
+
 const CONTEXT_LIMITS: Record<string, string> = {
   'deepseek-chat': '128K',
   'deepseek-reasoner': '128K',
@@ -361,6 +369,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [skillStoreInstalling, setSkillStoreInstalling] = useState<number | null>(null);
   const [skillStoreChecking, setSkillStoreChecking] = useState(false);
   const [skillStoreTotal, setSkillStoreTotal] = useState(0);
+  const [skillStoreCategory, setSkillStoreCategory] = useState('全部');
+  const [skillStoreSort, setSkillStoreSort] = useState('downloads');
   const [deviceEnabled, setDeviceEnabled] = useState(false);
   const [deviceServiceConnected, setDeviceServiceConnected] = useState(false);
   const [mcpModalVisible, setMcpModalVisible] = useState(false);
@@ -1101,12 +1111,22 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     }
   }, []);
 
-  const fetchStoreSkills = useCallback(async (keyword: string, page = 1) => {
+  const fetchStoreSkills = useCallback(async (
+    keyword: string,
+    page = 1,
+    category = skillStoreCategory,
+    sort = skillStoreSort
+  ) => {
     setSkillStoreLoading(true);
     try {
-      const url = keyword.trim()
-        ? `${API_BASE}/api/v1/skill-store/search?keyword=${encodeURIComponent(keyword.trim())}&page=${page}&page_size=20&sort=downloads`
-        : `${API_BASE}/api/v1/skill-store/featured?page=${page}&page_size=20`;
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: '20',
+        sort,
+      });
+      if (category !== '全部') params.set('category', category);
+      if (keyword.trim()) params.set('keyword', keyword.trim());
+      const url = `${API_BASE}/api/v1/skill-store/search?${params.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) {
@@ -1116,8 +1136,12 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         setSkillStorePages(0);
         return;
       }
-      setSkillStoreItems(data.items || []);
-      setSkillStoreTotal(data.total || 0);
+      const allItems = data.items || [];
+      const visibleItems = category === '全部'
+        ? allItems
+        : allItems.filter((item: StoreSkillItem) => item.category === category);
+      setSkillStoreItems(visibleItems);
+      setSkillStoreTotal(category === '全部' ? (data.total || 0) : visibleItems.length);
       setSkillStorePage(data.page || page);
       setSkillStorePages(data.pages || Math.ceil((data.total || 0) / 20));
     } catch {
@@ -1128,12 +1152,14 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } finally {
       setSkillStoreLoading(false);
     }
-  }, []);
+  }, [skillStoreCategory, skillStoreSort]);
 
   const openSkillStore = useCallback(() => {
     setSkillStoreVisible(true);
     setSkillStoreQuery('');
-    fetchStoreSkills('');
+    setSkillStoreCategory('全部');
+    setSkillStoreSort('downloads');
+    fetchStoreSkills('', 1, '全部', 'downloads');
   }, [fetchStoreSkills]);
 
   const installStoreSkill = useCallback(
@@ -2473,6 +2499,34 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <Pressable style={styles.skillStoreSearchBtn} onPress={() => fetchStoreSkills(skillStoreQuery, 1)}>
                   <AppIcon name="search" size={16} color="#FFFFFF" />
                 </Pressable>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.skillStoreFilterScroll} contentContainerStyle={styles.skillStoreFilterRow}>
+                {SKILL_STORE_CATEGORIES.map((category) => (
+                  <Pressable
+                    key={category}
+                    style={[styles.skillStoreChip, skillStoreCategory === category && styles.skillStoreChipActive]}
+                    onPress={() => {
+                      setSkillStoreCategory(category);
+                      fetchStoreSkills(skillStoreQuery, 1, category, skillStoreSort);
+                    }}
+                  >
+                    <Text style={[styles.skillStoreChipText, skillStoreCategory === category && styles.skillStoreChipTextActive]}>{category}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.skillStoreFilterScroll} contentContainerStyle={styles.skillStoreFilterRow}>
+                {SKILL_STORE_SORTS.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={[styles.skillStoreChip, skillStoreSort === option.key && styles.skillStoreChipActive]}
+                    onPress={() => {
+                      setSkillStoreSort(option.key);
+                      fetchStoreSkills(skillStoreQuery, 1, skillStoreCategory, option.key);
+                    }}
+                  >
+                    <Text style={[styles.skillStoreChipText, skillStoreSort === option.key && styles.skillStoreChipTextActive]}>{option.label}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
               </View>
               <View style={styles.skillStoreMetaRow}>
                 <Text style={styles.skillStoreMeta}>
@@ -2527,7 +2581,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                 <View style={styles.skillStorePagination}>
                   <Pressable
                     style={[styles.skillStorePageBtn, (skillStoreLoading || skillStorePage <= 1) && styles.skillStorePageBtnDisabled]}
-                    onPress={() => fetchStoreSkills(skillStoreQuery, skillStorePage - 1)}
+                    onPress={() => fetchStoreSkills(skillStoreQuery, skillStorePage - 1, skillStoreCategory, skillStoreSort)}
                     disabled={skillStoreLoading || skillStorePage <= 1}
                   >
                     <Text style={styles.skillStorePageText}>上一页</Text>
@@ -2535,7 +2589,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                   <Text style={styles.skillStorePageLabel}>{skillStorePage} / {skillStorePages}</Text>
                   <Pressable
                     style={[styles.skillStorePageBtn, (skillStoreLoading || skillStorePage >= skillStorePages) && styles.skillStorePageBtnDisabled]}
-                    onPress={() => fetchStoreSkills(skillStoreQuery, skillStorePage + 1)}
+                    onPress={() => fetchStoreSkills(skillStoreQuery, skillStorePage + 1, skillStoreCategory, skillStoreSort)}
                     disabled={skillStoreLoading || skillStorePage >= skillStorePages}
                   >
                     <Text style={styles.skillStorePageText}>下一页</Text>
@@ -2973,6 +3027,31 @@ const createStyles = (colors: ThemeColors) =>
     skillStoreInstallText: {
       color: '#FFFFFF',
       fontSize: fontSize.xs,
+      fontWeight: '600',
+    },
+    skillStoreFilterScroll: {
+      flexGrow: 0,
+      marginBottom: spacing.sm,
+    },
+    skillStoreFilterRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    skillStoreChip: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: colors.bgElevated,
+    },
+    skillStoreChipActive: {
+      backgroundColor: ACCENT,
+    },
+    skillStoreChipText: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    skillStoreChipTextActive: {
+      color: '#FFFFFF',
       fontWeight: '600',
     },
     skillStorePagination: {
