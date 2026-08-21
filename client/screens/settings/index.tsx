@@ -140,6 +140,16 @@ interface ProactiveSuggestion {
   status: 'pending' | 'accepted' | 'dismissed' | 'snoozed';
 }
 
+interface EvolutionRun {
+  id: string;
+  stepId: string;
+  title: string;
+  status: 'success' | 'failed' | 'blocked' | 'requires_approval';
+  message: string;
+  mode: 'automatic' | 'approved' | 'manual';
+  createdAt: number;
+}
+
 interface CapabilityRegistry {
   version: string;
   generatedAt: string;
@@ -389,6 +399,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [kernel, setKernel] = useState<CapabilityRegistry | null>(null);
   const [kernelLoading, setKernelLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<ProactiveSuggestion[]>([]);
+  const [upgradeRuns, setUpgradeRuns] = useState<EvolutionRun[]>([]);
+  const [runningUpgrade, setRunningUpgrade] = useState<string | null>(null);
   const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [trustedProjects, setTrustedProjects] = useState<string[]>([]);
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; detail: string; risk_level: string; decision: string; created_at: string }>>([]);
@@ -465,16 +477,20 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     Promise.all([
       fetch(`${API_BASE}/api/v1/kernel/capabilities`, { signal: controller.signal }),
       fetch(`${API_BASE}/api/v1/proactive`, { signal: controller.signal }),
+      fetch(`${API_BASE}/api/v1/kernel/upgrade-runs`, { signal: controller.signal }),
     ])
-      .then(async ([kernelRes, suggestionRes]) => {
+      .then(async ([kernelRes, suggestionRes, runRes]) => {
         const registryData = await kernelRes.json();
         const suggestionData = await suggestionRes.json();
+        const runData = await runRes.json();
         setKernel(registryData as CapabilityRegistry);
         setSuggestions(suggestionData.suggestions || []);
+        setUpgradeRuns(runData.runs || []);
       })
       .catch(() => {
         setKernel(null);
         setSuggestions([]);
+        setUpgradeRuns([]);
       })
       .finally(() => setKernelLoading(false));
     return () => controller.abort();
@@ -1422,6 +1438,28 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     } catch {}
   };
 
+  const loadUpgrades = () => {
+    fetch(`${API_BASE}/api/v1/kernel/upgrade-runs`)
+      .then((res) => res.json())
+      .then((data) => setUpgradeRuns(data.runs || []))
+      .catch(() => {});
+  };
+
+  const runUpgrade = async (stepId: string, approved: boolean) => {
+    setRunningUpgrade(stepId);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/kernel/upgrades/${stepId}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved }),
+      });
+      const data = await response.json();
+      if (data.run) setUpgradeRuns((prev) => [data.run, ...prev].slice(0, 60));
+      loadUpgrades();
+    } catch {}
+    finally { setRunningUpgrade(null); }
+  };
+
   const capabilityPage = (
     <>
       <SettingsGroup title="整体状态" sc={sc} bar={ACCENT}>
@@ -1491,6 +1529,24 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             <Text style={[styles.kernelSummary, { color: sc.value }]}>{step.reason}</Text>
           </View>
         ))}
+      </SettingsGroup>
+
+      <SettingsGroup title="最近升级记录" sc={sc} bar={ACCENT} collapsible defaultOpen={false}>
+        {!upgradeRuns.length ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>暂无升级记录。</Text>
+        ) : (
+          upgradeRuns.slice(0, 20).map((run) => (
+            <View key={run.id} style={styles.kernelCard}>
+              <View style={styles.kernelCardTop}>
+                <Text style={[styles.kernelName, { color: sc.label }]} numberOfLines={1}>{run.title}</Text>
+                <Text style={[styles.kernelSafety, { color: run.status === 'success' ? colors.success : run.status === 'failed' ? colors.error : colors.warning }]}>
+                  {run.status === 'success' ? '成功' : run.status === 'failed' ? '失败' : run.status === 'blocked' ? '阻塞' : '待审批'}
+                </Text>
+              </View>
+              <Text style={[styles.kernelSummary, { color: sc.value }]}>{run.message}</Text>
+            </View>
+          ))
+        )}
       </SettingsGroup>
 
       <SettingsGroup title="进化安全策略" sc={sc} bar={ACCENT} collapsible defaultOpen={false}>
