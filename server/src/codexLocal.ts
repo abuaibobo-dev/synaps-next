@@ -205,6 +205,7 @@ export interface CodexLocalRunOptions {
   baseUrl?: string;
   wireApi?: string;
   timeoutMs?: number;
+  sandbox?: string;
 }
 
 export async function runCodexLocal(opts: CodexLocalRunOptions): Promise<CodexLocalRunResult> {
@@ -223,6 +224,7 @@ export async function runCodexLocal(opts: CodexLocalRunOptions): Promise<CodexLo
   const apiKey = String(opts.apiKey || process.env.DEEPSEEK_API_KEY || '').trim();
   const baseUrl = String(opts.baseUrl || 'https://api.deepseek.com').trim();
   const wireApi = String(opts.wireApi || 'responses').trim();
+  const sandbox = String(opts.sandbox || 'danger-full-access').trim();
   const timeoutMs = Math.max(10000, Number(opts.timeoutMs) || 600000);
 
   const q = (s: string) => JSON.stringify(String(s));
@@ -230,7 +232,7 @@ export async function runCodexLocal(opts: CodexLocalRunOptions): Promise<CodexLo
     'exec',
     '--json',
     '--skip-git-repo-check',
-    '--sandbox', 'danger-full-access',
+    '--sandbox', sandbox,
     '-C', workDir,
     '-c', `model_provider=${q('deepseek')}`,
     '-c', `model=${q(model)}`,

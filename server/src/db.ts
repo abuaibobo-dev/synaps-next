@@ -168,11 +168,26 @@ export async function getDb(): Promise<SqlJsDatabase> {
       total_steps INTEGER DEFAULT 0,
       steps_json TEXT NOT NULL DEFAULT '[]',
       notes_json TEXT NOT NULL DEFAULT '[]',
+      auto_run INTEGER NOT NULL DEFAULT 0,
+      next_run_at INTEGER,
+      approval_note TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     )
   `);
+
+  const goalColumns = db.exec('PRAGMA table_info(goals)');
+  const goalColumnNames = goalColumns[0]?.values.map((row) => String(row[1])) || [];
+  for (const [columnName, definition] of [
+    ['auto_run', 'INTEGER NOT NULL DEFAULT 0'],
+    ['next_run_at', 'INTEGER'],
+    ['approval_note', "TEXT NOT NULL DEFAULT ''"],
+  ] as Array<[string, string]>) {
+    if (!goalColumnNames.includes(columnName)) {
+      db.run(`ALTER TABLE goals ADD COLUMN ${columnName} ${definition}`);
+    }
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_memory (

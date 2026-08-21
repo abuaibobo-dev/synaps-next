@@ -26,6 +26,7 @@ import codexLocalRouter from "./routes/codexLocal.js";
 import ollamaRouter from "./routes/ollama.js";
 import { seedImpeccableSkills } from "./impeccable.js";
 import { seedDiagramSkill } from "./diagramSkill.js";
+import { startAutonomousLoop } from "./autonomousLoop.js";
 
 const app = express();
 const port = process.env.PORT || 19091;
@@ -93,6 +94,7 @@ app.listen(Number(port), '127.0.0.1', () => {
   seedImpeccableSkills().catch(() => {});
   seedDiagramSkill();
   startProactiveMonitor();
+  startAutonomousLoop().catch((error) => console.error('[autonomous-loop] startup failed:', error));
   // 技能商店后台维护：自动更新 + 测试通道转正/停用（启动 15s 后执行一次，之后每 24h 一次）
   setTimeout(() => {
     runSkillStoreMaintenance().catch((err) => console.error('[skill-store] maintenance failed:', err));

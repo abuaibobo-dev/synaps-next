@@ -104,12 +104,14 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'rag_index':
     case 'rag_remember':
       return { level: 'none', impact: '只读分析操作，无副作用' };
-    case 'goal_set':
-      return { level: 'none', impact: `创建长期目标跟踪记录：${(toolCall as any).title || '?'}` };
+    case 'goal_set': {
+      const autoRun = Boolean((toolCall as any).autoRun !== false);
+      return { level: autoRun ? 'medium' : 'none', impact: `${autoRun ? '创建后台自动执行目标' : '创建长期目标跟踪记录'}：${(toolCall as any).title || '?'}` };
+    }
     case 'goal_loop':
       return {
-        level: 'medium',
-        impact: `推进长期目标${(toolCall as any).milestone ? '（里程碑节点，暂停等待确认）' : '（更新目标进度）'}`,
+        level: (toolCall as any).approve || (toolCall as any).resume ? 'high' : 'medium',
+        impact: `${(toolCall as any).approve || (toolCall as any).resume ? '审批并恢复长期目标' : (toolCall as any).milestone ? '里程碑节点，暂停等待确认' : '更新目标进度'}`,
       };
     case 'write_file':
       return {
