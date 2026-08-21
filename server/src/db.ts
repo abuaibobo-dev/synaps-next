@@ -70,6 +70,8 @@ export async function getDb(): Promise<SqlJsDatabase> {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
       content TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
     )
@@ -300,6 +302,15 @@ export async function getDb(): Promise<SqlJsDatabase> {
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     )
   `);
+
+  const chatMessageColumns = db.exec('PRAGMA table_info(chat_messages)');
+  const chatMessageColumnNames = chatMessageColumns[0]?.values.map((row) => String(row[1])) || [];
+  if (!chatMessageColumnNames.includes('provider')) {
+    db.run('ALTER TABLE chat_messages ADD COLUMN provider TEXT');
+  }
+  if (!chatMessageColumnNames.includes('model')) {
+    db.run('ALTER TABLE chat_messages ADD COLUMN model TEXT');
+  }
 
   // v3.12.0 removes the Telegram collector completely, including credentials,
   // sessions and historical relay data left by earlier installations.

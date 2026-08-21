@@ -22,11 +22,18 @@ export function getOllamaBase(): string {
 
 // 本地模型配置
 export const OLLAMA_MODELS = {
-  WRITING: 'gemma3:1b',
+  WRITING: 'qwen3:1.7b',
   VISION: 'moondream',
   CHAT: 'qwen2.5:1.5b',
-  REASONING: 'deepseek-r1:1.5b',
+  REASONING: 'deepseek-r1:1.7b',
   EMBEDDING: 'nomic-embed-text',
+} as const;
+
+export const OLLAMA_MODEL_CANDIDATES = {
+  WRITING: ['qwen3:1.7b', 'dqnwrite', 'gemma3:1b'],
+  VISION: ['moondream', 'llava'],
+  CHAT: ['qwen2.5:1.5b', 'qwen3:1.7b', 'gemma3:1b'],
+  REASONING: ['deepseek-r1:1.7b', 'deepseek-r1:1.5b', 'qwen3:1.7b'],
 } as const;
 
 export interface OllamaMessage {
@@ -58,6 +65,43 @@ export function selectOllamaModel(text: string, hasImage = false): string {
   if (intent === 'vision') return OLLAMA_MODELS.VISION;
   if (intent === 'reasoning') return OLLAMA_MODELS.REASONING;
   return OLLAMA_MODELS.CHAT;
+}
+
+export async function listOllamaModels(): Promise<string[]> {
+  try {
+    const res = await fetch(`${getOllamaBase()}/api/tags`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as { models?: Array<{ name?: string }> };
+    return (data.models || []).map((model) => String(model.name || '')).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function selectAvailableOllamaModel(text: string, hasImage = false): Promise<string | null> {
+  const installed = await listOllamaModels();
+  if (!installed.length) return null;
+  const normalize = (value: string) => value.toLowerCase().split(':')[0];
+  const intent = detectIntent(text, hasImage);
+  const preferred = intent === 'writing'
+    ? OLLAMA_MODEL_CANDIDATES.WRITING
+    : intent === 'vision'
+      ? OLLAMA_MODEL_CANDIDATES.VISION
+      : intent === 'reasoning'
+        ? OLLAMA_MODEL_CANDIDATES.REASONING
+        : OLLAMA_MODEL_CANDIDATES.CHAT;
+
+  for (const candidate of preferred) {
+    if (installed.includes(candidate)) return candidate;
+    const baseName = normalize(candidate);
+    const sameBase = installed.find((model) => normalize(model) === baseName);
+    if (sameBase) return sameBase;
+  }
+  const visionModel = installed.find((model) => /moondream|llava|vision/i.test(model));
+  if (hasImage && visionModel) return visionModel;
+  return installed[0];
 }
 
 export function extractImagePaths(text: string): string[] {
@@ -106,6 +150,128 @@ export async function callOllama(
     return { content: data.message?.content || '' };
   } catch (e: any) {
     return { content: '', error: `Ollama 连接失败: ${e.message}` };
+  }
+}
+
+export interface OllamaStreamHandlers {
+  onContent?: (delta: string) => void;
+  onThinking?: (delta: string) => void;
+}
+
+export async function callOllamaStream(
+  model: string,
+  messages: OllamaMessage[],
+  handlers: OllamaStreamHandlers,
+  temperature: number = 0.7,
+  maxTokens: number = 4096
+): Promise<{ content: string; error?: string }> {
+  let fullContent = '';
+  let visibleContent = '';
+  let thinkingBuffer = '';
+  let insideThink = false;
+
+  const emitVisible = (rawDelta: string): void => {
+    let pending = rawDelta;
+    while (pending) {
+      if (!insideThink) {
+        const start = pending.indexOf('<think>');
+        if (start === -1) {
+          if (pending) {
+            visibleContent += pending;
+            handlers.onContent?.(pending);
+          }
+          break;
+        }
+        const before = pending.slice(0, start);
+        if (before) {
+          visibleContent += before;
+          handlers.onContent?.(before);
+        }
+        pending = pending.slice(start + '<think>'.length);
+        insideThink = true;
+      } else {
+        const end = pending.indexOf('</think>');
+        if (end === -1) {
+          thinkingBuffer += pending;
+          handlers.onThinking?.(pending);
+          break;
+        }
+        const thought = pending.slice(0, end);
+        if (thought) {
+          thinkingBuffer += thought;
+          handlers.onThinking?.(thought);
+        }
+        pending = pending.slice(end + '</think>'.length);
+        insideThink = false;
+      }
+    }
+  };
+
+  try {
+    const res = await fetch(`${getOllamaBase()}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        options: { temperature, num_predict: maxTokens },
+      }),
+      signal: AbortSignal.timeout(300000),
+    });
+    if (!res.ok || !res.body) {
+      const error = await res.text().catch(() => '');
+      return { content: '', error: `Ollama ${res.status}: ${error || 'stream unavailable'}` };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const payload = JSON.parse(line) as {
+            message?: { content?: string; thinking?: string };
+            response?: string;
+          };
+          const nativeThinking = payload.message?.thinking;
+          if (nativeThinking) handlers.onThinking?.(nativeThinking);
+          const delta = payload.message?.content ?? payload.response ?? '';
+          if (delta) {
+            fullContent += delta;
+            emitVisible(delta);
+          }
+        } catch {
+        }
+      }
+    }
+    if (buffer.trim()) {
+      try {
+        const payload = JSON.parse(buffer) as { message?: { content?: string; thinking?: string } };
+        const nativeThinking = payload.message?.thinking;
+        if (nativeThinking) handlers.onThinking?.(nativeThinking);
+        const delta = payload.message?.content || '';
+        if (delta) {
+          fullContent += delta;
+          emitVisible(delta);
+        }
+      } catch {
+      }
+    }
+    return { content: fullContent };
+  } catch (e: any) {
+    return {
+      content: fullContent,
+      error: `Ollama 连接失败: ${e?.message || e}`,
+    };
+  } finally {
+    if (visibleContent) handlers.onContent?.('');
   }
 }
 

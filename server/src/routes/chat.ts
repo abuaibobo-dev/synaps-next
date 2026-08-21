@@ -24,7 +24,7 @@ import {
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
-import { isOllamaAvailable, callOllama, selectOllamaModel, extractImagePaths, type OllamaMessage } from '../ollama.js';
+import { isOllamaAvailable, callOllama, callOllamaStream, selectAvailableOllamaModel, selectOllamaModel, extractImagePaths, type OllamaMessage } from '../ollama.js';
 import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable, rememberMemory, recallMemories } from '../rag.js';
 import {
   createTask,
@@ -503,6 +503,21 @@ function saveChatMessage(sessionId: string, role: 'user' | 'assistant', content:
   if (!content.trim()) return;
   const id = crypto.randomUUID();
   runSql(`INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)`, [id, sessionId, role, content]);
+}
+
+function saveChatMessageWithModel(
+  sessionId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  provider?: string,
+  model?: string
+): void {
+  if (!content.trim()) return;
+  const id = crypto.randomUUID();
+  runSql(
+    `INSERT INTO chat_messages (id, session_id, role, content, provider, model) VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, sessionId, role, content, provider || null, model || null]
+  );
 }
 
 interface PendingApproval {
@@ -3088,7 +3103,10 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     const model = getSetting('ai_model') || 'deepseek-v4-flash';
 
     const ollamaAvailable = await isOllamaAvailable();
-    if (!apiKey && !ollamaAvailable) {
+    const preferredLocalModel = ollamaAvailable
+      ? await selectAvailableOllamaModel(lastUserContent, extractImagePaths(lastUserContent).length > 0)
+      : null;
+    if (!apiKey && (!ollamaAvailable || !preferredLocalModel)) {
       res.status(400).json({ error: '未配置 DeepSeek API Key，且本地模型不可用。请配置 Key 或启动 Ollama' });
       return;
     }
@@ -3122,10 +3140,16 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       },
     })}\n\n`);
     createTask(taskId, projectId || null, sessionId, taskName, taskStartedAt);
+    const initialModel = preferredLocalModel || (agentInstance?.model || model);
     res.write(`data: ${JSON.stringify({
+      model_start: {
+        provider: preferredLocalModel ? 'local' : 'cloud',
+        model: initialModel,
+        reason: preferredLocalModel ? 'local_available' : 'local_unavailable',
+      },
       executor: {
-        label: ollamaAvailable
-          ? `本地模型 · ${selectOllamaModel(lastUserContent, extractImagePaths(lastUserContent).length > 0)}`
+        label: preferredLocalModel
+          ? `本地模型 · ${preferredLocalModel}`
           : currentExecutorLabel(),
       },
     })}\n\n`);
@@ -3232,6 +3256,8 @@ All file operations should use paths relative to the project root.`;
 
       // Collect full response：本地模型优先，失败后自动降级云端
       let fullResponse = '';
+      let usedProvider: 'local' | 'cloud' = 'cloud';
+      let usedModel = agentInstance?.model || model;
       localModelUsed = false;
       try {
         if (ollamaAvailable) {
@@ -3242,21 +3268,38 @@ All file operations should use paths relative to the project root.`;
             const lastOllamaMessage = [...ollamaMessages].reverse().find((message) => message.role === 'user');
             if (lastOllamaMessage && images.length > 0) lastOllamaMessage.images = images;
           }
-          const localResult = await callOllama(
-            selectOllamaModel(lastUserContent, hasImage),
-            ollamaMessages,
-            agentInstance?.temperature ?? 0.3,
-            4096
-          );
-          if (!localResult.error && localResult.content.trim()) {
-            fullResponse = localResult.content;
-            localModelUsed = true;
-          } else {
-            console.log('[Ollama] 本地模型失败，降级到 DeepSeek:', localResult.error || '空回复');
+          const localModel = await selectAvailableOllamaModel(lastUserContent, hasImage);
+          if (localModel) {
+            usedProvider = 'local';
+            usedModel = localModel;
+            res.write(`data: ${JSON.stringify({ model_start: { provider: 'local', model: localModel, reason: 'local_selected' } })}\n\n`);
+            const localResult = await callOllamaStream(
+              localModel,
+              ollamaMessages,
+              {
+                onThinking: (delta) => {
+                  if (delta) res.write(`data: ${JSON.stringify({ thinking_chunk: delta })}\n\n`);
+                },
+                onContent: (delta) => {
+                  if (delta) res.write(`data: ${JSON.stringify({ thinking_chunk: delta })}\n\n`);
+                },
+              },
+              agentInstance?.temperature ?? 0.3,
+              4096
+            );
+            if (!localResult.error && localResult.content.trim()) {
+              fullResponse = localResult.content;
+              localModelUsed = true;
+            } else {
+              console.log('[Ollama] 本地模型失败，降级到 DeepSeek:', localResult.error || '空回复');
+            }
           }
         }
 
         if (!localModelUsed) {
+          usedProvider = 'cloud';
+          usedModel = agentInstance?.model || model;
+          res.write(`data: ${JSON.stringify({ model_start: { provider: 'cloud', model: usedModel, reason: 'fallback' } })}\n\n`);
           // 每一轮都实时转发思考片段（第 1 轮起，用户第一时间看到进展）；心跳保活
           fullResponse = await streamWithWatchdog(
             client,
@@ -3309,7 +3352,7 @@ All file operations should use paths relative to the project root.`;
           res.write(`data: ${JSON.stringify({ content: finalText })}\n\n`);
         }
 
-        saveChatMessage(sessionId, 'assistant', fullResponse);
+        saveChatMessageWithModel(sessionId, 'assistant', fullResponse, usedProvider, usedModel);
         if (agentInstance) {
           if (lastUserMessage) appendAgentMessage(agentInstance.id, 'user', lastUserMessage.content);
           appendAgentMessage(agentInstance.id, 'assistant', fullResponse);
@@ -3632,7 +3675,7 @@ router.get('/history', async (req: express.Request, res: express.Response) => {
     }
 
     const rows = queryAll(
-      `SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`,
+      `SELECT id, role, content, provider, model, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`,
       [session.id as string]
     );
     res.json({ sessionId: session.id, messages: rows });

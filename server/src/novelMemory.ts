@@ -113,8 +113,8 @@ export interface MemorySnapshot {
 // 初始化：创建小说项目 & 表
 // ============================================================
 
-export function ensureNovelTables(): void {
-  getDb().then(db => {
+export async function ensureNovelTables(): Promise<void> {
+  const db = await getDb();
     db.run(`
       CREATE TABLE IF NOT EXISTS novel_projects (
         id TEXT PRIMARY KEY,
@@ -232,7 +232,7 @@ export function ensureNovelTables(): void {
         FOREIGN KEY (novel_id) REFERENCES novel_projects(id) ON DELETE CASCADE
       )
     `);
-  });
+  saveDb();
 }
 
 // ============================================================

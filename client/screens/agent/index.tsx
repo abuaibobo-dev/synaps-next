@@ -117,6 +117,8 @@ interface Message {
   toolCalls?: ToolCall[];
   replyingTo?: { content: string; role: string };
   status?: 'pending' | 'sending' | 'sent' | 'error' | 'cancelled';
+  provider?: string;
+  model?: string;
   attachments?: Array<{ name: string; path?: string; uri?: string; type: 'image' | 'file' }>;
 }
 
@@ -398,6 +400,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
   const [queueManagerVisible, setQueueManagerVisible] = useState(false);
   const [networkError, setNetworkError] = useState(false);
   const [currentModel, setCurrentModel] = useState(MODEL_OPTIONS[0]);
+  const [activeProvider, setActiveProvider] = useState<'local' | 'cloud' | null>(null);
+  const [activeModel, setActiveModel] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
   const [attachMenuVisible, setAttachMenuVisible] = useState(false);
@@ -562,10 +566,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       if (!response.ok) return;
       const data = await response.json();
       const msgs: Message[] = (data.messages || []).map(
-        (m: { id: string; role: string; content: string; created_at: string }) => ({
+        (m: { id: string; role: string; content: string; provider?: string; model?: string; created_at: string }) => ({
           id: m.id || `${m.created_at}-${m.role}`,
           role: m.role === 'assistant' ? 'assistant' : 'user',
           content: m.content,
+          provider: m.provider,
+          model: m.model,
           timestamp: new Date(m.created_at + 'Z').getTime(),
         })
       );
@@ -603,7 +609,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
         if (response.ok) {
           const data = await response.json();
           const msgs: Message[] = (data.messages || []).map(
-            (m: { id: string; role: string; content: string; created_at: string }) => ({
+            (m: { id: string; role: string; content: string; provider?: string; model?: string; created_at: string }) => ({
               id: m.id || `${m.created_at}-${m.role}`,
               role: m.role === 'assistant' ? 'assistant' : 'user',
               content: m.content,
@@ -628,10 +634,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
       if (!response.ok) return;
       const data = await response.json();
       const msgs: Message[] = (data.messages || []).map(
-        (m: { id: string; role: string; content: string; created_at: string }) => ({
+        (m: { id: string; role: string; content: string; provider?: string; model?: string; created_at: string }) => ({
           id: m.id || `${m.created_at}-${m.role}`,
           role: m.role === 'assistant' ? 'assistant' : 'user',
           content: m.content,
+          provider: m.provider,
+          model: m.model,
           timestamp: new Date(m.created_at + 'Z').getTime(),
         })
       );
@@ -822,6 +830,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     setThinking('');
     setCurrentToolCalls([]);
     setExecutorLabel(null);
+    setActiveProvider(null);
+    setActiveModel(null);
 
     /**
      * Server file: server/src/routes/chat.ts
@@ -904,6 +914,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     }, 25);
 
     let accumulated = '';
+    let lastProvider: 'local' | 'cloud' | undefined;
+    let lastModel: string | undefined;
     const executedToolCalls: ToolCall[] = [];
 
     const patchTask = (fn: (t: TaskRecord) => TaskRecord) => {
@@ -940,6 +952,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
             role: 'assistant',
             content: finalContent,
             timestamp: Date.now(),
+            provider: lastProvider,
+            model: lastModel,
             toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
           };
           setMessages((prev) => [...prev, assistantMessage]);
@@ -1042,6 +1056,12 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           // 无工具调用：清掉思考草稿，避免与最终回答重复
           setThinking('');
         }
+        if (parsed.model_start) {
+          lastProvider = parsed.model_start.provider === 'local' ? 'local' : 'cloud';
+          lastModel = typeof parsed.model_start.model === 'string' ? parsed.model_start.model : undefined;
+          setActiveProvider(lastProvider);
+          if (lastModel) setActiveModel(lastModel);
+        }
         if (parsed.executor) {
           setExecutorLabel(typeof parsed.executor.label === 'string' ? parsed.executor.label : null);
         }
@@ -1076,6 +1096,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           content: errorContent + '\n\n[连接中断]',
           timestamp: Date.now(),
           status: 'error',
+          provider: lastProvider,
+          model: lastModel,
           toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
@@ -1117,6 +1139,8 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           content: closeContent + '\n\n[连接已断开，未收到完整回复]',
           timestamp: Date.now(),
           status: 'error',
+          provider: lastProvider,
+          model: lastModel,
           toolCalls: executedToolCalls.length > 0 ? executedToolCalls : undefined,
         };
         setMessages((prev) => [...prev, assistantMessage]);
@@ -1743,6 +1767,11 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
               })}
             </View>
           )}
+          {!isUser && (item.provider || item.model) && (
+            <Text style={styles.messageMeta} numberOfLines={1}>
+              {item.provider === 'local' ? '本地' : '云端'} · {item.model || '未知模型'}
+            </Text>
+          )}
           </View>
         </Pressable>
         {(isUser && item.status && item.status !== 'sent') && (
@@ -1758,12 +1787,14 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
     );
   }, [openMessageMenu, styles, messageEntry]);
 
-  const modelLabel = currentModel.startsWith('deepseek-')
-    ? currentModel.slice('deepseek-'.length)
-    : currentModel.length > 8
-      ? `${currentModel.slice(0, 8)}…`
-      : currentModel;
-
+  const displayModel = activeModel || currentModel;
+  const modelLabelPrefix = activeProvider === 'local' ? '本地 · ' : activeProvider === 'cloud' ? '云端 · ' : '';
+  const modelBaseLabel = displayModel.startsWith('deepseek-')
+    ? displayModel.slice('deepseek-'.length)
+    : displayModel.length > 18
+      ? `${displayModel.slice(0, 18)}…`
+      : displayModel;
+  const modelLabel = `${modelLabelPrefix}${modelBaseLabel}`;
   const currentProjectName = currentProjectId
     ? projectOptions.find((p) => p.id === currentProjectId)?.name
     : null;
@@ -3834,6 +3865,12 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     color: colors.textMuted,
     marginTop: 3,
     paddingHorizontal: 4,
+  },
+  messageMeta: {
+    fontSize: 9,
+    color: colors.textMuted,
+    marginTop: 5,
+    paddingHorizontal: 2,
   },
   streamCursor: {
     color: colors.primary,
