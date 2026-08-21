@@ -30,7 +30,7 @@ export const OLLAMA_MODELS = {
 } as const;
 
 export const OLLAMA_MODEL_CANDIDATES = {
-  WRITING: ['qwen3:1.7b', 'dqnwrite', 'gemma3:1b'],
+  WRITING: ['dqnwrite', 'qwen3:1.7b', 'gemma3:1b'],
   VISION: ['moondream', 'llava'],
   CHAT: ['qwen2.5:1.5b', 'qwen3:1.7b', 'gemma3:1b'],
   REASONING: ['deepseek-r1:1.7b', 'deepseek-r1:1.5b', 'qwen3:1.7b'],

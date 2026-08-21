@@ -188,7 +188,7 @@ interface AgentScreenProps {
 /* ==================== AI-Native UI：富内容渲染 ==================== */
 
 interface ContentBlock {
-  type: 'text' | 'code' | 'insight' | 'diagram';
+  type: 'text' | 'code' | 'insight' | 'diagram' | 'image';
   text: string;
   lang?: string;
   icon?: string;
@@ -211,6 +211,21 @@ const INSIGHT_PATTERNS: Array<{ icon: string; title: string; match: RegExp }> = 
 ];
 
 function splitInsightText(text: string): ContentBlock[] {
+  const imageRe = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+  if (imageRe.test(text)) {
+    imageRe.lastIndex = 0;
+    const out: ContentBlock[] = [];
+    let last = 0;
+    let match: RegExpExecArray | null;
+    while ((match = imageRe.exec(text)) !== null) {
+      if (match.index > last) out.push(...splitInsightText(text.slice(last, match.index)));
+      out.push({ type: 'image', text: match[2], title: match[1] });
+      last = match.index + match[0].length;
+    }
+    if (last < text.length) out.push(...splitInsightText(text.slice(last)));
+    return out;
+  }
+
   const lines = text.split('\n');
   const out: ContentBlock[] = [];
   let buf: string[] = [];
@@ -341,17 +356,19 @@ function InsightCard({
   );
 }
 
-/** 消息正文富渲染：代码块/洞察卡片/纯文本 */
+/** 消息正文富渲染：代码块/洞察卡片/图片/纯文本 */
 function RichContent({
   content,
   isUser,
   colors,
   styles,
+  onImagePress,
 }: {
   content: string;
   isUser: boolean;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
+  onImagePress?: (uri: string) => void;
 }) {
   const blocks = useMemo(() => parseContentBlocks(content), [content]);
   return (
@@ -359,6 +376,14 @@ function RichContent({
       {blocks.map((b, i) => {
         if (b.type === 'diagram') {
           return <DiagramView key={i} svg={b.text} colors={colors} />;
+        }
+        if (b.type === 'image') {
+          return (
+            <Pressable key={i} onPress={() => onImagePress?.(b.text)} style={styles.generatedImageWrapper}>
+              <Image source={{ uri: b.text }} style={styles.generatedImage} resizeMode="cover" />
+              <FontAwesome6 name="expand" size={13} color={colors.textMuted} style={styles.imageExpandIcon} />
+            </Pressable>
+          );
         }
         if (b.type === 'code') {
           return <CodeCard key={i} lang={b.lang || 'code'} text={b.text} colors={colors} styles={styles} />;
@@ -1665,7 +1690,7 @@ export default function AgentScreen({ onOpenSidebar }: AgentScreenProps) {
           {isUser ? (
             <Text style={[styles.messageContent, styles.messageContentUser]}>{item.content}</Text>
           ) : (
-            <RichContent content={item.content} isUser={false} colors={colors} styles={styles} />
+            <RichContent content={item.content} isUser={false} colors={colors} styles={styles} onImagePress={setPreviewImage} />
           )}
           {item.attachments && item.attachments.length > 0 && (
             <View style={styles.msgAttachments}>
@@ -3072,6 +3097,17 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
   },
   messageContentUser: {
     color: '#FFFFFF',
+  },
+  generatedImageWrapper: {
+    width: '100%',
+    marginTop: spacing.sm,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+    backgroundColor: colors.border,
+  },
+  generatedImage: {
+    width: '100%',
+    aspectRatio: 0.72,
   },
   /* ---- AI-Native UI：代码块卡片 ---- */
   codeCard: {

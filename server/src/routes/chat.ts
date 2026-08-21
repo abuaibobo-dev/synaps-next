@@ -708,6 +708,21 @@ async function deepseekComplete(
   }
 }
 
+
+function isImageGenerationRequest(text: string): boolean {
+  return /(?:^|\s)(?:画一[张幅]|画个|生图|生成图|生成一[张幅][^\n]{0,24}(?:图|插画)|绘图|插画)/.test(text);
+}
+
+function buildImageGenerationReply(text: string): string {
+  const prompt = text
+    .replace(/^(?:请|帮我)?(?:画一[张幅]|画个|生图[：:]?|生成图[：:]?|绘一[张幅]|绘制|生成)*/, '')
+    .replace(/(?:的)?(?:图[片]?|插画|图片)$/,'')
+    .trim() || text.trim();
+  const seed = Math.floor(Math.random() * 1000000);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 900))}?width=768&height=1152&seed=${seed}&nologo=true&safe=false`;
+  return `![AI 生图](${url})\n\n提示词：${prompt}`;
+}
+
 // 智能路由：Ollama 优先 → DeepSeek 兜底
 async function aiComplete(
   apiKey: string,
@@ -3102,11 +3117,12 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     const modelBaseUrl = getSetting('ai_model_base_url') || 'https://api.deepseek.com';
     const model = getSetting('ai_model') || 'deepseek-v4-flash';
 
+    const freeImageRequest = isImageGenerationRequest(lastUserContent);
     const ollamaAvailable = await isOllamaAvailable();
     const preferredLocalModel = ollamaAvailable
       ? await selectAvailableOllamaModel(lastUserContent, extractImagePaths(lastUserContent).length > 0)
       : null;
-    if (!apiKey && (!ollamaAvailable || !preferredLocalModel)) {
+    if (!apiKey && !freeImageRequest && (!ollamaAvailable || !preferredLocalModel)) {
       res.status(400).json({ error: '未配置 DeepSeek API Key，且本地模型不可用。请配置 Key 或启动 Ollama' });
       return;
     }
@@ -3140,17 +3156,23 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       },
     })}\n\n`);
     createTask(taskId, projectId || null, sessionId, taskName, taskStartedAt);
-    const initialModel = preferredLocalModel || (agentInstance?.model || model);
+    const initialModel = freeImageRequest
+      ? 'pollinations'
+      : preferredLocalModel || (agentInstance?.model || model);
     res.write(`data: ${JSON.stringify({
       model_start: {
         provider: preferredLocalModel ? 'local' : 'cloud',
         model: initialModel,
-        reason: preferredLocalModel ? 'local_available' : 'local_unavailable',
+        reason: freeImageRequest
+          ? 'free_image'
+          : preferredLocalModel ? 'local_available' : 'local_unavailable',
       },
       executor: {
-        label: preferredLocalModel
-          ? `本地模型 · ${preferredLocalModel}`
-          : currentExecutorLabel(),
+        label: freeImageRequest
+          ? '免费生图 · Pollinations'
+          : preferredLocalModel
+            ? `本地模型 · ${preferredLocalModel}`
+            : currentExecutorLabel(),
       },
     })}\n\n`);
 
@@ -3240,6 +3262,20 @@ All file operations should use paths relative to the project root.`;
         content: m.content,
       })),
     ];
+
+    // 免费图像生成：无需 API Key，先于文本模型路由处理。
+    if (isImageGenerationRequest(lastUserContent)) {
+      const imageReply = buildImageGenerationReply(lastUserContent);
+      res.write(`data: ${JSON.stringify({ model_start: { provider: 'cloud', model: 'pollinations', reason: 'free_image' } })}\n\n`);
+      res.write(`data: ${JSON.stringify({ content: imageReply })}\n\n`);
+      saveChatMessageWithModel(sessionId, 'assistant', imageReply, 'image', 'pollinations');
+      finishTask(taskId, 'done', Date.now());
+      res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'done', durationMs: Date.now() - taskStartedAt } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      abortRegistry.delete(taskId);
+      res.end();
+      return;
+    }
 
     // Lightweight local chat bypasses the full agent/tool prompt. This keeps
     // normal conversation usable on phone-sized Ollama models.
