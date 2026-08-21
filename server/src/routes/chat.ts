@@ -24,7 +24,7 @@ import {
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
-import { isOllamaAvailable, callOllama, detectIntent, OLLAMA_MODELS } from '../ollama.js';
+import { isOllamaAvailable, callOllama, selectOllamaModel, extractImagePaths, type OllamaMessage } from '../ollama.js';
 import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable, rememberMemory, recallMemories } from '../rag.js';
 import {
   createTask,
@@ -700,8 +700,7 @@ async function aiComplete(
   const ollamaOk = await isOllamaAvailable();
   
   if (ollamaOk) {
-    const intent = detectIntent(user);
-    const ollamaModel = intent === 'reasoning' ? OLLAMA_MODELS.REASONING : OLLAMA_MODELS.CHAT;
+    const ollamaModel = selectOllamaModel(user, extractImagePaths(user).length > 0);
     const result = await callOllama(
       ollamaModel,
       [{ role: 'system', content: system }, { role: 'user', content: user }],
@@ -712,6 +711,30 @@ async function aiComplete(
   }
   
   return deepseekComplete(apiKey, baseUrl, model, system, user);
+}
+
+function readOllamaImages(projectId: string | null, content: string): string[] {
+  return extractImagePaths(content).slice(0, 4).map((relativePath) => {
+    try {
+      let absolutePath = relativePath;
+      if (!path.isAbsolute(relativePath)) {
+        if (relativePath.startsWith('.synaps/')) {
+          const project = projectId
+            ? queryOne('SELECT path FROM projects WHERE id = ?', [projectId]) as Record<string, string> | null
+            : null;
+          if (!project?.path) return '';
+          absolutePath = path.join(project.path, relativePath);
+        } else {
+          const dataDir = process.env.SYNAPS_DATA_DIR || path.join(__dirname, '../../data');
+          absolutePath = path.join(dataDir, relativePath);
+        }
+      }
+      if (!fs.existsSync(absolutePath)) return '';
+      return fs.readFileSync(absolutePath).toString('base64');
+    } catch {
+      return '';
+    }
+  }).filter(Boolean);
 }
 
 /**
@@ -3043,12 +3066,13 @@ router.post('/', async (req: express.Request, res: express.Response) => {
     const modelBaseUrl = getSetting('ai_model_base_url') || 'https://api.deepseek.com';
     const model = getSetting('ai_model') || 'deepseek-v4-flash';
 
-    if (!apiKey) {
-      res.status(400).json({ error: '未配置 DeepSeek API Key，请到 设置 → AI 模型 中填写' });
+    const ollamaAvailable = await isOllamaAvailable();
+    if (!apiKey && !ollamaAvailable) {
+      res.status(400).json({ error: '未配置 DeepSeek API Key，且本地模型不可用。请配置 Key 或启动 Ollama' });
       return;
     }
 
-    const config = new Config({ apiKey, baseUrl, modelBaseUrl });
+    const config = new Config({ apiKey: apiKey || 'local-only', baseUrl, modelBaseUrl });
     const client = new LLMClient(config, customHeaders);
 
     // Set SSE headers
@@ -3077,7 +3101,13 @@ router.post('/', async (req: express.Request, res: express.Response) => {
       },
     })}\n\n`);
     createTask(taskId, projectId || null, sessionId, taskName, taskStartedAt);
-    res.write(`data: ${JSON.stringify({ executor: { label: currentExecutorLabel() } })}\n\n`);
+    res.write(`data: ${JSON.stringify({
+      executor: {
+        label: ollamaAvailable
+          ? `本地模型 · ${selectOllamaModel(lastUserContent, extractImagePaths(lastUserContent).length > 0)}`
+          : currentExecutorLabel(),
+      },
+    })}\n\n`);
 
     // Build system message with project context
     let systemPrompt = AGENT_SYSTEM_PROMPT;
@@ -3170,6 +3200,7 @@ All file operations should use paths relative to the project root.`;
     const maxIterations = 10;
     let iteration = 0;
     let lastFullResponse = '';
+    let localModelUsed = false;
 
     while (iteration < maxIterations) {
       iteration++;
@@ -3178,23 +3209,48 @@ All file operations should use paths relative to the project root.`;
         break;
       }
 
-      // Collect full response（带看门狗，避免模型无响应时无限等待）
-      let fullResponse: string;
+      // Collect full response：本地模型优先，失败后自动降级云端
+      let fullResponse = '';
+      localModelUsed = false;
       try {
-        // 每一轮都实时转发思考片段（第 1 轮起，用户第一时间看到进展）；心跳保活
-        fullResponse = await streamWithWatchdog(
-          client,
-          conversationMessages,
-          {
-            temperature: agentInstance?.temperature ?? 0.3,
-            ...(model ? { model: agentInstance?.model || model } : {}),
-          },
-          res,
-          undefined,
-          undefined,
-          taskId,
-          (text: string) => res.write(`data: ${JSON.stringify({ thinking_chunk: text })}\n\n`)
-        );
+        if (ollamaAvailable) {
+          const hasImage = extractImagePaths(lastUserContent).length > 0;
+          const ollamaMessages: OllamaMessage[] = conversationMessages.map((message) => ({ ...message }));
+          if (iteration === 1) {
+            const images = readOllamaImages(projectId, lastUserContent);
+            const lastOllamaMessage = [...ollamaMessages].reverse().find((message) => message.role === 'user');
+            if (lastOllamaMessage && images.length > 0) lastOllamaMessage.images = images;
+          }
+          const localResult = await callOllama(
+            selectOllamaModel(lastUserContent, hasImage),
+            ollamaMessages,
+            agentInstance?.temperature ?? 0.3,
+            4096
+          );
+          if (!localResult.error && localResult.content.trim()) {
+            fullResponse = localResult.content;
+            localModelUsed = true;
+          } else {
+            console.log('[Ollama] 本地模型失败，降级到 DeepSeek:', localResult.error || '空回复');
+          }
+        }
+
+        if (!localModelUsed) {
+          // 每一轮都实时转发思考片段（第 1 轮起，用户第一时间看到进展）；心跳保活
+          fullResponse = await streamWithWatchdog(
+            client,
+            conversationMessages,
+            {
+              temperature: agentInstance?.temperature ?? 0.3,
+              ...(model ? { model: agentInstance?.model || model } : {}),
+            },
+            res,
+            undefined,
+            undefined,
+            taskId,
+            (text: string) => res.write(`data: ${JSON.stringify({ thinking_chunk: text })}\n\n`)
+          );
+        }
       } catch (err: any) {
         const errMsg = `\n\n[系统提示] ${err?.message || String(err)}`;
         res.write(`data: ${JSON.stringify({ content: errMsg })}\n\n`);
@@ -3216,9 +3272,13 @@ All file operations should use paths relative to the project root.`;
         // No tool call - stream final response to client
         // 思考草稿已在面板实时显示，这里清掉，避免与最终回答重复
         res.write(`data: ${JSON.stringify({ thinking_clear: true })}\n\n`);
-        // 逐块转发，前端实现打字机效果
         let finalText = '';
-        try {
+        if (localModelUsed) {
+          finalText = fullResponse;
+          for (let offset = 0; offset < finalText.length; offset += 480) {
+            res.write(`data: ${JSON.stringify({ content: finalText.slice(offset, offset + 480) })}\n\n`);
+          }
+        } else try {
           finalText = await streamWithForwarding(client, conversationMessages, {
             temperature: 0.3,
             ...(model ? { model } : {}),
@@ -3496,13 +3556,14 @@ All file operations should use paths relative to the project root.`;
     res.end();
   } catch (error) {
     console.error('Chat API error:', error);
+    const errorDetail = error instanceof Error ? error.message : String(error);
     abortRegistry.delete(taskId);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });
     } else {
       res.write(`data: ${JSON.stringify({ task_end: { id: taskId, status: 'error', durationMs: Date.now() - taskStartedAt } })}\n\n`);
       finishTask(taskId, 'error', Date.now());
-      res.write(`data: ${JSON.stringify({ error: 'Stream error' })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: errorDetail || 'Stream error' })}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();
     }

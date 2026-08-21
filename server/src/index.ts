@@ -23,6 +23,7 @@ import tasksRouter from "./routes/tasks.js";
 import brainsRouter from "./routes/brains.js";
 import bridgeRouter from "./routes/bridge.js";
 import codexLocalRouter from "./routes/codexLocal.js";
+import ollamaRouter from "./routes/ollama.js";
 import { seedImpeccableSkills } from "./impeccable.js";
 import { seedDiagramSkill } from "./diagramSkill.js";
 
@@ -67,6 +68,7 @@ app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/brains', brainsRouter);
 app.use('/api/v1/bridge', bridgeRouter);
 app.use('/api/v1/codex-local', codexLocalRouter);
+app.use('/api/v1/ollama', ollamaRouter);
 
 // 全局错误兜底：路由抛错时返回 JSON，而不是让内嵌 Node 进程崩溃
 // （Express 4 不会捕获 async 路由里的异常，未捕获会导致整个后端断连）

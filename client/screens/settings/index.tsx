@@ -483,6 +483,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [brains, setBrains] = useState<BrainStatus | null>(null);
   const [brainsRefreshing, setBrainsRefreshing] = useState(false);
   const [brainsRefreshedAt, setBrainsRefreshedAt] = useState<number | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<{
+    available: boolean;
+    base: string;
+    installed: string[];
+    configured: Array<{ role: string; name: string; installed?: boolean }>;
+  } | null>(null);
+  const [ollamaRefreshing, setOllamaRefreshing] = useState(false);
   // 用 ref 防重入，避免 useCallback 依赖 state 导致刷新无限循环
   const brainsFetchingRef = useRef(false);
   const fetchBrains = useCallback(async () => {
@@ -502,6 +509,18 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       clearTimeout(t);
       brainsFetchingRef.current = false;
       setBrainsRefreshing(false);
+    }
+  }, []);
+
+  const fetchOllamaStatus = useCallback(async () => {
+    setOllamaRefreshing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/ollama/status`);
+      if (res.ok) setOllamaStatus(await res.json());
+    } catch {
+      // 后端未就绪时保留上次状态
+    } finally {
+      setOllamaRefreshing(false);
     }
   }, []);
 
@@ -542,7 +561,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchBrains();
     fetchCodexLocal();
-  }, [fetchBrains, fetchCodexLocal]);
+    fetchOllamaStatus();
+  }, [fetchBrains, fetchCodexLocal, fetchOllamaStatus]);
 
   useEffect(() => {
     if (!codexLocal?.downloading) return;
@@ -1336,6 +1356,42 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <FieldRow styles={styles} label="上下文限制" sc={sc} last>
           <Text style={[styles.fieldValue, { color: sc.value }]}>{contextLimit}</Text>
         </FieldRow>
+      </SettingsGroup>
+      <SettingsGroup title="本地模型 Ollama" sc={sc} bar={ACCENT} collapsible defaultOpen>
+        <SettingRow
+          label="服务状态"
+          value={
+            ollamaRefreshing
+              ? '刷新中...'
+              : ollamaStatus?.available
+                ? '✅ 已连接'
+                : ollamaStatus
+                  ? '❌ 未运行'
+                  : '检测中...'
+          }
+          icon="microchip"
+          iconColor={ACCENT}
+          sc={sc}
+          right={
+            <Pressable onPress={fetchOllamaStatus} hitSlop={8} disabled={ollamaRefreshing} style={styles.refreshBtn}>
+              <AppIcon name="refresh-cw" size={16} color={sc.arrow} />
+            </Pressable>
+          }
+        />
+        {(ollamaStatus?.configured || []).map((item, index, list) => (
+          <SettingRow
+            key={`${item.role}-${item.name}`}
+            label={`${item.role} · ${item.name}`}
+            value={item.installed ? '已安装' : '未安装'}
+            icon="bot"
+            iconColor={ACCENT}
+            sc={sc}
+            last={index === list.length - 1}
+          />
+        ))}
+        {!ollamaStatus?.configured?.length && (
+          <SettingRow label="模型列表加载中..." value={ollamaStatus?.base || ''} icon="bot" iconColor={ACCENT} sc={sc} last />
+        )}
       </SettingsGroup>
       <SettingsGroup title="DeepSeek Harness" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
