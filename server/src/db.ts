@@ -178,16 +178,40 @@ export async function getDb(): Promise<SqlJsDatabase> {
     CREATE TABLE IF NOT EXISTS agent_memory (
       id TEXT PRIMARY KEY,
       project_id TEXT,
-      pattern TEXT NOT NULL,
-      solution TEXT NOT NULL,
+      namespace TEXT NOT NULL DEFAULT '',
+      key TEXT NOT NULL DEFAULT '',
+      value TEXT NOT NULL DEFAULT '',
+      embedding_text TEXT NOT NULL DEFAULT '',
+      pattern TEXT NOT NULL DEFAULT '',
+      solution TEXT NOT NULL DEFAULT '',
       context TEXT DEFAULT '',
       confidence REAL DEFAULT 0.5,
       use_count INTEGER DEFAULT 0,
+      embedding TEXT NOT NULL DEFAULT '',
+      embedding_model TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_used_at TEXT,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     )
   `);
+
+  const memoryColumns = db.exec('PRAGMA table_info(agent_memory)');
+  const memoryColumnNames = memoryColumns[0]?.values.map((row) => String(row[1])) || [];
+  const memoryMigrations: Array<[string, string]> = [
+    ['namespace', "TEXT NOT NULL DEFAULT ''"],
+    ['key', "TEXT NOT NULL DEFAULT ''"],
+    ['value', "TEXT NOT NULL DEFAULT ''"],
+    ['embedding_text', "TEXT NOT NULL DEFAULT ''"],
+    ['pattern', "TEXT NOT NULL DEFAULT ''"],
+    ['solution', "TEXT NOT NULL DEFAULT ''"],
+    ['embedding', "TEXT NOT NULL DEFAULT ''"],
+    ['embedding_model', "TEXT NOT NULL DEFAULT ''"],
+  ];
+  for (const [columnName, definition] of memoryMigrations) {
+    if (!memoryColumnNames.includes(columnName)) {
+      db.run(`ALTER TABLE agent_memory ADD COLUMN ${columnName} ${definition}`);
+    }
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS team_tasks (

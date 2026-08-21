@@ -347,48 +347,103 @@ export async function ensureKnowledgeTable(): Promise<void> {
   await getDb();
 }
 
-// ---- 经验记忆（agent_memory）：BM25 检索，自动注入对话开头 ----
-export function rememberMemory(projectId: string | null, pattern: string, solution: string, context = ''): void {
+// ---- 经验记忆：持久向量检索，BM25 兜底 ----
+let memoryColumnsReady = false;
+
+async function ensureMemoryColumns(): Promise<void> {
+  if (memoryColumnsReady) return;
+  await getDb();
+  const info = queryAll('PRAGMA table_info(agent_memory)') as Array<Record<string, unknown>>;
+  const names = new Set(info.map((row) => String(row.name)));
+  for (const [column, definition] of [
+    ['namespace', "TEXT NOT NULL DEFAULT ''"],
+    ['key', "TEXT NOT NULL DEFAULT ''"],
+    ['value', "TEXT NOT NULL DEFAULT ''"],
+    ['embedding_text', "TEXT NOT NULL DEFAULT ''"],
+    ['pattern', "TEXT NOT NULL DEFAULT ''"],
+    ['solution', "TEXT NOT NULL DEFAULT ''"],
+    ['embedding', "TEXT NOT NULL DEFAULT ''"],
+    ['embedding_model', "TEXT NOT NULL DEFAULT ''"],
+  ] as Array<[string, string]>) {
+    if (!names.has(column)) runSql(`ALTER TABLE agent_memory ADD COLUMN ${column} ${definition}`);
+  }
+  memoryColumnsReady = true;
+}
+
+export async function rememberMemory(projectId: string | null, pattern: string, solution: string, context = ''): Promise<void> {
   if (!pattern.trim() || !solution.trim()) return;
+  await ensureMemoryColumns();
+  const text = [pattern, solution, context].filter(Boolean).join('\n');
+  const vectors = await embedBatch([text]);
+  const embedding = vectors?.[0] ? JSON.stringify(normalizeVector(vectors[0])) : '';
+  const embeddingModel = vectors?.[0] ? OLLAMA_MODELS.EMBEDDING : '';
+  const now = new Date().toISOString();
   const existing = queryOne(
-    'SELECT id, use_count FROM agent_memory WHERE project_id = ? AND pattern = ? LIMIT 1',
-    [projectId || null, pattern]
+    'SELECT id FROM agent_memory WHERE project_id IS ? AND pattern = ? LIMIT 1',
+    [projectId, pattern]
   ) as Record<string, unknown> | null;
   if (existing) {
-    runSql('UPDATE agent_memory SET solution = ?, context = ?, use_count = use_count + 1, last_used_at = ? WHERE id = ?', [
-      solution,
-      context,
-      new Date().toISOString(),
-      existing.id,
+    runSql('UPDATE agent_memory SET solution = ?, context = ?, embedding = ?, embedding_model = ?, use_count = use_count + 1, last_used_at = ? WHERE id = ?', [
+      solution, context, embedding, embeddingModel, now, String(existing.id),
     ]);
   } else {
     runSql(
-      'INSERT INTO agent_memory (id, project_id, pattern, solution, context, confidence, use_count, created_at) VALUES (?, ?, ?, ?, ?, 0.5, 0, ?)',
-      [crypto.randomUUID(), projectId || null, pattern, solution, context, new Date().toISOString()]
+      'INSERT INTO agent_memory (id, project_id, pattern, solution, context, confidence, use_count, embedding, embedding_model, created_at) VALUES (?, ?, ?, ?, ?, 0.5, 1, ?, ?, ?)',
+      [crypto.randomUUID(), projectId || null, pattern, solution, context, embedding, embeddingModel, now]
     );
   }
   saveDb();
 }
 
-export function recallMemories(projectId: string | null, query: string, topK = 5): string {
+export async function recallMemories(projectId: string | null, query: string, topK = 5): Promise<string> {
+  await ensureMemoryColumns();
   const qTokens = tokenize(query);
   if (qTokens.length === 0) return '';
   const rows = queryAll(
-    'SELECT id, pattern, solution, context, confidence, use_count FROM agent_memory WHERE project_id = ? OR project_id IS NULL',
+    'SELECT id, pattern, solution, context, confidence, use_count, embedding FROM agent_memory WHERE project_id = ? OR project_id IS NULL',
     [projectId || null]
   ) as Array<Record<string, unknown>>;
   if (rows.length === 0) return '';
-  const docs = rows.map((r) => ({ id: String(r.id), chunk: `${String(r.pattern || '')} ${String(r.solution || '')}` }));
-  const top = bm25(qTokens, docs, topK);
+
+  const keywordScores = new Map<string, number>();
+  for (const item of bm25(qTokens, rows.map((row) => ({
+    id: String(row.id),
+    chunk: `${String(row.pattern || '')} ${String(row.solution || '')}`,
+  })), rows.length)) keywordScores.set(item.id, item.score);
+  const maxKeywordScore = Math.max(0, ...keywordScores.values());
+
+  let queryVector: number[] | null = null;
+  if (rows.some((row) => String(row.embedding || ''))) {
+    const vectors = await embedBatch([query]);
+    if (vectors?.[0]) queryVector = normalizeVector(vectors[0]);
+  }
+
+  interface ScoredMemory { row: Record<string, unknown>; score: number }
+  const scored: ScoredMemory[] = rows.map((row) => {
+    const keyword = maxKeywordScore > 0 ? (keywordScores.get(String(row.id)) || 0) / maxKeywordScore : 0;
+    let vector = 0;
+    if (queryVector && row.embedding) {
+      try {
+        vector = Math.max(0, cosineSimilarity(queryVector, JSON.parse(String(row.embedding))));
+      } catch {}
+    }
+    const confidence = Number(row.confidence || 0.5);
+    const usageBoost = Math.min(0.1, Number(row.use_count || 0) * 0.01);
+    return { row, score: (queryVector ? vector * 0.78 + keyword * 0.22 : keyword) + confidence * 0.05 + usageBoost };
+  });
+
+  const top = scored
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
   if (top.length === 0) return '';
-  const byId = new Map(rows.map((r) => [String(r.id), r]));
+  const mode = queryVector ? '向量+关键词' : '关键词回退';
   return top
-    .map((r, i) => {
-      const m = byId.get(r.id) || {};
+    .map((item, index) => {
+      const m = item.row;
       const confidence = Number(m.confidence || 0.5);
       const uses = Number(m.use_count || 0);
-      return `[${i + 1}] 情境：${String(m.pattern || '').slice(0, 120)}
-做法：${String(m.solution || '').slice(0, 400)}${m.context ? `\n上下文：${String(m.context).slice(0, 150)}` : ''}（置信 ${Math.round(confidence * 100)}%，用过 ${uses} 次）`;
+      return `[${index + 1}] (${mode} ${item.score.toFixed(3)}) 情境：${String(m.pattern || '').slice(0, 120)}\n做法：${String(m.solution || '').slice(0, 400)}${m.context ? `\n上下文：${String(m.context).slice(0, 150)}` : ''}（置信 ${Math.round(confidence * 100)}%，用过 ${uses} 次）`;
     })
     .join('\n\n');
 }

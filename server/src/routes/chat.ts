@@ -1279,7 +1279,7 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
 
     case 'memory_remember': {
       if (!toolCall.pattern || !toolCall.solution) return 'Error: pattern and solution are required';
-      rememberMemory(projectId, toolCall.pattern, toolCall.solution, toolCall.context || '');
+      await rememberMemory(projectId, toolCall.pattern, toolCall.solution, toolCall.context || '');
       logAudit(projectId, 'memory_remember', `存入经验记忆：${toolCall.pattern.slice(0, 80)}`, 'none', 'auto');
       return `Memory saved. 情境：${toolCall.pattern.slice(0, 120)}\n做法：${toolCall.solution.slice(0, 200)}`;
     }
@@ -3153,7 +3153,7 @@ router.post('/', async (req: express.Request, res: express.Response) => {
 
     // 自动检索跨会话经验记忆（BM25，按当前用户消息匹配）
     try {
-      const memoryText = recallMemories(projectId || null, (lastUserMessage?.content || '').slice(0, 300), 5);
+      const memoryText = await recallMemories(projectId || null, (lastUserMessage?.content || '').slice(0, 300), 5);
       if (memoryText) {
         systemPrompt += `\n\n## 经验记忆（自动检索）\n过去遇到类似问题时的做法，默认遵循；与当前任务冲突时以当前任务为准：\n${memoryText}`;
       }
