@@ -371,6 +371,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [skillStoreTotal, setSkillStoreTotal] = useState(0);
   const [skillStoreCategory, setSkillStoreCategory] = useState('全部');
   const [skillStoreSort, setSkillStoreSort] = useState('downloads');
+  const [githubVerifying, setGithubVerifying] = useState(false);
   const [deviceEnabled, setDeviceEnabled] = useState(false);
   const [deviceServiceConnected, setDeviceServiceConnected] = useState(false);
   const [mcpModalVisible, setMcpModalVisible] = useState(false);
@@ -737,6 +738,20 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     feedbackTimer.current = setTimeout(() => setSaveFeedback(null), 2600);
   }, []);
 
+  const verifyGithub = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
+    setGithubVerifying(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/github/verify`);
+      const data = await res.json();
+      if (res.ok && data.valid) return { ok: true, message: data.login ? `验证通过 · ${data.login}` : '验证通过' };
+      return { ok: false, message: data.error || 'Token 验证失败' };
+    } catch {
+      return { ok: false, message: '无法连接后端' };
+    } finally {
+      setGithubVerifying(false);
+    }
+  }, []);
+
   const verifyApi = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/balance`);
@@ -758,6 +773,16 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         showFeedback({ type: 'success', text: status?.available ? '已保存 · 连接正常' : '已保存 · 未连接' });
         return;
       }
+      if (key === 'github_token') {
+        if (!value.trim()) {
+          showFeedback({ type: 'success', text: '已清除 Token' });
+          return;
+        }
+        showFeedback({ type: 'info', text: '已保存 · 验证 Token...' });
+        const result = await verifyGithub();
+        showFeedback({ type: result.ok ? 'success' : 'error', text: `已保存 · ${result.message}` });
+        return;
+      }
       const aiKeys = ['ai_api_key', 'ai_base_url', 'ai_model', 'ai_model_base_url'];
       if (aiKeys.includes(key)) {
         showFeedback({ type: 'info', text: '已保存 · 验证中...' });
@@ -770,7 +795,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         showFeedback({ type: 'success', text: '已保存' });
       }
     },
-    [updateSetting, showFeedback, verifyApi, fetchOllamaStatus]
+    [updateSetting, showFeedback, verifyApi, verifyGithub, fetchOllamaStatus]
   );
 
   // 输入草稿：保存按钮兜底，未失焦也能保存
@@ -1826,6 +1851,20 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             onCommit={(v) => saveSetting('github_token', v)}
           />
         </FieldRow>
+        <SettingRow
+          label="验证 Token"
+          value={githubVerifying ? '验证中...' : '点击检测'}
+          icon="shield"
+          iconColor={ACCENT}
+          sc={sc}
+          onPress={() => {
+            if (!settings.github_token.trim()) {
+              showFeedback({ type: 'error', text: '请先填写 GitHub Token' });
+              return;
+            }
+            verifyGithub().then((result) => showFeedback({ type: result.ok ? 'success' : 'error', text: result.message }));
+          }}
+        />
         <SettingRow
           label="自动推送"
           icon="github"

@@ -47,6 +47,26 @@ async function githubFetch(endpoint: string, token: string, options: RequestInit
   return response.json();
 }
 
+// Verify token identity and API access without exposing the token.
+router.get('/verify', async (_req: Request, res: Response) => {
+  try {
+    const token = await getGitHubToken();
+    if (!token) return res.status(401).json({ valid: false, error: 'GitHub token not configured' });
+    const user = await githubFetch('/user', token) as { login?: string };
+    res.json({ valid: true, login: user.login || '' });
+  } catch (error) {
+    const message = (error as Error).message;
+    res.status(401).json({
+      valid: false,
+      error: message.includes('401')
+        ? 'Token 无效或已过期'
+        : message.includes('403')
+          ? 'Token 权限不足或触发限流'
+          : message,
+    });
+  }
+});
+
 // List user's repositories
 // GET /api/v1/github/repos?page=1&per_page=20
 router.get('/repos', async (req: Request, res: Response) => {
