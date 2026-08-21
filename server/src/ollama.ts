@@ -22,7 +22,7 @@ export function getOllamaBase(): string {
 
 // 本地模型配置
 export const OLLAMA_MODELS = {
-  WRITING: 'dqnwrite',
+  WRITING: 'gemma3:1b',
   VISION: 'moondream',
   CHAT: 'qwen2.5:1.5b',
   REASONING: 'deepseek-r1:1.5b',
@@ -183,11 +183,25 @@ export function cancelOllamaPullJob(id: string): boolean {
   return true;
 }
 
+function explainOllamaPullError(error: Error): string {
+  const raw = error.message || String(error);
+  if (/file does not exist|manifest unknown|not found|\b404\b/i.test(raw)) {
+    return `模型名不存在或当前 Ollama 版本不支持该来源：${raw}`;
+  }
+  if (/Failed to fetch|ECONNREFUSED|connect/i.test(raw)) {
+    return `无法连接 Ollama（${getOllamaBase()}）。请确认服务已启动：${raw}`;
+  }
+  return raw;
+}
+
 export async function pullOllamaModel(rawModel: string): Promise<OllamaPullJob> {
   const model = normalizeOllamaModel(rawModel);
   if (!model) throw new Error('模型名称不能为空');
   if ([...pullJobs.values()].some((entry) => entry.job.model === model && entry.job.status === 'pulling')) {
     throw new Error(`模型 ${model} 正在下载`);
+  }
+  if (!(await isOllamaAvailable())) {
+    throw new Error(`无法连接 Ollama（${getOllamaBase()}）。请先启动 Ollama 服务`);
   }
 
   const id = crypto.randomUUID();
@@ -256,7 +270,7 @@ export async function pullOllamaModel(rawModel: string): Promise<OllamaPullJob> 
     } catch (error) {
       if (job.status !== 'cancelled') {
         job.status = 'error';
-        job.error = (error as Error).message || String(error);
+        job.error = explainOllamaPullError(error as Error);
         job.statusText = '下载失败';
       }
       job.updatedAt = Date.now();
