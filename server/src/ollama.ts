@@ -5,8 +5,20 @@
  */
 
 import * as crypto from 'crypto';
+import { queryOne } from './db.js';
 
-const OLLAMA_BASE = 'http://127.0.0.1:11434';
+const DEFAULT_OLLAMA_BASE = 'http://127.0.0.1:11434';
+
+export function getOllamaBase(): string {
+  try {
+    const row = queryOne('SELECT value FROM settings WHERE key = ?', ['ollama_base_url']) as Record<string, unknown> | null;
+    const value = String(row?.value || '').trim().replace(/\/+$/, '');
+    if (value && /^https?:\/\//i.test(value)) return value;
+  } catch {
+  }
+  const host = String(process.env.OLLAMA_HOST || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  return host ? `http://${host}` : DEFAULT_OLLAMA_BASE;
+}
 
 // 本地模型配置
 export const OLLAMA_MODELS = {
@@ -58,7 +70,7 @@ export function extractImagePaths(text: string): string[] {
 // 检查 Ollama 是否可用
 export async function isOllamaAvailable(): Promise<boolean> {
   try {
-    const res = await fetch(`${OLLAMA_BASE}/api/tags`, {
+    const res = await fetch(`${getOllamaBase()}/api/tags`, {
       signal: AbortSignal.timeout(3000),
     });
     return res.ok;
@@ -75,7 +87,7 @@ export async function callOllama(
   maxTokens: number = 4096
 ): Promise<{ content: string; error?: string }> {
   try {
-    const res = await fetch(`${OLLAMA_BASE}/api/chat`, {
+    const res = await fetch(`${getOllamaBase()}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -107,11 +119,11 @@ export async function getOllamaStatus() {
   ];
 
   try {
-    const res = await fetch(`${OLLAMA_BASE}/api/tags`, {
+    const res = await fetch(`${getOllamaBase()}/api/tags`, {
       signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) {
-      return { available: false, base: OLLAMA_BASE, installed: [], configured };
+      return { available: false, base: getOllamaBase(), installed: [], configured };
     }
     const data = (await res.json()) as { models?: Array<{ name?: string; size?: number; modified_at?: string }> };
     const models = (data.models || []).map((model) => ({
@@ -122,13 +134,13 @@ export async function getOllamaStatus() {
     const installed = models.map((model) => model.name);
     return {
       available: true,
-      base: OLLAMA_BASE,
+      base: getOllamaBase(),
       models,
       installed,
       configured: configured.map((item) => ({ ...item, installed: installed.includes(item.name) })),
     };
   } catch {
-      return { available: false, base: OLLAMA_BASE, installed: [], configured };
+      return { available: false, base: getOllamaBase(), installed: [], configured };
   }
 }
 
@@ -195,7 +207,7 @@ export async function pullOllamaModel(rawModel: string): Promise<OllamaPullJob> 
 
   void (async () => {
     try {
-      const res = await fetch(`${OLLAMA_BASE}/api/pull`, {
+      const res = await fetch(`${getOllamaBase()}/api/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, stream: true }),
@@ -259,7 +271,7 @@ export async function pullOllamaModel(rawModel: string): Promise<OllamaPullJob> 
 export async function deleteOllamaModel(rawModel: string): Promise<void> {
   const model = normalizeOllamaModel(rawModel);
   if (!model) throw new Error('模型名称不能为空');
-  const res = await fetch(`${OLLAMA_BASE}/api/delete`, {
+  const res = await fetch(`${getOllamaBase()}/api/delete`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model }),

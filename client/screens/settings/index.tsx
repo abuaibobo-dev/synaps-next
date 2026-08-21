@@ -42,6 +42,7 @@ interface Settings {
   ai_api_key: string;
   ai_base_url: string;
   ai_model_base_url: string;
+  ollama_base_url: string;
   stt_api_key: string;
   stt_base_url: string;
   stt_model: string;
@@ -76,6 +77,7 @@ const DEFAULT_SETTINGS: Settings = {
   ai_api_key: '',
   ai_base_url: 'https://api.deepseek.com',
   ai_model_base_url: '',
+  ollama_base_url: 'http://127.0.0.1:11434',
   stt_api_key: '',
   stt_base_url: '',
   stt_model: 'whisper-1',
@@ -530,9 +532,13 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     if (!silent) setOllamaRefreshing(true);
     try {
       const res = await fetch(`${API_BASE}/api/v1/ollama/models`);
-      if (res.ok) setOllamaStatus(await res.json());
+      if (!res.ok) return null;
+      const status = await res.json();
+      setOllamaStatus(status);
+      return status;
     } catch {
       // 后端未就绪时保留上次状态
+      return null;
     } finally {
       setOllamaRefreshing(false);
     }
@@ -736,6 +742,12 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     async (key: keyof Settings, value: string) => {
       const ok = await updateSetting(key, value);
       if (!ok) return;
+      if (key === 'ollama_base_url') {
+        showFeedback({ type: 'success', text: '已保存 · 正在检测' });
+        const status = await fetchOllamaStatus();
+        showFeedback({ type: 'success', text: status?.available ? '已保存 · 连接正常' : '已保存 · 未连接' });
+        return;
+      }
       const aiKeys = ['ai_api_key', 'ai_base_url', 'ai_model', 'ai_model_base_url'];
       if (aiKeys.includes(key)) {
         showFeedback({ type: 'info', text: '已保存 · 验证中...' });
@@ -748,7 +760,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         showFeedback({ type: 'success', text: '已保存' });
       }
     },
-    [updateSetting, showFeedback, verifyApi]
+    [updateSetting, showFeedback, verifyApi, fetchOllamaStatus]
   );
 
   // 输入草稿：保存按钮兜底，未失焦也能保存
@@ -1453,6 +1465,18 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Pressable>
           }
         />
+        <FieldRow styles={styles} label="服务地址" sc={sc}>
+          <UnderlineInput
+            value={settings.ollama_base_url}
+            placeholder="http://127.0.0.1:11434"
+            sc={sc}
+            focusColor={INTERACTIVE}
+            keyboardType="url"
+            autoCapitalize="none"
+            onChangeText={trackDraft('ollama_base_url')}
+            onCommit={(v) => saveSetting('ollama_base_url', v || DEFAULT_SETTINGS.ollama_base_url)}
+          />
+        </FieldRow>
         <View style={[styles.ollamaPullRow, { borderBottomColor: sc.separator }]}>
           <TextInput
             style={[styles.ollamaInput, { color: sc.label, borderColor: sc.cardBorder }]}
