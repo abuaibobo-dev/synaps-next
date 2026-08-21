@@ -5,13 +5,14 @@ import { getDb, queryOne, queryAll } from './db.js';
 import { deviceControlEnabled } from './device.js';
 import { harnessStatus } from './harness.js';
 import { getMcpServers } from './mcp.js';
+import { isOllamaAvailable, getOllamaModels } from './ollama.js';
 
 function getSetting(key: string): string | null {
   const row = queryOne('SELECT value FROM settings WHERE key = ?', [key]);
   return row && typeof row.value === 'string' ? row.value : null;
 }
 
-export function runDiagnostics(): Record<string, unknown> {
+export async function runDiagnostics(): Promise<Record<string, unknown>> {
   const aiApiKey = getSetting('ai_api_key') || '';
   const termuxPath = getSetting('termux_path') || '/data/data/com.termux';
   const githubToken = getSetting('github_token') || '';

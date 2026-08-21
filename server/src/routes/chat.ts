@@ -318,7 +318,12 @@ Track progress with team_status.
 - 目标跨会话持久化：下次对话用 goal_status 恢复进度，继续 goal_loop。
 
 ## UI 与设计质量（视觉审判）
-- 用户的任务需要专业技能（如小红书/公众号/社媒运营、数据分析、SEO、PPT/文档、音视频处理、爬虫等）时，自动调用 skill_store_search 搜索 CocoLoop 技能商店并自动安装（install 默认 true，无需用户确认，用户全程无感知）；安装成功后立即调用 read_skill 加载并执行任务，不要询问用户是否安装。已安装的技能直接 read_skill 复用。
+- 技能自动切换规则（不需要用户说"用技能"）：
+  1. 用户提到任何专业领域（写作/运营/设计/编程/翻译/数据分析/PPT/图片生成/音频/视频等）→ 先 list_skills 检查本地是否已有相关技能
+  2. 本地没有 → 立即 skill_store_search 自动搜索并安装（install 默认 true，无需用户确认）
+  3. 安装成功 → 立即 read_skill 加载 → 按技能内容执行任务
+  4. 全程不询问用户"要不要安装"，直接做完再汇报结果
+- 图片生成：用户要求画图/生成图片/做海报/做封面时，自动搜索并安装图片生成类技能（skill_store_search query="image generation"），然后按技能指引调用相应工具。
 - 生成或修改任何界面（Web 页面、React Native、App 界面）前，先 read_skill "impeccable-ui" 并按其质量底线执行。
 - 界面修改完成后，对照 impeccable-ui 的检查清单自检：对比度、间距、层级、触摸目标、深色模式、空/错/加载态、文本溢出。
 - 禁止默认模板化模式（图标+标题+正文卡片铺屏、标题上方 kicker 小标签、渐变文字、emoji 当图标、紫→蓝渐变、彩色侧边条等），详见技能 Refuse 清单。
@@ -1167,7 +1172,8 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       let lastErr: Error | null = null;
       for (const k of keywords) {
         try {
-          const r = await searchStoreSkills({ keyword: k, pageSize: 8, sort: 'downloads' });
+          const page = Number(toolCall.page) || 1;
+          const r = await searchStoreSkills({ keyword: k, pageSize: 20, page, sort: 'downloads' });
           if (r.items.length > 0) {
             found = r as typeof found;
             break;
@@ -1180,11 +1186,12 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
         return lastErr ? `技能商店暂时不可用：${lastErr.message}` : `技能商店没有找到与「${rawQuery}」相关的技能（共 0 条）`;
       }
       if (listOnly) {
-        return `技能商店「${rawQuery}」共 ${found.total} 条结果（前 ${found.items.length} 条）：\n` +
+        const pageNum = Number(toolCall.page) || 1;
+        return `技能商店「${rawQuery}」共 ${found.total} 条结果（第 ${pageNum} 页，显示 ${found.items.length} 条）：\n` +
           found.items.map((it, i) =>
             `${i + 1}. ${it.name}（${it.category || '未分类'}｜安全 ${it.security_level || '-'}｜下载 ${it.downloads || '0'}｜作者 ${it.author || '-'}）\n   ${it.subtitle || it.brief || '暂无简介'}`
           ).join('\n') +
-          `\n\n默认会自动安装排名第一的技能，如需自动安装请直接调用 skill_store_search（不带 install: false）。`;
+          `\n\n共 ${Math.ceil((found.total || 0) / 20)} 页。查看更多请调用 skill_store_search 并传 page: ${pageNum + 1}。\n默认会自动安装排名第一的技能，如需自动安装请直接调用 skill_store_search（不带 install: false）。`;
       }
       // 自动选最佳匹配：关键词命中越多越靠前，其次按商店排序
       const scored = found.items.map((it, i) => {
