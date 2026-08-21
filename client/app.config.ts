@@ -9,7 +9,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...config,
     "name": appName,
     "slug": slugAppName,
-    "version": "3.12.0",
+    "version": "3.14.17",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
