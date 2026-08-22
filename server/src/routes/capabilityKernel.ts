@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { getCapabilityRegistry } from '../capabilityKernel.js';
 import { listEvolutionRuns, runEvolutionStep } from '../evolutionRunner.js';
+import { getBenchmarkReport } from '../benchmark.js';
 
 const router = Router();
 
@@ -10,6 +11,14 @@ router.get('/capabilities', async (_req: Request, res: Response) => {
     res.json(await getCapabilityRegistry());
   } catch (error) {
     res.status(500).json({ error: 'Failed to build capability registry: ' + String(error) });
+  }
+});
+
+router.get('/benchmark', async (_req: Request, res: Response) => {
+  try {
+    res.json(await getBenchmarkReport());
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to build benchmark: ' + String(error) });
   }
 });
 

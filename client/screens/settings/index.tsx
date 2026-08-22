@@ -161,6 +161,41 @@ interface CapabilityRegistry {
   };
 }
 
+interface MemoryStats {
+  totalChunks: number;
+  embeddedChunks: number;
+  embeddingCoverage: number;
+  byType: Array<{ type: string; count: number; embedded: number }>;
+  agentMemories: number;
+}
+
+interface BenchmarkDimension {
+  id: string;
+  name: string;
+  score: number;
+  weight: number;
+  bottleneck: string | null;
+  nextAction: string;
+}
+
+interface BenchmarkReport {
+  generatedAt: string;
+  score: number;
+  grade: 'S' | 'A' | 'B' | 'C' | 'D';
+  dimensions: BenchmarkDimension[];
+  bottlenecks: string[];
+  nextSteps: string[];
+}
+
+interface DagPlanSummary {
+  id: string;
+  projectId: string | null;
+  objective: string;
+  status: 'planning' | 'running' | 'completed' | 'failed';
+  maxParallel: number;
+  nodes: Array<{ title: string; status: 'pending' | 'blocked' | 'ready' | 'running' | 'done' | 'failed'; role: string }>;
+}
+
 interface BrainStatus {
   codex: { enabled: boolean; bridgeUrl: string; reachable: boolean; version: string | null; note: string };
   brains: BrainItem[];
@@ -401,6 +436,11 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [suggestions, setSuggestions] = useState<ProactiveSuggestion[]>([]);
   const [upgradeRuns, setUpgradeRuns] = useState<EvolutionRun[]>([]);
   const [runningUpgrade, setRunningUpgrade] = useState<string | null>(null);
+  const [benchmark, setBenchmark] = useState<BenchmarkReport | null>(null);
+  const [dagPlans, setDagPlans] = useState<DagPlanSummary[]>([]);
+  const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
+  const [memoryProjectId, setMemoryProjectId] = useState('');
+  const [memoryBusy, setMemoryBusy] = useState(false);
   const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
   const [trustedProjects, setTrustedProjects] = useState<string[]>([]);
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; detail: string; risk_level: string; decision: string; created_at: string }>>([]);
@@ -478,19 +518,31 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       fetch(`${API_BASE}/api/v1/kernel/capabilities`, { signal: controller.signal }),
       fetch(`${API_BASE}/api/v1/proactive`, { signal: controller.signal }),
       fetch(`${API_BASE}/api/v1/kernel/upgrade-runs`, { signal: controller.signal }),
+      fetch(`${API_BASE}/api/v1/kernel/benchmark`, { signal: controller.signal }),
+      fetch(`${API_BASE}/api/v1/dag/plans`, { signal: controller.signal }),
+      fetch(`${API_BASE}/api/v1/memory-index/stats`, { signal: controller.signal }),
     ])
-      .then(async ([kernelRes, suggestionRes, runRes]) => {
+      .then(async ([kernelRes, suggestionRes, runRes, benchmarkRes, dagRes, memoryRes]) => {
         const registryData = await kernelRes.json();
         const suggestionData = await suggestionRes.json();
         const runData = await runRes.json();
+        const benchmarkData = await benchmarkRes.json();
+        const dagData = await dagRes.json();
+        const memoryData = await memoryRes.json();
         setKernel(registryData as CapabilityRegistry);
         setSuggestions(suggestionData.suggestions || []);
         setUpgradeRuns(runData.runs || []);
+        setBenchmark(benchmarkData as BenchmarkReport);
+        setDagPlans(dagData.plans || []);
+        setMemoryStats(memoryData.stats || null);
       })
       .catch(() => {
         setKernel(null);
         setSuggestions([]);
         setUpgradeRuns([]);
+        setBenchmark(null);
+        setDagPlans([]);
+        setMemoryStats(null);
       })
       .finally(() => setKernelLoading(false));
     return () => controller.abort();
@@ -1460,6 +1512,31 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     finally { setRunningUpgrade(null); }
   };
 
+  const runMemoryIndex = async () => {
+    const projectId = memoryProjectId || projects[0]?.id || '';
+    if (!projectId) {
+      setSaveFeedback({ type: 'error', text: '请先创建或选择一个项目' });
+      return;
+    }
+    setMemoryBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/memory-index/index`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, includeChat: true, chatLimit: 200 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '索引失败');
+      setMemoryStats(data.stats || null);
+      setMemoryProjectId(projectId);
+      setSaveFeedback({ type: 'success', text: '项目记忆已更新' });
+    } catch (error) {
+      setSaveFeedback({ type: 'error', text: error instanceof Error ? error.message : '项目记忆更新失败' });
+    } finally {
+      setMemoryBusy(false);
+    }
+  };
+
   const capabilityPage = (
     <>
       <SettingsGroup title="整体状态" sc={sc} bar={ACCENT}>
@@ -1475,6 +1552,77 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             </Text>
           </>
         )}
+      </SettingsGroup>
+
+      <SettingsGroup title="自我评估基准" sc={sc} bar={ACCENT} collapsible defaultOpen={true}>
+        {!benchmark ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>基准数据不可用。</Text>
+        ) : (
+          <>
+            <View style={styles.kernelCardTop}>
+              <Text style={[styles.kernelReadiness, { color: sc.label }]}>{benchmark.score}%</Text>
+              <Text style={[styles.kernelSafety, { color: benchmark.score >= 80 ? colors.success : benchmark.score >= 65 ? colors.warning : colors.error }]}>
+                等级 {benchmark.grade}
+              </Text>
+            </View>
+            {benchmark.dimensions.map((item) => (
+              <View key={item.id} style={styles.kernelCard}>
+                <View style={styles.kernelCardTop}>
+                  <Text style={[styles.kernelName, { color: sc.label }]} numberOfLines={1}>{item.name}</Text>
+                  <Text style={[styles.kernelScore, { color: item.score >= 80 ? colors.success : item.score >= 50 ? colors.warning : colors.error }]}>{item.score}%</Text>
+                </View>
+                <Text style={[styles.kernelNext, { color: sc.value }]}>{item.bottleneck || item.nextAction}</Text>
+              </View>
+            ))}
+          </>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title="DAG 并行调度" sc={sc} bar={ACCENT} collapsible defaultOpen={true}>
+        {!dagPlans.length ? (
+          <Text style={[styles.kernelSummary, { color: sc.value }]}>暂无 DAG 计划。对话中可让 Agent 拆解并行任务。</Text>
+        ) : (
+          <>
+            <Text style={[styles.kernelSummary, { color: sc.value }]}>
+              {dagPlans.length} 个计划 · {dagPlans.filter(item => item.status === 'completed').length} 完成 · 最大并行 {Math.max(...dagPlans.map(item => item.maxParallel || 1))}
+            </Text>
+            {dagPlans.slice(0, 5).map((plan) => (
+              <View key={plan.id} style={styles.kernelCard}>
+                <View style={styles.kernelCardTop}>
+                  <Text style={[styles.kernelName, { color: sc.label }]} numberOfLines={1}>{plan.objective}</Text>
+                  <Text style={[styles.kernelSafety, { color: plan.status === 'completed' ? colors.success : plan.status === 'failed' ? colors.error : colors.warning }]}>
+                    {plan.status === 'completed' ? '完成' : plan.status === 'failed' ? '失败' : plan.status === 'running' ? '执行中' : '规划中'}
+                  </Text>
+                </View>
+                <Text style={[styles.kernelSummary, { color: sc.value }]}>
+                  {plan.nodes.filter(item => item.status === 'done').length}/{plan.nodes.length} 节点 · 并行度 {plan.maxParallel}
+                </Text>
+              </View>
+            ))}
+          </>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title="项目记忆索引" sc={sc} bar={ACCENT} collapsible defaultOpen={false}>
+        <Text style={[styles.kernelSummary, { color: sc.value }]}>
+          {memoryStats
+            ? `${memoryStats.totalChunks} 个记忆块 · 向量覆盖 ${memoryStats.embeddingCoverage}% · ${memoryStats.agentMemories} 条经验`
+            : '尚未加载记忆统计。'}
+        </Text>
+        <View style={styles.memoryProjectRow}>
+          {projects.slice(0, 6).map((project) => (
+            <Pressable
+              key={project.id}
+              style={[styles.memoryProjectChip, (memoryProjectId || projects[0]?.id) === project.id && styles.memoryProjectChipActive]}
+              onPress={() => setMemoryProjectId(project.id)}
+            >
+              <Text numberOfLines={1} style={styles.memoryProjectChipText}>{project.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable style={[styles.suggestionButton, { backgroundColor: ACCENT }, memoryBusy && { opacity: 0.55 }]} onPress={runMemoryIndex} disabled={memoryBusy}>
+          <Text style={[styles.suggestionButtonText, { color: isDark ? '#0D0D0D' : '#FFFFFF' }]}>{memoryBusy ? '正在索引...' : '重建项目记忆'}</Text>
+        </Pressable>
       </SettingsGroup>
 
       <SettingsGroup title="能力矩阵" sc={sc} bar={ACCENT} collapsible defaultOpen={true}>
@@ -3521,7 +3669,30 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: 2,
       lineHeight: 15,
     },
-    kernelReadiness: {
+    memoryProjectRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginVertical: spacing.sm,
+  },
+  memoryProjectChip: {
+    maxWidth: '48%',
+    minHeight: 30,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.separator,
+    backgroundColor: colors.bgCard,
+  },
+  memoryProjectChipActive: {
+    borderColor: ACCENT,
+  },
+  memoryProjectChipText: {
+    fontSize: fontSize.xs,
+    color: colors.textPrimary,
+  },
+  kernelReadiness: {
     fontSize: 34,
     fontWeight: '800',
     marginBottom: 4,

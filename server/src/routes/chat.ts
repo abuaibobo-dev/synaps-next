@@ -24,6 +24,7 @@ import {
 import { isFailureResult, analyzeFailure } from '../failureAnalysis.js';
 import { getSharedContext, mergeSharedContext, sharedContextToText } from '../context.js';
 import { runDiagnostics, diagnosticsToText } from '../diagnostics.js';
+import { createDagPlan, getDagPlan, reportDagNode, tickDagPlan } from '../dag.js';
 import { isOllamaAvailable, callOllama, callOllamaStream, selectAvailableOllamaModel, selectOllamaModel, extractImagePaths, type OllamaMessage } from '../ollama.js';
 import { indexProjectFiles, indexChatHistory, rememberNote, searchKnowledge, ensureKnowledgeTable, rememberMemory, recallMemories } from '../rag.js';
 import {
@@ -204,6 +205,10 @@ You have access to tools that let you interact with the project files:
 - team_test: QA role — run the test suite and analyze failures
 - team_review: REVIEWER role — review changes (lint/typecheck/security/diff) and decide pass/fail
 - team_status: Show the current team plan and step progress
+- dag_plan: Create a dependency graph with parallel nodes (args: title/objective, nodes:[{title, role, dependsOn:["#1"]}], maxParallel optional). Use "#N" for dependency references.
+- dag_status: Show a persisted DAG plan (args: planId)
+- dag_tick: Start every ready DAG node up to maxParallel (args: planId). Execute each returned instruction in parallel, then report each node.
+- dag_report: Report a node result and automatically start newly ready nodes (args: planId,nodeId,success,result)
 - skill_deps: Check a skill's declared dependencies (dependsOn skills, MCP servers, packages, env vars). Args: query "skill name"
 - project_export: Export the project config as a standardized AgentPack JSON (settings, trusted projects, MCP servers, installed tools, skills)
 - project_import: Import an AgentPack JSON to restore/migrate a project config (args: params.config with the JSON string). Medium risk, requires confirmation
@@ -1443,6 +1448,52 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       if (!toolCall.query) return 'Error: query is required';
       const res = recallMemories(projectId, toolCall.query, Math.min(10, Math.max(1, Number(toolCall.topK) || 5)));
       return res || 'No related memories found. Use memory_remember to store experiences.';
+    }
+
+    case 'dag_plan': {
+      const dagTool = toolCall as any;
+      if (!projectId) return 'Error: dag_plan requires a project.';
+      if (!dagTool.title && !dagTool.objective) return 'Error: title is required';
+      const rawNodes: any[] = Array.isArray(dagTool.nodes) ? dagTool.nodes : [];
+      if (!rawNodes.length) return 'Error: nodes array is required';
+      try {
+        const result = createDagPlan({
+          projectId,
+          objective: String(dagTool.title || dagTool.objective),
+          maxParallel: Number(dagTool.maxParallel || 3),
+          nodes: rawNodes.map((node: any) => ({
+            title: String(node.title || ''),
+            detail: node.detail ? String(node.detail) : undefined,
+            role: node.role || 'code_engineer',
+            dependsOn: Array.isArray(node.dependsOn) ? node.dependsOn.map(String) : [],
+          })),
+        });
+        logAudit(projectId, 'dag_plan', `创建 DAG 计划：${result.objective}（${result.nodes.length} 节点）`, 'medium', 'auto');
+        return JSON.stringify(tickDagPlan(result.id), null, 2);
+      } catch (error) {
+        return `Error: ${(error as Error).message}`;
+      }
+    }
+
+    case 'dag_status': {
+      const plan = getDagPlan(String((toolCall as any).planId || ''));
+      return plan ? JSON.stringify(plan, null, 2) : 'Error: DAG plan not found';
+    }
+
+    case 'dag_tick': {
+      try {
+        return JSON.stringify(tickDagPlan(String((toolCall as any).planId || '')), null, 2);
+      } catch (error) {
+        return `Error: ${(error as Error).message}`;
+      }
+    }
+
+    case 'dag_report': {
+      try {
+        return JSON.stringify(reportDagNode(String((toolCall as any).planId || ''), String((toolCall as any).nodeId || ''), (toolCall as any).success === true, String((toolCall as any).result || '')), null, 2);
+      } catch (error) {
+        return `Error: ${(error as Error).message}`;
+      }
     }
 
     case 'goal_set': {
