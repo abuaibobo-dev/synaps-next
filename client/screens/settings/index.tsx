@@ -47,7 +47,6 @@ interface Settings {
   stt_model: string;
   github_token: string;
   github_auto_push: string;
-  termux_path: string;
   build_method: string;
   snapshot_enabled: string;
   diff_review_enabled: string;
@@ -81,7 +80,6 @@ const DEFAULT_SETTINGS: Settings = {
   stt_model: 'whisper-1',
   github_token: '',
   github_auto_push: 'false',
-  termux_path: '/data/data/com.termux',
   build_method: 'github_actions',
   snapshot_enabled: 'true',
   diff_review_enabled: 'true',
@@ -322,7 +320,7 @@ const SECTION_KEYS: Record<SectionKey, Array<keyof Settings>> = {
     'harness_api_key',
     'harness_base_url',
   ],
-  dev: ['project_root', 'termux_path', 'github_token'],
+  dev: ['project_root', 'github_token'],
   appearance: [],
   security: [],
   skills: [],
@@ -354,9 +352,9 @@ function renderDiagnostics(d: Record<string, any> | null): Array<{ ok: boolean; 
   });
   const termux = d.termux || {};
   rows.push({
-    ok: !!termux.exists,
-    label: 'Termux',
-    detail: `${termux.path || '-'} · ${termux.exists ? '存在' : '不存在'}`,
+    ok: true,
+    label: 'Termux（可选）',
+    detail: termux.exists ? '检测到 · 仅旧桥接使用' : '未安装 · 内置引擎不受影响',
   });
   const device = d.device || {};
   rows.push({
@@ -2042,7 +2040,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const devPage = (
     <>
-      <SettingsGroup title="项目与终端" sc={sc} bar={ACCENT} collapsible defaultOpen>
+      <SettingsGroup title="项目目录" sc={sc} bar={ACCENT} collapsible defaultOpen>
         <FieldRow styles={styles} label="项目目录" sc={sc}>
           <UnderlineInput
             value={settings.project_root}
@@ -2052,17 +2050,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             autoCapitalize="none"
             onChangeText={trackDraft('project_root')}
             onCommit={(v) => saveSetting('project_root', v)}
-          />
-        </FieldRow>
-        <FieldRow styles={styles} label="Termux 路径" sc={sc} last>
-          <UnderlineInput
-            value={settings.termux_path}
-            placeholder="/data/data/com.termux"
-            sc={sc}
-            focusColor={INTERACTIVE}
-            autoCapitalize="none"
-            onChangeText={trackDraft('termux_path')}
-            onCommit={(v) => saveSetting('termux_path', v)}
           />
         </FieldRow>
       </SettingsGroup>

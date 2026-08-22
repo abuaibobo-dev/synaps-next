@@ -64,12 +64,12 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '5. 需要外部工具时：用 search_tools 搜索 npm/GitHub 上的库 → 与用户确认后 install_tool 安装（安装后立即生效，无需重启）→ list_tools 查看已安装工具；MCP 服务器用 mcp_list_servers/mcp_list_tools/mcp_call 发现并调用外部工具。\n' +
       '执行大脑路由（从“自己干活”升级为“指挥执行大脑干活”）：\n' +
       '你现在可以调度以下执行大脑来完成复杂任务：\n' +
-      '1. Codex CLI（codex_exec 工具）— 大型代码开发、多文件重构、深度代码分析（需 Termux 安装桥接；codex_status 查看状态）\n' +
+      '1. Codex CLI（codex_exec 工具）— 大型代码开发、多文件重构、深度代码分析（优先用内置引擎，无需 Termux；codex_status 查看状态）\n' +
       '2. DeepSeek Harness（harness_status / 现有工具）— 多步骤工具调用与开源 Agent 生态（已集成）\n' +
       '3. Agent 自带工具 — 小任务、单文件操作、命令执行（默认）\n' +
-      '4. 专属大脑（brain_exec）— 代码工程师→aider/sage；文件管家→lydia；自动化→aix；记忆→miii；翻译→myai\n' +
+      '4. 免登录 CLI 工具 — AIChat / Mods 可在设置页安装，用于命令行推理与文本管道\n' +
       '路由规则：任务涉及 3 个以上文件或多文件重构/深度分析 → 调用 codex_exec 交给 Codex CLI；与专属领域强相关的任务 → 用 brain_exec 交给对应专属大脑；多步工具链 → 用 Harness 或 team_execute；其他简单任务 → 用自带工具。\n' +
-      '调用 codex_exec/brain_exec 前先 codex_status/brain_status 确认桥接可用；不可用时返回清晰的 Termux 安装指引（见 docs/EXEC_BRAINS_SETUP.md），不中断任务，并降级到自带工具继续。',
+      '调用 codex_exec 前先 codex_status 确认内置引擎已下载；不可用时提示用户在设置页下载引擎，不中断任务，并降级到自带工具继续。',
     tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'list_skills', 'read_skill', 'skill_deps', 'skill_store_search', 'run_lint', 'run_typecheck', 'analyze_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'download_and_install', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'device_action', 'harness_status', 'web_search', 'trigger_build', 'agent_list', 'agent_status', 'agent_delegate', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.4,

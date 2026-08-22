@@ -49,6 +49,8 @@ export function runDiagnostics(): Record<string, unknown> {
     termux: {
       path: termuxPath,
       exists: fs.existsSync(termuxPath),
+      required: false,
+      note: '仅旧版 Codex 桥接需要；内置引擎和免登录 CLI 工具不依赖 Termux',
     },
     device: {
       enabled: deviceControlEnabled(),
@@ -86,14 +88,13 @@ export function diagnosticsToText(d: Record<string, unknown>): string {
   lines.push(`- 运行时：Node ${anyD.backend.nodeVersion} / ${anyD.backend.platform}-${anyD.backend.arch}`);
   lines.push(`- AI 模型：${anyD.ai.model}（${anyD.ai.apiKeyConfigured ? '已配置 Key' : '未配置 Key'}）`);
   lines.push(`- GitHub：${anyD.github.tokenConfigured ? '已配置 Token' : '未配置 Token'}（自动推送 ${anyD.github.autoPush ? '开' : '关'}）`);
-  lines.push(`- Termux：${anyD.termux.path}（${anyD.termux.exists ? '存在' : '不存在'}）`);
+  lines.push(`- Termux：${anyD.termux.exists ? '检测到（可选桥接）' : '未安装（内置引擎不受影响）'}`);
   lines.push(`- 设备控制：${anyD.device.enabled ? '已启用' : '未启用'}`);
   lines.push(`- MCP 服务器：${anyD.mcp.count} 个${(anyD.mcp.servers as string[]).length ? '（' + (anyD.mcp.servers as string[]).join(', ') + '）' : ''}`);
   lines.push(`- DeepSeek Harness：${anyD.harness.enabled ? '已启用' : '未启用'}${anyD.harness.nodeSatisfied ? '（Node 版本满足）' : '（Node 版本过低）'}`);
   lines.push(`- 数据库：${anyD.db.projects} 个项目 / ${anyD.db.agents} 个 Agent / ${anyD.db.skills} 个技能（${anyD.db.fileSizeBytes} 字节）`);
   const problems: string[] = [];
   if (!anyD.ai.apiKeyConfigured) problems.push('未配置 AI API Key（设置 → AI 模型）');
-  if (!anyD.termux.exists) problems.push('Termux 路径不存在（设置 → 开发环境）');
   if (!anyD.device.enabled) problems.push('设备控制未启用（设置 → 设备控制）');
   if (!anyD.github.tokenConfigured) problems.push('未配置 GitHub Token（影响构建/推送）');
   if (problems.length) {
