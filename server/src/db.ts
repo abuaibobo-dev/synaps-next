@@ -53,7 +53,6 @@ export async function getDb(): Promise<SqlJsDatabase> {
   ]) {
     db.run(`DROP TABLE IF EXISTS ${table}`);
   }
-  db.run("DELETE FROM agent_instances WHERE agent_type = 'novel_memory_mgr'");
   db.run(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
@@ -264,6 +263,9 @@ export async function getDb(): Promise<SqlJsDatabase> {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  // 清理旧版本误装的小说记忆 Agent；必须放在 agent_instances 建表之后。
+  db.run("DELETE FROM agent_instances WHERE agent_type = 'novel_memory_mgr'");
 
   db.run(`
     CREATE TABLE IF NOT EXISTS agent_contexts (
