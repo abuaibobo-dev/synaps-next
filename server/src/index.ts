@@ -26,7 +26,6 @@ import tasksRouter from "./routes/tasks.js";
 import brainsRouter from "./routes/brains.js";
 import bridgeRouter from "./routes/bridge.js";
 import codexLocalRouter from "./routes/codexLocal.js";
-import ollamaRouter from "./routes/ollama.js";
 import dagRouter from "./routes/dag.js";
 import memoryIndexRouter from "./routes/memoryIndex.js";
 import { seedImpeccableSkills } from "./impeccable.js";
@@ -76,7 +75,6 @@ app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/brains', brainsRouter);
 app.use('/api/v1/bridge', bridgeRouter);
 app.use('/api/v1/codex-local', codexLocalRouter);
-app.use('/api/v1/ollama', ollamaRouter);
 app.use('/api/v1/dag', dagRouter);
 app.use('/api/v1/memory-index', memoryIndexRouter);
 

@@ -42,7 +42,6 @@ interface Settings {
   ai_api_key: string;
   ai_base_url: string;
   ai_model_base_url: string;
-  ollama_base_url: string;
   stt_api_key: string;
   stt_base_url: string;
   stt_model: string;
@@ -77,7 +76,6 @@ const DEFAULT_SETTINGS: Settings = {
   ai_api_key: '',
   ai_base_url: 'https://api.deepseek.com',
   ai_model_base_url: '',
-  ollama_base_url: 'http://127.0.0.1:11434',
   stt_api_key: '',
   stt_base_url: '',
   stt_model: 'whisper-1',
@@ -623,26 +621,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [brains, setBrains] = useState<BrainStatus | null>(null);
   const [brainsRefreshing, setBrainsRefreshing] = useState(false);
   const [brainsRefreshedAt, setBrainsRefreshedAt] = useState<number | null>(null);
-  const [ollamaStatus, setOllamaStatus] = useState<{
-    available: boolean;
-    base: string;
-    models?: Array<{ name: string; size: number; modifiedAt?: string | null }>;
-    installed: string[];
-    configured: Array<{ role: string; name: string; installed?: boolean }>;
-    jobs?: Array<{
-      id: string;
-      model: string;
-      status: 'pulling' | 'success' | 'error' | 'cancelled';
-      statusText: string;
-      percent: number;
-      bytesDone: number;
-      bytesTotal: number;
-      error?: string;
-    }>;
-  } | null>(null);
-  const [ollamaRefreshing, setOllamaRefreshing] = useState(false);
-  const [ollamaModelInput, setOllamaModelInput] = useState('');
-  const [ollamaModelBusy, setOllamaModelBusy] = useState(false);
   // 用 ref 防重入，避免 useCallback 依赖 state 导致刷新无限循环
   const brainsFetchingRef = useRef(false);
   const fetchBrains = useCallback(async () => {
@@ -664,77 +642,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
       setBrainsRefreshing(false);
     }
   }, []);
-
-  const fetchOllamaStatus = useCallback(async (silent = false) => {
-    if (!silent) setOllamaRefreshing(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/ollama/models`);
-      if (!res.ok) return null;
-      const status = await res.json();
-      setOllamaStatus(status);
-      return status;
-    } catch {
-      // 后端未就绪时保留上次状态
-      return null;
-    } finally {
-      setOllamaRefreshing(false);
-    }
-  }, []);
-
-  const pullOllamaModel = useCallback(async (model: string) => {
-    const name = model.trim();
-    if (!name || ollamaModelBusy) return;
-    setOllamaModelBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/ollama/models/pull`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: name }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || '下载失败');
-      setOllamaModelInput('');
-      fetchOllamaStatus(true);
-    } catch (error) {
-      showRoundedAlert('下载失败', error instanceof Error ? error.message : String(error));
-    } finally {
-      setOllamaModelBusy(false);
-    }
-  }, [fetchOllamaStatus, ollamaModelBusy]);
-
-  const deleteOllamaModel = useCallback((model: string) => {
-    showRoundedAlert('删除模型', `确定删除「${model}」吗？此操作不会影响其它模型。`, [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const res = await fetch(`${API_BASE}/api/v1/ollama/models`, {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data?.error || '删除失败');
-            Toast.show({ type: 'success', text1: '模型已删除' });
-            fetchOllamaStatus(true);
-          } catch (error) {
-            showRoundedAlert('删除失败', error instanceof Error ? error.message : String(error));
-          }
-        },
-      },
-    ]);
-  }, [fetchOllamaStatus]);
-
-  const cancelOllamaPull = useCallback(async (id: string) => {
-    try {
-      await fetch(`${API_BASE}/api/v1/ollama/models/pull/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      fetchOllamaStatus(true);
-    } catch {
-      // 状态会在下次轮询时更新
-    }
-  }, [fetchOllamaStatus]);
 
   const [codexLocal, setCodexLocal] = useState<{
     enabled?: boolean;
@@ -773,14 +680,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   useEffect(() => {
     fetchBrains();
     fetchCodexLocal();
-    fetchOllamaStatus();
-  }, [fetchBrains, fetchCodexLocal, fetchOllamaStatus]);
-
-  useEffect(() => {
-    if (!ollamaStatus?.jobs?.some((job) => job.status === 'pulling')) return;
-    const timer = setInterval(() => fetchOllamaStatus(true), 1500);
-    return () => clearInterval(timer);
-  }, [ollamaStatus?.jobs, fetchOllamaStatus]);
+  }, [fetchBrains, fetchCodexLocal]);
 
   useEffect(() => {
     if (!codexLocal?.downloading) return;
@@ -893,12 +793,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     async (key: keyof Settings, value: string) => {
       const ok = await updateSetting(key, value);
       if (!ok) return;
-      if (key === 'ollama_base_url') {
-        showFeedback({ type: 'success', text: '已保存 · 正在检测' });
-        const status = await fetchOllamaStatus();
-        showFeedback({ type: 'success', text: status?.available ? '已保存 · 连接正常' : '已保存 · 未连接' });
-        return;
-      }
       if (key === 'github_token') {
         if (!value.trim()) {
           showFeedback({ type: 'success', text: '已清除 Token' });
@@ -921,7 +815,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         showFeedback({ type: 'success', text: '已保存' });
       }
     },
-    [updateSetting, showFeedback, verifyApi, verifyGithub, fetchOllamaStatus]
+    [updateSetting, showFeedback, verifyApi, verifyGithub]
   );
 
   // 输入草稿：保存按钮兜底，未失焦也能保存
@@ -1847,116 +1741,6 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         <FieldRow styles={styles} label="上下文限制" sc={sc} last>
           <Text style={[styles.fieldValue, { color: sc.value }]}>{contextLimit}</Text>
         </FieldRow>
-      </SettingsGroup>
-      <SettingsGroup title="本地模型 Ollama" sc={sc} bar={ACCENT} collapsible defaultOpen>
-        <SettingRow
-          label="服务状态"
-          value={
-            ollamaRefreshing
-              ? '刷新中...'
-              : ollamaStatus?.available
-                ? '✅ 已连接'
-                : ollamaStatus
-                  ? '❌ 未运行'
-                  : '检测中...'
-          }
-          icon="microchip"
-          iconColor={ACCENT}
-          sc={sc}
-          right={
-            <Pressable onPress={() => fetchOllamaStatus()} hitSlop={8} disabled={ollamaRefreshing} style={styles.refreshBtn}>
-              <AppIcon name="refresh-cw" size={16} color={sc.arrow} />
-            </Pressable>
-          }
-        />
-        <FieldRow styles={styles} label="服务地址" sc={sc}>
-          <UnderlineInput
-            value={settings.ollama_base_url}
-            placeholder="http://127.0.0.1:11434"
-            sc={sc}
-            focusColor={INTERACTIVE}
-            keyboardType="url"
-            autoCapitalize="none"
-            onChangeText={trackDraft('ollama_base_url')}
-            onCommit={(v) => saveSetting('ollama_base_url', v || DEFAULT_SETTINGS.ollama_base_url)}
-          />
-        </FieldRow>
-        <View style={[styles.ollamaPullRow, { borderBottomColor: sc.separator }]}>
-          <TextInput
-            style={[styles.ollamaInput, { color: sc.label, borderColor: sc.cardBorder }]}
-            value={ollamaModelInput}
-            onChangeText={setOllamaModelInput}
-            onSubmitEditing={() => pullOllamaModel(ollamaModelInput)}
-            placeholder="输入模型名，如 qwen2.5:1.5b"
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Pressable
-            style={[styles.ollamaPullBtn, ollamaModelBusy && styles.ollamaBtnDisabled]}
-            onPress={() => pullOllamaModel(ollamaModelInput)}
-            disabled={ollamaModelBusy || !ollamaStatus?.available}
-          >
-            <Text style={styles.ollamaPullText}>{ollamaModelBusy ? '启动中' : '下载'}</Text>
-          </Pressable>
-        </View>
-        {(ollamaStatus?.jobs || []).filter((job) => job.status === 'pulling' || job.status === 'error').map((job) => (
-          <View key={job.id} style={styles.ollamaJobCard}>
-            <View style={styles.ollamaJobHeader}>
-              <Text style={[styles.ollamaModelName, { color: sc.label }]} numberOfLines={1}>{job.model}</Text>
-              {job.status === 'pulling' ? (
-                <Pressable onPress={() => cancelOllamaPull(job.id)} hitSlop={6}>
-                  <Text style={[styles.ollamaActionText, { color: DANGER_COLOR }]}>取消</Text>
-                </Pressable>
-              ) : (
-                <Text style={[styles.ollamaActionText, { color: colors.error }]} numberOfLines={1}>失败</Text>
-              )}
-            </View>
-            <View style={styles.ollamaProgressTrack}>
-              <View style={[styles.ollamaProgressFill, { width: `${job.percent}%`, backgroundColor: ACCENT }]} />
-            </View>
-            <Text style={[styles.ollamaMeta, { color: sc.value }]}>
-              {job.status === 'pulling'
-                ? `${job.percent}% · ${job.statusText}`
-                : job.error || job.statusText}
-            </Text>
-          </View>
-        ))}
-        {(ollamaStatus?.configured || []).map((item, index, list) => (
-          <SettingRow
-            key={`${item.role}-${item.name}`}
-            label={`${item.role} · ${item.name}`}
-            value={item.installed ? '已安装' : '未安装'}
-            icon="bot"
-            iconColor={ACCENT}
-            sc={sc}
-            right={!item.installed ? (
-              <Pressable onPress={() => pullOllamaModel(item.name)} disabled={ollamaModelBusy} hitSlop={6}>
-                <Text style={[styles.ollamaActionText, { color: ACCENT }]}>下载</Text>
-              </Pressable>
-            ) : undefined}
-            last={false}
-          />
-        ))}
-        {(ollamaStatus?.models || []).map((model, index, list) => (
-          <SettingRow
-            key={model.name}
-            label={model.name}
-            value={`${(model.size / 1024 / 1024 / 1024).toFixed(2)} GB`}
-            icon="database"
-            iconColor={ACCENT}
-            sc={sc}
-            right={
-              <Pressable onPress={() => deleteOllamaModel(model.name)} hitSlop={6}>
-                <Text style={[styles.ollamaActionText, { color: DANGER_COLOR }]}>删除</Text>
-              </Pressable>
-            }
-            last={index === list.length - 1 && !ollamaStatus?.configured?.length}
-          />
-        ))}
-        {!ollamaStatus?.models?.length && !ollamaStatus?.configured?.length && (
-          <SettingRow label="模型列表加载中..." value={ollamaStatus?.base || ''} icon="bot" iconColor={ACCENT} sc={sc} last />
-        )}
       </SettingsGroup>
       <SettingsGroup title="DeepSeek Harness" sc={sc} bar={ACCENT} collapsible>
         <SettingRow
@@ -3471,71 +3255,6 @@ const createStyles = (colors: ThemeColors) =>
     skillStorePageLabel: {
       fontSize: fontSize.xs,
       color: colors.textMuted,
-    },
-    ollamaPullRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      paddingVertical: spacing.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-    },
-    ollamaInput: {
-      flex: 1,
-      minHeight: 36,
-      paddingHorizontal: spacing.sm,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      fontSize: fontSize.sm,
-    },
-    ollamaPullBtn: {
-      minHeight: 34,
-      paddingHorizontal: spacing.md,
-      borderRadius: radius.md,
-      backgroundColor: ACCENT,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    ollamaBtnDisabled: {
-      opacity: 0.5,
-    },
-    ollamaPullText: {
-      color: '#FFFFFF',
-      fontSize: fontSize.xs,
-      fontWeight: '600',
-    },
-    ollamaJobCard: {
-      paddingVertical: spacing.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.separator,
-      gap: 6,
-    },
-    ollamaJobHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: spacing.sm,
-    },
-    ollamaModelName: {
-      flex: 1,
-      fontSize: fontSize.sm,
-      fontWeight: '600',
-    },
-    ollamaActionText: {
-      fontSize: fontSize.xs,
-      fontWeight: '600',
-    },
-    ollamaProgressTrack: {
-      height: 5,
-      borderRadius: 3,
-      backgroundColor: colors.bgInput,
-      overflow: 'hidden',
-    },
-    ollamaProgressFill: {
-      height: '100%',
-      borderRadius: 3,
-    },
-    ollamaMeta: {
-      fontSize: 10,
     },
     modalBtnFull: {
       alignSelf: 'stretch',

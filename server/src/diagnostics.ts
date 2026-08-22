@@ -5,7 +5,6 @@ import { getDb, queryOne, queryAll } from './db.js';
 import { deviceControlEnabled } from './device.js';
 import { harnessStatus } from './harness.js';
 import { getMcpServers } from './mcp.js';
-import { OLLAMA_MODELS } from './ollama.js';
 
 function getSetting(key: string): string | null {
   const row = queryOne('SELECT value FROM settings WHERE key = ?', [key]);
@@ -43,12 +42,6 @@ export function runDiagnostics(): Record<string, unknown> {
       baseUrl: getSetting('ai_base_url') || 'https://api.deepseek.com',
       apiKeyConfigured: !!aiApiKey,
     },
-    ollama: {
-      writing: OLLAMA_MODELS.WRITING,
-      vision: OLLAMA_MODELS.VISION,
-      chat: OLLAMA_MODELS.CHAT,
-      base: 'http://127.0.0.1:11434',
-    },
     github: {
       tokenConfigured: !!githubToken,
       autoPush: getSetting('github_auto_push') === 'true',
@@ -80,7 +73,6 @@ export function diagnosticsToText(d: Record<string, unknown>): string {
   const anyD = d as {
     backend: Record<string, unknown>;
     ai: Record<string, unknown>;
-    ollama: Record<string, unknown>;
     github: Record<string, unknown>;
     termux: Record<string, unknown>;
     device: Record<string, unknown>;
@@ -93,7 +85,6 @@ export function diagnosticsToText(d: Record<string, unknown>): string {
   lines.push(`- 后端：${anyD.backend.status}（端口 ${anyD.backend.port}，运行 ${anyD.backend.uptimeSec}s）`);
   lines.push(`- 运行时：Node ${anyD.backend.nodeVersion} / ${anyD.backend.platform}-${anyD.backend.arch}`);
   lines.push(`- AI 模型：${anyD.ai.model}（${anyD.ai.apiKeyConfigured ? '已配置 Key' : '未配置 Key'}）`);
-  lines.push(`- 本地模型（Ollama）：写作 ${anyD.ollama?.writing || '未配置'} / 识图 ${anyD.ollama?.vision || '未配置'} / 聊天 ${anyD.ollama?.chat || '未配置'}（${anyD.ollama?.base || 'http://127.0.0.1:11434'}）`);
   lines.push(`- GitHub：${anyD.github.tokenConfigured ? '已配置 Token' : '未配置 Token'}（自动推送 ${anyD.github.autoPush ? '开' : '关'}）`);
   lines.push(`- Termux：${anyD.termux.path}（${anyD.termux.exists ? '存在' : '不存在'}）`);
   lines.push(`- 设备控制：${anyD.device.enabled ? '已启用' : '未启用'}`);

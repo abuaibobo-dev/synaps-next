@@ -2,7 +2,6 @@ import { getDb, queryOne, queryAll } from './db.js';
 import { deviceControlEnabled } from './device.js';
 import { harnessStatus } from './harness.js';
 import { getMcpServers } from './mcp.js';
-import { isOllamaAvailable, listOllamaModels } from './ollama.js';
 import { getCodexConfig } from './codex.js';
 import { codexLocalInstalled } from './codexLocal.js';
 
@@ -68,7 +67,6 @@ function capability(input: Omit<KernelCapability, 'status'> & { unavailable?: bo
 export async function getCapabilityRegistry(): Promise<CapabilityRegistry> {
   await getDb();
 
-  const [ollamaReady, ollamaModels] = await Promise.all([isOllamaAvailable(), listOllamaModels()]);
   const codexCfg = getCodexConfig();
   const codexReady = codexCfg.enabled && (!codexCfg.builtin || codexLocalInstalled());
   const githubToken = setting('github_token');
@@ -87,10 +85,10 @@ export async function getCapabilityRegistry(): Promise<CapabilityRegistry> {
       id: 'model-routing',
       name: '模型路由',
       layer: 'orchestration',
-      score: ollamaReady ? 92 : setting('ai_api_key') ? 75 : 0,
-      summary: ollamaReady ? '本地优先，云端兜底，按写作/识图/推理自动分流。' : setting('ai_api_key') ? 'Ollama 离线，当前仅云端可用。' : '没有可用模型。',
-      detail: { localReady: ollamaReady, localModels: ollamaModels, cloudConfigured: !!setting('ai_api_key') },
-      nextUpgrade: ollamaReady ? '加入任务复杂度评分与成本感知路由。' : '启动 Ollama 或配置云端 Key。',
+      score: setting('ai_api_key') ? 82 : 0,
+      summary: setting('ai_api_key') ? '云端 DeepSeek 路由已配置。' : '未配置云端模型。',
+      detail: { cloudConfigured: !!setting('ai_api_key') },
+      nextUpgrade: setting('ai_api_key') ? '加入任务复杂度评分与成本感知路由。' : '配置 AI API Key。',
     }),
     capability({
       id: 'codex-execution',
@@ -243,8 +241,6 @@ export async function getCapabilityRegistry(): Promise<CapabilityRegistry> {
       steps,
     },
     signals: {
-      ollamaReady,
-      ollamaModels,
       cloudConfigured: !!setting('ai_api_key'),
       codexReady,
       githubToken: !!githubToken,

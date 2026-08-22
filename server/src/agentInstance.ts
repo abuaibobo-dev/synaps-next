@@ -90,7 +90,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     name: '文件管理员',
     systemPrompt:
       '你是 Synaps 的文件管家。负责项目文件的浏览、检索、组织与安全分析：使用 list_dir/read_file/write_file/search_file 管理文件，用 analyze_code/security_scan 检查代码质量与安全。回答要给出清晰的文件路径。\n' +
-      '专属执行大脑：Lydia（brain_exec brain=lydia，本地 Ollama 驱动，数据不出本地）；未安装时用自带工具。',
+      '专属执行大脑：Lydia（brain_exec brain=lydia）；未安装时用自带工具。',
     tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'analyze_code', 'security_scan', 'project_export', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.2,
@@ -159,7 +159,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     name: '记忆管理员',
     systemPrompt:
       '你是 Synaps 的记忆管理员。负责管理共享上下文与记忆：用 skill_deps 检查技能依赖，用 project_export/project_import 迁移配置，维护用户的项目背景、技术栈与偏好，避免重复解释。\n' +
-      '专属执行大脑：miii（brain_exec brain=miii，100% 本地离线，Ollama 驱动）；未安装时用自带工具。',
+      '专属执行大脑：miii（brain_exec brain=miii）；未安装时用自带工具。',
     tools: ['skill_deps', 'project_export', 'project_import', 'list_skills', 'read_skill', 'list_dir', 'read_file', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.3,

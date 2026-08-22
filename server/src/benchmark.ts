@@ -105,8 +105,8 @@ export async function getBenchmarkReport(): Promise<BenchmarkReport> {
       weight: 18,
       score: capabilityScore('model-routing'),
       evidence: registry.signals,
-      bottleneck: registry.signals.ollamaReady ? null : '本地 Ollama 不可用，云端兜底会增加成本和延迟。',
-      nextAction: registry.signals.ollamaReady ? '增加任务复杂度评分与成本感知路由。' : '恢复 Ollama 或配置可用云端 Key。',
+      bottleneck: registry.signals.cloudConfigured ? null : '未配置云端模型 Key。',
+      nextAction: registry.signals.cloudConfigured ? '增加任务复杂度评分与成本感知路由。' : '配置 AI API Key。',
     },
     {
       id: 'codex-execution',

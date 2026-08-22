@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDb, queryAll, queryOne, runSql } from './db.js';
 import { getCapabilityRegistry } from './capabilityKernel.js';
-import { isOllamaAvailable } from './ollama.js';
 import { recordTaskLearning } from './learning.js';
 
 export interface EvolutionRun {
@@ -126,12 +125,8 @@ export async function runEvolutionStep(stepId: string, approved = false): Promis
 
   try {
     let message = '';
-    if (stepId === 'restore-local-model') {
-      const ready = await isOllamaAvailable();
-      if (!ready) {
-        return { run: saveRun({ stepId, title: step.title, status: 'blocked', message: 'Ollama 未运行；请启动本地服务后重试。', mode: approved ? 'approved' : 'automatic', createdAt: Date.now() }) };
-      }
-      message = '本地模型通道已恢复。';
+    if (false) {
+      message = '';
     } else if (stepId === 'memory-distillation') {
       message = await distillProjectMemories();
     } else if (stepId === 'quality-scorer') {

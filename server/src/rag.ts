@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { getDb, queryAll, queryOne, runSql, saveDb } from './db.js';
-import { getOllamaBase, OLLAMA_MODELS } from './ollama.js';
 
 // 持久向量检索：SQLite 保存 nomic-embed-text 向量，检索时余弦相似度 + BM25 混合排序。
 // 向量服务不可用时自动回退到 BM25，保证知识库始终可用。
@@ -90,40 +89,8 @@ async function ensureVectorColumns(): Promise<void> {
   vectorColumnsReady = true;
 }
 
-async function embedBatch(texts: string[]): Promise<number[][] | null> {
-  if (!texts.length) return [];
-  const model = OLLAMA_MODELS.EMBEDDING;
-  try {
-    const res = await fetch(`${getOllamaBase()}/api/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input: texts }),
-      signal: AbortSignal.timeout(45000),
-    });
-    if (res.ok) {
-      const data = await res.json() as { embeddings?: number[][] };
-      if (Array.isArray(data.embeddings) && data.embeddings.length === texts.length) return data.embeddings;
-    }
-  } catch {}
-
-  try {
-    const vectors: number[][] = [];
-    for (const text of texts) {
-      const res = await fetch(`${getOllamaBase()}/api/embeddings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, prompt: text }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!res.ok) return null;
-      const data = await res.json() as { embedding?: number[] };
-      if (!Array.isArray(data.embedding)) return null;
-      vectors.push(data.embedding);
-    }
-    return vectors;
-  } catch {
-    return null;
-  }
+async function embedBatch(_texts: string[]): Promise<number[][] | null> {
+  return null;
 }
 
 function normalizeVector(vector: number[]): number[] {
@@ -204,7 +171,7 @@ export async function indexProjectFiles(projectId: string, rootDir: string): Pro
     if (!vectors) break;
     for (let j = 0; j < batch.length; j++) {
       runSql('UPDATE knowledge_chunks SET embedding = ?, embedding_model = ? WHERE id = ?', [
-        JSON.stringify(normalizeVector(vectors[j])), OLLAMA_MODELS.EMBEDDING, String(batch[j].id),
+        JSON.stringify(normalizeVector(vectors[j])), '', String(batch[j].id),
       ]);
     }
   }
@@ -249,7 +216,7 @@ export async function indexChatHistory(projectId: string, limit = 200): Promise<
     if (!vectors) break;
     for (let j = 0; j < batch.length; j++) {
       runSql('UPDATE knowledge_chunks SET embedding = ?, embedding_model = ? WHERE id = ?', [
-        JSON.stringify(normalizeVector(vectors[j])), OLLAMA_MODELS.EMBEDDING, String(batch[j].id),
+        JSON.stringify(normalizeVector(vectors[j])), '', String(batch[j].id),
       ]);
     }
   }
@@ -274,7 +241,7 @@ export async function rememberNote(projectId: string | null, title: string, cont
   if (vectors) {
     for (let i = 0; i < ids.length; i++) {
       runSql('UPDATE knowledge_chunks SET embedding = ?, embedding_model = ? WHERE id = ?', [
-        JSON.stringify(normalizeVector(vectors[i])), OLLAMA_MODELS.EMBEDDING, ids[i],
+        JSON.stringify(normalizeVector(vectors[i])), '', ids[i],
       ]);
     }
   }
@@ -376,7 +343,7 @@ export async function rememberMemory(projectId: string | null, pattern: string, 
   const text = [pattern, solution, context].filter(Boolean).join('\n');
   const vectors = await embedBatch([text]);
   const embedding = vectors?.[0] ? JSON.stringify(normalizeVector(vectors[0])) : '';
-  const embeddingModel = vectors?.[0] ? OLLAMA_MODELS.EMBEDDING : '';
+  const embeddingModel = vectors?.[0] ? '' : '';
   const now = new Date().toISOString();
   const existing = queryOne(
     'SELECT id FROM agent_memory WHERE project_id IS ? AND pattern = ? LIMIT 1',
