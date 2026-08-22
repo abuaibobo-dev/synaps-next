@@ -3444,7 +3444,7 @@ All file operations should use paths relative to the project root.`;
                   if (delta) res.write(`data: ${JSON.stringify({ thinking_chunk: delta })}\n\n`);
                 },
                 onContent: (delta) => {
-                  if (delta) res.write(`data: ${JSON.stringify({ thinking_chunk: delta })}\n\n`);
+                  if (delta) res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
                 },
               },
               agentInstance?.temperature ?? 0.3,

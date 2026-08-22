@@ -274,7 +274,10 @@ export async function callOllamaStream(
       } catch {
       }
     }
-    return { content: fullContent };
+    const cleanedFallback = fullContent
+      .replace(/<(?:think|thinking)>[\s\S]*?(?:<\/(?:think|thinking)>|$)/gi, '')
+      .trim();
+    return { content: visibleContent || cleanedFallback };
   } catch (e: any) {
     return {
       content: fullContent,
