@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { getDb, queryAll, queryOne, runSql } from './db.js';
 import { getCapabilityRegistry } from './capabilityKernel.js';
 import { recordTaskLearning } from './learning.js';
-import { installCliTool, CLI_TOOL_IDS } from './cliTools.js';
+import { installCliTool, cliToolInstalled, CLI_TOOL_IDS } from './cliTools.js';
 import { listDagPlans, tickDagPlan } from './dag.js';
 
 export interface EvolutionRun {
@@ -108,10 +108,13 @@ function backfillTaskScores(): string {
 }
 
 async function installNoLoginCliTools(): Promise<string> {
+  const missing = CLI_TOOL_IDS.filter(id => !cliToolInstalled(id));
   for (const id of CLI_TOOL_IDS) {
-    await installCliTool(id);
+    if (!cliToolInstalled(id)) await installCliTool(id);
   }
-  return `免登录 CLI 工具已就绪：${CLI_TOOL_IDS.join(' / ')}`;
+  return missing.length > 0
+    ? `新安装完成：${missing.join(' / ')}`
+    : `免登录 CLI 工具已就绪：${CLI_TOOL_IDS.join(' / ')}`;
 }
 
 function reviveDagPlans(): string {
