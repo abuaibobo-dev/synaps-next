@@ -11,7 +11,6 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import ProjectsScreen from '@/screens/projects';
 import AgentScreen from '@/screens/agent';
 import CodeScreen from '@/screens/code';
-import TerminalScreen from '@/screens/terminal';
 import ApkScreen from '@/screens/apk';
 import LogsScreen from '@/screens/logs';
 import GithubScreen from '@/screens/github';
@@ -32,7 +31,7 @@ export default function WorkspaceScreen() {
       .catch(() => setOnboarded(true));
     AsyncStorage.getItem('miaobi.lastModule')
       .then((v) => {
-        if (v === 'projects' || v === 'agent' || v === 'code' || v === 'terminal' || v === 'apk' || v === 'logs' || v === 'github' || v === 'tasks' || v === 'settings') {
+        if (v === 'projects' || v === 'agent' || v === 'code' || v === 'apk' || v === 'logs' || v === 'github' || v === 'tasks' || v === 'settings') {
           setActiveModule(v);
         }
       })
@@ -66,8 +65,6 @@ export default function WorkspaceScreen() {
         return <AgentScreen onOpenSidebar={handleOpenSidebar} />;
       case 'code':
         return <CodeScreen onOpenSidebar={handleOpenSidebar} />;
-      case 'terminal':
-        return <TerminalScreen onOpenSidebar={handleOpenSidebar} />;
       case 'apk':
         return <ApkScreen onOpenSidebar={handleOpenSidebar} />;
       case 'logs':

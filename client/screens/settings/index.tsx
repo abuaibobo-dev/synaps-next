@@ -202,6 +202,27 @@ interface BrainStatus {
   defaultBrain: string;
 }
 
+interface CliToolStatus {
+  id: 'aichat' | 'mods';
+  installed?: boolean;
+  version?: string | null;
+  downloading?: boolean;
+  bytesDone?: number;
+  bytesTotal?: number;
+  error?: string | null;
+}
+
+const CLI_TOOL_META: Record<string, { name: string; description: string }> = {
+  aichat: {
+    name: 'AIChat',
+    description: '免登录命令行 AI 助手，可接 DeepSeek / OpenAI 兼容接口',
+  },
+  mods: {
+    name: 'Mods',
+    description: '免登录管道式 AI 工具，适合文本流处理与快速改写',
+  },
+};
+
 interface McpServer {
   name: string;
   transport: 'stdio' | 'sse';
@@ -677,16 +698,48 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
     }
   }, [fetchCodexLocal]);
 
+  const [cliTools, setCliTools] = useState<CliToolStatus[] | null>(null);
+
+  const fetchCliTools = useCallback(async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(`${API_BASE}/api/v1/cli-tools/status`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) return;
+      const data = await res.json() as { tools?: CliToolStatus[] };
+      if (Array.isArray(data.tools)) setCliTools(data.tools);
+    } catch {
+      // 后端未就绪时保留当前状态
+    }
+  }, []);
+
+  const startCliToolInstall = useCallback(async (id: CliToolStatus['id']) => {
+    try {
+      await fetch(`${API_BASE}/api/v1/cli-tools/${id}/install`, { method: 'POST' });
+      fetchCliTools();
+    } catch {
+      showRoundedAlert('安装失败', '无法启动下载，请检查网络');
+    }
+  }, [fetchCliTools]);
+
   useEffect(() => {
     fetchBrains();
     fetchCodexLocal();
-  }, [fetchBrains, fetchCodexLocal]);
+    fetchCliTools();
+  }, [fetchBrains, fetchCodexLocal, fetchCliTools]);
 
   useEffect(() => {
     if (!codexLocal?.downloading) return;
     const timer = setInterval(() => fetchCodexLocal(), 2000);
     return () => clearInterval(timer);
   }, [codexLocal?.downloading, fetchCodexLocal]);
+
+  useEffect(() => {
+    if (!cliTools?.some((tool) => tool.downloading)) return;
+    const timer = setInterval(() => fetchCliTools(), 1500);
+    return () => clearInterval(timer);
+  }, [cliTools, fetchCliTools]);
 
   // 自动检查最新版本（GitHub Releases）
   useEffect(() => {
@@ -1806,6 +1859,37 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
             onCommit={(v) => saveSetting('harness_base_url', v)}
           />
         </FieldRow>
+      </SettingsGroup>
+
+      <SettingsGroup title="免登录 CLI 工具" sc={sc} bar={ACCENT} collapsible defaultOpen>
+        {(cliTools || [{ id: 'aichat' }, { id: 'mods' }] as CliToolStatus[]).map((tool, index, list) => {
+          const meta = CLI_TOOL_META[tool.id];
+          const percent = tool.bytesTotal ? Math.min(100, Math.round(((tool.bytesDone || 0) / tool.bytesTotal) * 100)) : 0;
+          return (
+            <View key={tool.id} style={[styles.segmentBlock, index < list.length - 1 && { borderBottomColor: sc.separator }]}>
+              <Text style={[styles.fieldLabel, { color: sc.label }]}>{meta?.name || tool.id}</Text>
+              <Text style={[styles.codexLocalHint, { marginBottom: spacing.sm }]}>{meta?.description}</Text>
+              <Text style={[styles.codexLocalHint, { marginBottom: spacing.sm }]}>
+                {tool.downloading
+                  ? `下载中 ${percent}%（${Math.round((tool.bytesDone || 0) / 1048576)}MB / ${Math.round((tool.bytesTotal || 0) / 1048576)}MB）`
+                  : tool.installed
+                    ? `✅ 已就绪 ${tool.version || ''}`
+                    : tool.error
+                      ? `❌ ${tool.error}`
+                      : '未安装 · 静态 Android 二进制 · 无需账号'}
+              </Text>
+              {tool.downloading ? (
+                <View style={styles.codexLocalProgressTrack}>
+                  <View style={[styles.codexLocalProgressFill, { width: `${percent || 4}%` }]} />
+                </View>
+              ) : !tool.installed ? (
+                <Pressable style={styles.codexLocalBtn} onPress={() => startCliToolInstall(tool.id)}>
+                  <Text style={styles.codexLocalBtnText}>{tool.error ? '重试安装' : '安装'}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          );
+        })}
       </SettingsGroup>
 
       <SettingsGroup title="执行大脑" sc={sc} bar={ACCENT} collapsible defaultOpen>

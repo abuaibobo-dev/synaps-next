@@ -11,7 +11,6 @@ const BACKUP_TABLES = [
   'settings',
   'snapshots',
   'snapshot_files',
-  'command_history',
   'skills',
   'agent_memory',
   'team_tasks',
@@ -56,7 +55,7 @@ router.get('/export', async (_req: Request, res: Response) => {
 
 /**
  * GET /api/v1/backup/logs
- * 导出日志（审计日志 + 命令历史），用于排查问题
+ * 导出审计日志，用于排查问题
  */
 router.get('/logs', async (_req: Request, res: Response) => {
   try {
@@ -64,7 +63,6 @@ router.get('/logs', async (_req: Request, res: Response) => {
     res.json({
       exportedAt: new Date().toISOString(),
       auditLogs: queryAll('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 1000'),
-      commandHistory: queryAll('SELECT * FROM command_history ORDER BY executed_at DESC LIMIT 1000'),
     });
   } catch (error) {
     console.error('Failed to export logs:', error);

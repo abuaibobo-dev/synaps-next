@@ -34,7 +34,6 @@ export type ModuleKey =
   | 'projects'
   | 'agent'
   | 'code'
-  | 'terminal'
   | 'apk'
   | 'logs'
   | 'github'
@@ -58,7 +57,6 @@ const MODULES: SidebarModule[] = [
   { key: 'projects', label: '项目', icon: 'folder' },
   { key: 'agent', label: 'Agent', icon: 'bot', unreadCount: 0 },
   { key: 'code', label: '代码', icon: 'code' },
-  { key: 'terminal', label: '终端', icon: 'terminal' },
   { key: 'apk', label: 'APK', icon: 'package' },
   { key: 'logs', label: '日志', icon: 'file-text' },
   { key: 'github', label: 'GitHub', icon: 'github' },

@@ -41,6 +41,19 @@ export async function getDb(): Promise<SqlJsDatabase> {
   }
 
   // Initialize tables
+  // 妙笔的小说记忆模块曾误入 Synaps，这里清理旧版本遗留的跨项目表。
+  for (const table of [
+    'novel_snapshots',
+    'novel_memory_chunks',
+    'novel_foreshadowing',
+    'novel_character_diffs',
+    'novel_characters',
+    'novel_chapters',
+    'novel_projects',
+  ]) {
+    db.run(`DROP TABLE IF EXISTS ${table}`);
+  }
+  db.run("DELETE FROM agent_instances WHERE agent_type = 'novel_memory_mgr'");
   db.run(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
@@ -108,18 +121,8 @@ export async function getDb(): Promise<SqlJsDatabase> {
     )
   `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS command_history (
-      id TEXT PRIMARY KEY,
-      project_id TEXT,
-      command TEXT NOT NULL,
-      output TEXT DEFAULT '',
-      error TEXT DEFAULT '',
-      exit_code INTEGER DEFAULT 0,
-      executed_at INTEGER NOT NULL,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
-    )
-  `);
+  // 终端功能已移除：清理旧版本遗留的命令历史表。
+  db.run('DROP TABLE IF EXISTS command_history');
 
   db.run(`
     CREATE TABLE IF NOT EXISTS skills (

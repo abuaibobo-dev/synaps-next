@@ -14,7 +14,6 @@ interface LogsScreenProps {
 const LOG_CATEGORIES = [
   { key: 'agent', label: 'Agent 日志', icon: 'robot' as const, count: 0 },
   { key: 'build', label: '构建日志', icon: 'hammer' as const, count: 0 },
-  { key: 'shell', label: 'Shell 日志', icon: 'terminal' as const, count: 0 },
   { key: 'system', label: '系统日志', icon: 'microchip' as const, count: 0 },
 ];
 
@@ -54,7 +53,7 @@ export default function LogsScreen({ onOpenSidebar }: LogsScreenProps) {
 
           <View style={styles.logContent}>
             <Text style={styles.logEmpty}>
-              {'// 日志将在此显示\n// Agent 执行、构建过程、Shell 输出\n// 均可通过 AI 分析定位问题'}
+              {'// 日志将在此显示\n// Agent 执行与构建过程可通过 AI 分析定位问题'}
             </Text>
           </View>
         </View>
