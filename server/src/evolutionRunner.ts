@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import { getDb, queryAll, queryOne, runSql } from './db.js';
 import { getCapabilityRegistry } from './capabilityKernel.js';
 import { recordTaskLearning } from './learning.js';
+import { installCliTool, CLI_TOOL_IDS } from './cliTools.js';
+import { listDagPlans, tickDagPlan } from './dag.js';
 
 export interface EvolutionRun {
   id: string;
@@ -105,6 +107,22 @@ function backfillTaskScores(): string {
   return scored > 0 ? `已补建 ${scored} 个任务评分。` : '所有近期任务已有评分。';
 }
 
+async function installNoLoginCliTools(): Promise<string> {
+  for (const id of CLI_TOOL_IDS) {
+    await installCliTool(id);
+  }
+  return `免登录 CLI 工具已就绪：${CLI_TOOL_IDS.join(' / ')}`;
+}
+
+function reviveDagPlans(): string {
+  const plans = listDagPlans(null, 30).filter(plan => plan.status === 'planning' || plan.status === 'running');
+  let dispatchCount = 0;
+  for (const plan of plans) {
+    dispatchCount += tickDagPlan(plan.id).dispatches.length;
+  }
+  return `检查 ${plans.length} 个 DAG 计划，新派发 ${dispatchCount} 个节点。`;
+}
+
 export async function runEvolutionStep(stepId: string, approved = false): Promise<{ run: EvolutionRun; requiresApproval?: boolean }> {
   await getDb();
   ensureTable();
@@ -125,17 +143,17 @@ export async function runEvolutionStep(stepId: string, approved = false): Promis
 
   try {
     let message = '';
-    if (false) {
-      message = '';
-    } else if (stepId === 'memory-distillation') {
+    if (stepId === 'memory-distillation') {
       message = await distillProjectMemories();
+    } else if (stepId === 'install-cli-tools') {
+      message = await installNoLoginCliTools();
     } else if (stepId === 'quality-scorer') {
       message = backfillTaskScores();
     } else if (stepId === 'benchmark-suite') {
       const lessonCount = Number(queryOne("SELECT COUNT(*) AS value FROM agent_memory WHERE namespace = 'task_learning'")?.value || 0);
       message = `基准检查完成：当前可复用经验 ${lessonCount} 条；能力 readiness ${registry.readiness}%。`;
     } else if (stepId === 'dag-planner') {
-      message = 'DAG 规划器已获得审批标记；具体调度将在下一版内核启用。';
+      message = reviveDagPlans();
     } else if (stepId === 'configure-github') {
       message = '请填写 GitHub Token 后重试交付流水线升级。';
     } else {

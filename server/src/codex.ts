@@ -142,6 +142,10 @@ export async function runBrainTask(brainId: string, task: string, projectPath?: 
     return `[Codex · 内置引擎 exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
   }
 
+  if (cfg.builtin) {
+    throw new Error('内置 Codex 引擎未下载或不可执行，请到 设置 → 执行大脑 下载内置引擎');
+  }
+
   const r = await bridgeFetch(
     cfg,
     '/brain',
@@ -182,6 +186,10 @@ export async function runCodexTask(task: string, projectPath?: string): Promise<
       timeoutMs: cfg.timeoutMs,
     });
     return `[Codex · 内置引擎 exit ${result.exitCode}]${result.timedOut ? ' [超时]' : ''}\n${truncate(result.output || '(no output)', 4000)}`;
+  }
+
+  if (cfg.builtin) {
+    throw new Error('内置 Codex 引擎未下载或不可执行，请到 设置 → 执行大脑 下载内置引擎');
   }
 
   const r = await bridgeFetch(

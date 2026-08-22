@@ -4,6 +4,7 @@ import { harnessStatus } from './harness.js';
 import { getMcpServers } from './mcp.js';
 import { getCodexConfig } from './codex.js';
 import { codexLocalInstalled } from './codexLocal.js';
+import { cliToolInstalled } from './cliTools.js';
 
 export type CapabilityStatus = 'ready' | 'partial' | 'unavailable';
 
@@ -79,6 +80,7 @@ export async function getCapabilityRegistry(): Promise<CapabilityRegistry> {
   const memories = count('agent_memory') + count('knowledge_chunks');
   const goals = count('goals');
   const tasks = count('tasks');
+  const cliToolsInstalled = Number(cliToolInstalled('aichat')) + Number(cliToolInstalled('mods'));
 
   const capabilities: KernelCapability[] = [
     capability({
@@ -98,6 +100,15 @@ export async function getCapabilityRegistry(): Promise<CapabilityRegistry> {
       summary: codexReady ? '可把代码修改、构建和项目级任务交给 Codex CLI。' : 'Codex 引擎未启用或未下载。',
       detail: { enabled: codexCfg.enabled, builtin: codexCfg.builtin, builtinInstalled: codexLocalInstalled(), engineVersion: codexCfg.enabled ? '0.147.0' : null },
       nextUpgrade: codexReady ? '增加执行前风险评分与自动回滚快照。' : '在设置页下载内置 Codex 引擎。',
+    }),
+    capability({
+      id: 'cli-tools',
+      name: '免登录 CLI 工具',
+      layer: 'execution',
+      score: cliToolsInstalled >= 2 ? 88 : cliToolsInstalled === 1 ? 68 : 35,
+      summary: cliToolsInstalled > 0 ? `${cliToolsInstalled} 个静态 AI CLI 已就绪。` : 'AIChat 和 Mods 可在设置页一键安装。',
+      detail: { installed: cliToolsInstalled, total: 2 },
+      nextUpgrade: cliToolsInstalled >= 2 ? '为 CLI 工具增加任务模板与耗时统计。' : '在设置页安装剩余免登录 CLI 工具。',
     }),
     capability({
       id: 'project-memory',
@@ -196,8 +207,8 @@ export async function getCapabilityRegistry(): Promise<CapabilityRegistry> {
   const byId = new Map(capabilities.map(item => [item.id, item]));
 
   const steps: EvolutionStep[] = [];
-  if (byId.get('model-routing')?.score !== 92) {
-    steps.push({ id: 'restore-local-model', title: '恢复本地模型优先通道', reason: '本地模型离线会增加成本并降低隐私能力。', trigger: 'automatic', expectedGain: 8, safety: 'safe' });
+  if (cliToolsInstalled < 2) {
+    steps.push({ id: 'install-cli-tools', title: '补齐免登录 CLI 工具', reason: '静态 AIChat/Mods 可以增强命令行执行能力。', trigger: 'approval', expectedGain: 6, safety: 'canary' });
   }
   if ((byId.get('project-memory')?.score || 0) < 85) {
     steps.push({ id: 'memory-distillation', title: '启用任务结束记忆蒸馏', reason: '从成功和失败任务中提取长期可复用知识。', trigger: 'automatic', expectedGain: 7, safety: 'canary' });

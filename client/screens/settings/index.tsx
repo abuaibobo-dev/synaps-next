@@ -467,6 +467,10 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
   const [trustModalVisible, setTrustModalVisible] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
+  const installedSkillNames = useMemo(
+    () => new Set(skills.map((skill) => skill.name)),
+    [skills]
+  );
   const [skillStoreVisible, setSkillStoreVisible] = useState(false);
   const [skillStoreQuery, setSkillStoreQuery] = useState('');
   const [skillStoreItems, setSkillStoreItems] = useState<StoreSkillItem[]>([]);
@@ -1262,6 +1266,8 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
 
   const installStoreSkill = useCallback(
     async (id: number) => {
+      const storeItem = skillStoreItems.find((item) => item.id === id);
+      if (storeItem && installedSkillNames.has(storeItem.name)) return;
       setSkillStoreInstalling(id);
       try {
         const res = await fetch(`${API_BASE}/api/v1/skill-store/install`, {
@@ -1288,7 +1294,7 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
         setSkillStoreInstalling(null);
       }
     },
-    []
+    [installedSkillNames, skillStoreItems]
   );
 
   const runStoreMaintenance = useCallback(async () => {
@@ -2828,12 +2834,20 @@ export default function SettingsScreen({ onOpenSidebar }: SettingsScreenProps) {
                       </Text>
                     </View>
                     <Pressable
-                      style={[styles.skillStoreInstall, skillStoreInstalling === item.id && styles.skillStoreInstallDisabled]}
+                      style={[
+                        styles.skillStoreInstall,
+                        (skillStoreInstalling === item.id || installedSkillNames.has(item.name)) &&
+                          styles.skillStoreInstallDisabled,
+                      ]}
                       onPress={() => installStoreSkill(item.id)}
-                      disabled={skillStoreInstalling === item.id}
+                      disabled={skillStoreInstalling === item.id || installedSkillNames.has(item.name)}
                     >
                       <Text style={styles.skillStoreInstallText}>
-                        {skillStoreInstalling === item.id ? '安装中' : '安装'}
+                        {skillStoreInstalling === item.id
+                          ? '安装中'
+                          : installedSkillNames.has(item.name)
+                            ? '已安装'
+                            : '安装'}
                       </Text>
                     </Pressable>
                   </View>
