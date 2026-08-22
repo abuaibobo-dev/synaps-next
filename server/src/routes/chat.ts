@@ -2,6 +2,7 @@ import express from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as vm from 'vm';
 import { LLMClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 import { getDb, queryAll, queryOne, runSql, saveDb } from '../db.js';
 import { evaluateToolRisk, isProjectTrusted, logAudit, getTrustedProjects, setTrustedProjects, type RiskAssessment } from '../permissions.js';
@@ -170,6 +171,7 @@ You have access to tools that let you interact with the project files:
 - run_lint: Run lint checks in the project; returns a list of errors
 - run_typecheck: Run type checking; returns a list of errors
 - analyze_code: Analyze code quality; returns issues with severity ([HIGH]/[MEDIUM]/[LOW])
+- validate_code: Validate JavaScript, inline HTML scripts, and JSON syntax using the embedded Node parser (args: path optional). Use this instead of looking for external node/python/java runtimes.
 - auto_fix: Apply automatic fixes for lint/typecheck issues (creates a snapshot before changing files)
 - git_commit_push: Stage, commit and push all current changes (args: message optional; high risk, requires confirmation)
 - trigger_build: Trigger a GitHub Actions build (args: repo "owner/name", ref optional, workflowId optional)
@@ -517,6 +519,115 @@ function truncateText(text: string, max: number): string {
   return text.length > max
     ? `${text.slice(0, max)}\n...[truncated ${text.length - max} chars]`
     : text;
+}
+
+function extractInlineScripts(content: string): Array<{ code: string; line: number }> {
+  const scripts: Array<{ code: string; line: number }> = [];
+  const pattern = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content))) {
+    const attrs = match[1].toLowerCase();
+    if (/\bsrc\s*=/.test(attrs)) continue;
+    const type = /\btype\s*=\s*["']([^"']*)["']/i.exec(match[1])?.[1]?.toLowerCase() || '';
+    if (type && !['text/javascript', 'application/javascript', 'module'].includes(type)) continue;
+    const before = content.slice(0, match.index);
+    scripts.push({ code: match[2], line: before.split('\n').length });
+  }
+  return scripts;
+}
+
+function syntaxCheckJavaScript(code: string, filename: string, allowEsm = false):
+  Array<{ file: string; line?: number; message: string }> {
+  if (allowEsm && /^\s*(import\s|export\s)/m.test(code)) {
+    return [];
+  }
+  try {
+  new vm.Script(code, { filename });
+    return [];
+  } catch (error) {
+    const err = error as Error & { stack?: string };
+    const firstStackLine = err.stack?.split('\n')[0] || '';
+    const location = firstStackLine.match(/(?:<anonymous>|[^:]+):(\d+):\d+$/);
+    return [{
+      file: filename,
+      line: location ? Number(location[1]) - 1 : undefined,
+      message: err.message,
+    }];
+  }
+}
+
+function validateProjectCode(projectId: string, targetPath?: string): string {
+  const root = resolveProjectPath(projectId, '');
+  const targets: string[] = [];
+  if (targetPath) {
+    const full = resolveProjectPath(projectId, targetPath);
+    if (!fs.existsSync(full)) return `Error: path not found: ${targetPath}`;
+    targets.push(full);
+  } else {
+    const queue = [root];
+    while (queue.length > 0 && targets.length < 120) {
+      const dir = queue.shift()!;
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || ['node_modules', 'dist', 'build', 'coverage'].includes(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) queue.push(full);
+        else if (/\.(js|mjs|cjs|json|html?)$/i.test(entry.name)) targets.push(full);
+        if (targets.length >= 120) break;
+      }
+    }
+  }
+
+  const issues: Array<{ file: string; line?: number; message: string }> = [];
+  let checked = 0;
+  for (const file of targets) {
+    const rel = path.relative(root, file) || path.basename(file);
+    if (/\.json$/i.test(file)) {
+      checked++;
+      try {
+        JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch (error) {
+        issues.push({ file: rel, message: (error as Error).message });
+      }
+      continue;
+    }
+    if (/\.html?$/i.test(file)) {
+      checked++;
+      const html = fs.readFileSync(file, 'utf8');
+      for (const script of extractInlineScripts(html)) {
+        issues.push(...syntaxCheckJavaScript(script.code, `${rel}:inline`, false).map(issue => ({
+          ...issue,
+          file: issue.file,
+          line: (issue.line || 0) + script.line - 1,
+        })));
+      }
+      continue;
+    }
+    const allowEsm = /\.mjs$/i.test(file) ||
+      (() => {
+        try {
+          return JSON.parse(fs.readFileSync(path.join(path.dirname(file), 'package.json'), 'utf8')).type === 'module';
+        } catch {
+          return false;
+        }
+      })();
+    checked++;
+    issues.push(...syntaxCheckJavaScript(fs.readFileSync(file, 'utf8'), rel, allowEsm));
+  }
+
+  if (checked === 0) return 'No JavaScript, JSON, or HTML files found to validate.';
+  const lines = issues.slice(0, 40).map(issue =>
+    `[${issue.line ? `${issue.file}:${issue.line}` : issue.file}] ${issue.message}`
+  );
+  return [
+    `Syntax validation ${issues.length === 0 ? 'PASSED' : 'FAILED'} (${checked} files, ${issues.length} issues)`,
+    lines.length ? `\n${lines.join('\n')}` : '\n内置 Node 解析器完成校验；无需外部 node/python/java。',
+  ].join('\n');
 }
 
 async function execInProject(
@@ -1679,6 +1790,11 @@ async function executeTool(projectId: string | null, toolCall: ToolCall, session
       walk(cwd, 0);
       if (issues.length === 0) return 'No obvious code quality issues detected.';
       return `Found ${issues.length} issue(s) in ${scanned} file(s):\n\n${issues.slice(0, 50).join('\n')}`;
+    }
+
+    case 'validate_code': {
+      if (!projectId) return 'Error: validate_code 需要先绑定项目';
+      return validateProjectCode(projectId, toolCall.path);
     }
 
     case 'auto_fix': {

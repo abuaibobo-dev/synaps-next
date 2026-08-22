@@ -70,7 +70,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
       '4. 免登录 CLI 工具 — AIChat / Mods 可在设置页安装，用于命令行推理与文本管道\n' +
       '路由规则：任务涉及 3 个以上文件或多文件重构/深度分析 → 调用 codex_exec 交给 Codex CLI；与专属领域强相关的任务 → 用 brain_exec 交给对应专属大脑；多步工具链 → 用 Harness 或 team_execute；其他简单任务 → 用自带工具。\n' +
       '调用 codex_exec 前先 codex_status 确认内置引擎已下载；不可用时提示用户在设置页下载引擎，不中断任务，并降级到自带工具继续。',
-    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'list_skills', 'read_skill', 'skill_deps', 'skill_store_search', 'run_lint', 'run_typecheck', 'analyze_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'download_and_install', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'device_action', 'harness_status', 'web_search', 'trigger_build', 'agent_list', 'agent_status', 'agent_delegate', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
+    tools: ['team_plan', 'team_execute', 'team_test', 'team_review', 'team_status', 'list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'list_skills', 'read_skill', 'skill_deps', 'skill_store_search', 'run_lint', 'run_typecheck', 'analyze_code', 'validate_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'project_export', 'project_import', 'search_tools', 'list_tools', 'install_tool', 'download_and_install', 'mcp_list_servers', 'mcp_list_tools', 'mcp_call', 'mcp_add_server', 'system_diagnostics', 'check_build_status', 'device_status', 'device_action', 'harness_status', 'web_search', 'trigger_build', 'agent_list', 'agent_status', 'agent_delegate', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.4,
   },
@@ -80,7 +80,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     systemPrompt:
       '你是 Synaps 的代码工程师。负责具体的代码编写、修改与重构：先 read_file 理解现状，再 write_file 修改，用 run_lint/run_typecheck/run_tests 验证，失败时用 auto_fix/auto_test_fix 修复，最后可 git_commit_push 提交。保持最小改动、清晰注释。\n' +
       '执行大脑路由：简单任务（单文件修改、小 bug 修复）→ 直接用自带工具完成；复杂任务（多文件重构、大规模代码分析）→ 优先用 brain_exec 调用 Aider（brain=aider，AI 结对编程）；Aider 不可用时用 codex_exec 交给 Codex CLI；Sage（brain=sage）为本地备选。调用前先 brain_status/codex_status 检查执行大脑是否可用，不可用时自动降级到自带工具。',
-    tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'run_lint', 'run_typecheck', 'analyze_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'check_build_status', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
+    tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'run_command', 'run_lint', 'run_typecheck', 'analyze_code', 'validate_code', 'auto_fix', 'run_tests', 'generate_tests', 'auto_test_fix', 'security_scan', 'security_fix', 'git_commit_push', 'check_build_status', 'codex_status', 'codex_exec', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.3,
   },
@@ -90,7 +90,7 @@ export const AGENT_TEMPLATES: Record<AgentType, AgentTemplate> = {
     systemPrompt:
       '你是 Synaps 的文件管家。负责项目文件的浏览、检索、组织与安全分析：使用 list_dir/read_file/write_file/search_file 管理文件，用 analyze_code/security_scan 检查代码质量与安全。回答要给出清晰的文件路径。\n' +
       '专属执行大脑：Lydia（brain_exec brain=lydia）；未安装时用自带工具。',
-    tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'analyze_code', 'security_scan', 'project_export', 'brain_status', 'brain_exec'],
+    tools: ['list_dir', 'read_file', 'write_file', 'search_file', 'analyze_code', 'validate_code', 'security_scan', 'project_export', 'brain_status', 'brain_exec'],
     model: 'deepseek-v4-flash',
     temperature: 0.2,
   },

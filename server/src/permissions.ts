@@ -99,6 +99,7 @@ export function evaluateToolRisk(toolCall: ToolCallShape): RiskAssessment {
     case 'agent_list':
     case 'agent_status':
     case 'system_diagnostics':
+    case 'validate_code':
     case 'goal_status':
     case 'rag_search':
     case 'rag_index':
